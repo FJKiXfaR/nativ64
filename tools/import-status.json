@@ -1,0 +1,5 @@
+{
+  "_comment": "Status of each imported function for the Linux-native port. Keys are module!function (module normalized: lowercase, no .dll, API-set version suffix dropped). Globs allowed; an exact key beats a glob, a longer glob beats a shorter one. Statuses: native, stub, crash, todo. 'shipped' is computed, never set here.",
+  "default": "todo",
+  "functions": {}
+}

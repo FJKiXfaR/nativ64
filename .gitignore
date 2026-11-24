@@ -1,0 +1,13 @@
+# Game files: never version them (game/ links to ../../vice-link/game)
+game
+extracted/
+*.rpf
+*.dll
+*.exe
+*.xvd
+*.bin
+MicrosoftGame.Config
+
+# Reports derived from game files (import lists, logs)
+reports/
+__pycache__/
