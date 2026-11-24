@@ -297,6 +297,106 @@ def render_html(report: dict) -> str:
     data = json.dumps(report, ensure_ascii=False).replace("</", "<\\/")
     return template.replace("/*__REPORT__*/null", data)
 
+SVG_COLORS = {"native": "#0ca30c", "host": "#a6e3a1", "stub": "#fab219",
+              "crash": "#d03b3b", "todo": "#3a3a37", "shipped": "#3987e5"}
+
+
+def render_svg(report: dict, view_name: str | None = None, note: str = "") -> str:
+    """Static SVG card of one view (same layout and dark colors as the HTML map)."""
+    from math import ceil, sqrt
+    from xml.sax.saxutils import escape
+
+    views = report["views"]
+    v = next((x for x in views if x["tab"] == view_name), None) if view_name else views[-1]
+    if v is None:
+        raise SystemExit(f"--svg-view: no view named {view_name!r} (have: "
+                         + ", ".join(x['tab'] for x in views) + ")")
+    st, totals = v["statuses"], v["totals"]
+    rank = STATUSES.index
+    W, PAD, CELL, GAP, MODGAP = 900, 28, 9, 2, 14
+    PITCH = CELL + GAP
+    inner = W - 2 * PAD
+    fmt = "{:,}".format
+    font = 'font-family="ui-sans-serif,system-ui,-apple-system,\'Segoe UI\',Roboto,sans-serif"'
+
+    need = len(report["functions"]) - totals["shipped"]
+    done = sum(totals[s] for s in v["done"])
+    pct = 100 * done / need if need else 100
+
+    by_area: dict[str, dict[str, list[str]]] = {}
+    for key, f in report["functions"].items():
+        by_area.setdefault(f["area"], {}).setdefault(f["module"], []).append(key)
+    areas = sorted(by_area.items(), key=lambda a: -sum(len(k) for k in a[1].values()))
+
+    out: list[str] = []
+    y = PAD + 14
+    out.append(f'<text x="{PAD}" y="{y}" fill="#8f8e86" font-size="13" {font}>'
+               f'{escape(v["title"])}</text>')
+    y += 52
+    out.append(f'<text x="{PAD}" y="{y}" fill="#f0efec" font-size="52" font-weight="700" {font}>'
+               f'{pct:.1f}<tspan font-size="26" fill="#8f8e86">%</tspan></text>')
+    out.append(f'<text x="{PAD + 190}" y="{y - 6}" fill="#c3c2b7" font-size="15" {font}>'
+               f'<tspan font-weight="700" fill="#f0efec">{fmt(done)}</tspan> of '
+               f'<tspan font-weight="700" fill="#f0efec">{fmt(need)}</tspan> '
+               f'{escape(v["headline"])}</text>')
+    y += 26
+    x = PAD
+    for s in (s for s in STATUSES if totals[s]):
+        label = f'{v["labels"][s]} {fmt(totals[s])}'
+        out.append(f'<rect x="{x}" y="{y - 10}" width="11" height="11" rx="2" fill="{SVG_COLORS[s]}"/>')
+        out.append(f'<text x="{x + 16}" y="{y}" fill="#c3c2b7" font-size="12" {font}>{escape(label)}</text>')
+        x += 16 + int(len(label) * 6.4) + 18
+        if x > W - PAD - 120 and s != STATUSES[-1]:
+            x, y = PAD, y + 20
+    y += 30
+
+    for name, mods in areas:
+        keys = [k for m in mods.values() for k in m]
+        c = {s: sum(1 for k in keys if st[k] == s) for s in STATUSES}
+        n = len(keys) - c["shipped"]
+        ad = sum(c[s] for s in v["done"])
+        stat = f"{ad} / {n} done" + (f" · {c['shipped']} shipped" if c["shipped"] else "")
+        out.append(f'<line x1="{PAD}" x2="{W - PAD}" y1="{y - 14}" y2="{y - 14}" stroke="#2f2f2d"/>')
+        out.append(f'<text x="{PAD}" y="{y + 4}" fill="#f0efec" font-size="14" font-weight="600" {font}>'
+                   f'{escape(name)}</text>')
+        out.append(f'<text x="{W - PAD}" y="{y + 4}" text-anchor="end" fill="#8f8e86" font-size="12" {font}>'
+                   f'{escape(stat)}</text>')
+        y += 22
+        # Modules flow left to right, wrapping at the card width
+        boxes = []
+        for m, ks in sorted(mods.items(), key=lambda kv: -len(kv[1])):
+            short = re.sub(r"^api-ms-win-(core-)?", "", m)
+            mn = len(ks) - sum(1 for k in ks if st[k] == "shipped")
+            md = sum(1 for k in ks if st[k] in v["done"])
+            label = f"{short} {md}/{mn}" if mn else f"{short} shipped"
+            cols = min(len(ks), max(4, ceil(sqrt(len(ks) * 2.2))))
+            bw = max(cols * PITCH - GAP, int(len(label) * 5.7))
+            cols = max(cols, (bw + GAP) // PITCH)
+            ks = sorted(ks, key=lambda k: (rank(st[k]), k))
+            boxes.append((label, ks, cols, bw, ceil(len(ks) / cols) * PITCH - GAP))
+        bx, rowtop, rowh = PAD, y, 0
+        for label, ks, cols, bw, bh in boxes:
+            if bx > PAD and bx + bw > W - PAD:
+                bx, rowtop, rowh = PAD, rowtop + rowh + MODGAP, 0
+            out.append(f'<text x="{bx}" y="{rowtop + 9}" fill="#8f8e86" font-size="10" {font}>{escape(label)}</text>')
+            for i, k in enumerate(ks):
+                cx, cy = bx + (i % cols) * PITCH, rowtop + 16 + (i // cols) * PITCH
+                out.append(f'<rect x="{cx}" y="{cy}" width="{CELL}" height="{CELL}" rx="1.5" '
+                           f'fill="{SVG_COLORS[st[k]]}"/>')
+            bx += bw + MODGAP
+            rowh = max(rowh, 16 + bh)
+        y = rowtop + rowh + 30
+
+    y += 2
+    foot = "Generated by tools/import_map.py" + (f" · {note}" if note else "")
+    out.append(f'<text x="{PAD}" y="{y}" fill="#8f8e86" font-size="11" {font}>{escape(foot)}</text>')
+    H = y + 18
+    title = escape(f'{v["title"]}: {pct:.1f}% ({done} of {need} {v["headline"]})')
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" '
+            f'role="img" aria-label="{title}">\n<title>{title}</title>\n'
+            f'<rect width="{W}" height="{H}" rx="14" fill="#1a1a19"/>\n'
+            + "\n".join(out) + "\n</svg>\n")
+
 
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
@@ -306,12 +406,18 @@ def main() -> int:
     ap.add_argument("--status", type=Path, action="append",
                     help="status file; repeat it for several tabs (default: tools/import-status.json)")
     ap.add_argument("--out", type=Path, default=Path("reports/import-map.html"))
+    ap.add_argument("--svg", type=Path, help="also write a static SVG card of one view (for a README)")
+    ap.add_argument("--svg-view", help="tab name of the view drawn by --svg (default: the last one)")
+    ap.add_argument("--svg-note", default="", help="text appended to the SVG footer (e.g. a commit)")
     ap.add_argument("--json", type=Path, help="also write the full report as JSON")
     args = ap.parse_args()
 
     report = build(args.files, args.status or [Path(__file__).with_name("import-status.json")])
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(render_html(report), encoding="utf-8")
+    if args.svg:
+        args.svg.parent.mkdir(parents=True, exist_ok=True)
+        args.svg.write_text(render_svg(report, args.svg_view, args.svg_note), encoding="utf-8")
     if args.json:
         args.json.parent.mkdir(parents=True, exist_ok=True)
         args.json.write_text(json.dumps(report, indent=1), encoding="utf-8")

@@ -126,3 +126,12 @@ Run it after each mirror sync to follow VIctory's progress. On the package DLLs 
 - Host exports are not verified. VIctory resolves them with `GetProcAddress` at run time,
   so the Windows view counts every function of an allowed host DLL as borrowed without
   checking it exists. A borrowed function could still trap if the host does not export it.
+
+## README chart
+
+`--svg PATH` also writes a static SVG card of one view (`--svg-view NAME`, default the last tab;
+`--svg-note TEXT` goes in the footer, e.g. the VIctory commit). It is embedded in `README.md`:
+
+    python -I tools/import_map.py game/*.dll --status reports/status-victory-windows.json \
+        --status reports/status-victory-linux.json --svg docs/import-map-linux.svg \
+        --svg-view "Linux native" --svg-note "VIctory $(git -C ../VIctory-mirror rev-parse --short HEAD)"
