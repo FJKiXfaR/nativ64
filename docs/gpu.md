@@ -213,6 +213,32 @@ The executable imports from `d3d12_xs` only `D3D12XboxCreateDevice` and
   detiler must agree with the hardware's addressing (swizzle modes, mip tail, pitch). Own
   spec: `docs/textures.md`.
 
+### PresentX (end of G1, input of G3)
+
+- **Call:** queue slot 32 (+0x100), `HRESULT PresentX(this, u32 plane_count, const Plane *planes,
+  const u8 *params)`. Confirmed on our title: it is the first call after the first frame's
+  lists (clear RTV, timestamps, 64-bit wait).
+- **Plane** (`D3D12XBOX_PRESENT_PLANE_PARAMETERS`): `+0x00 u64 token` (the frame token
+  `WaitFrameEventX` handed out), `+0x08 u32 resource_count`, `+0x10 ID3D12Resource **resources`,
+  `+0x18 const RECT *source_rect` (may be NULL), rest unread (destination, flags, colour space:
+  to identify from the logged words). Stride 0x48: xcl's reading of another title, unverified
+  on ours (only matters with two planes or more). `params` is unread.
+- **Now (null backend), `d3d12/present.rs`:** never fails for the title (S_OK, as on the
+  console and in both references), also for 0 planes or NULL pointers (logged once).
+  1. On the first call and whenever the plane count changes, log the raw words of every
+     plane (`0x48 / 8` u64 each) and the first 0x40 bytes of `params` when not NULL.
+  2. Count the frame; keep the last 16 flips `(token, Instant)` in a ring, for
+     `GetFrameStatisticsX` when the title shows it needs them (unchanged for now: count 0).
+  3. Plane 0, resource 0: when it is one of our resources (vtable pointer is the resource
+     table), read its description. Log frame 1 and every power of two: frame number, token,
+     width x height, format, and the lists and commands submitted since the last line.
+     A resource that is not ours is logged once with its address.
+  4. Return S_OK. All earlier work is complete (null backend), so the flip is immediate.
+- **G3:** `PresentX` becomes a queue operation after the submissions before it: the backend
+  copies (or blits, with `source_rect`) plane 0's first resource to the swapchain image of
+  the title's window and, with `NATIV64_DUMP_FRAMES=<dir>`, writes it as a PNG. Extra planes
+  (a UI plane over the game's) are composed in order once the run shows any.
+
 ### Validation
 
 - Unit tests per object (slots, refcounts, recorded commands) with the null backend; Vulkan

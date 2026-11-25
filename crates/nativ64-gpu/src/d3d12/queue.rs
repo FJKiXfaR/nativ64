@@ -3,8 +3,8 @@
 //! Model: a queue records its description and counts what is submitted. No backend replays the
 //! recorded command streams yet, so a submission only counts lists and commands, and GPU work
 //! completes at once: `Signal` moves its fence immediately. The slot layout is the "newer" one
-//! (every slot from 14 on is two later than the older SDK's, see docs/gpu.md). `PresentX` (32)
-//! and the page mapping batch (31) are not filled: they trap.
+//! (every slot from 14 on is two later than the older SDK's, see docs/gpu.md). `PresentX` (32) is
+//! in `present.rs`; the page mapping batch (31) is not filled: it traps.
 
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::d3d12::command::Command;
 use crate::d3d12::device::E_INVALIDARG;
 use crate::d3d12::object::{guid, hand_out, with_child_methods, PAGEABLE_IIDS};
-use crate::d3d12::{fence, list};
+use crate::d3d12::{fence, list, present};
 use crate::xobj::{Guid, Iface, SlotTable, XObject, HRESULT, S_OK};
 
 /// `D3D12_COMMAND_QUEUE_DESC` (PC form).
@@ -64,6 +64,7 @@ static TABLE: SlotTable<36> =
         .with(17, wait as *const ())
         .with(18, get_timestamp_frequency as *const ())
         .with(28, get_desc as *const ())
+        .with(32, present_x as *const ())
         .with(34, signal_x as *const ())
         .with(35, execute_command_lists_x as *const ());
 
@@ -126,6 +127,25 @@ unsafe extern "win64" fn signal_x(
     _top: *const u8,
 ) -> HRESULT {
     signal(this, fence, value)
+}
+
+/// Slot 32, `PresentX(plane_count, planes, params)`: see `present.rs`.
+unsafe extern "win64" fn present_x(
+    this: *mut c_void,
+    plane_count: u32,
+    planes: *const u8,
+    params: *const u8,
+) -> HRESULT {
+    let (lists, commands) = if this.is_null() {
+        (0, 0)
+    } else {
+        let q = data(this);
+        (
+            q.submitted_lists.load(Ordering::Relaxed),
+            q.submitted_commands.load(Ordering::Relaxed),
+        )
+    };
+    present::present_x(plane_count, planes, params, lists, commands)
 }
 
 /// Slot 17, `Wait(fence, value)`: all signals have already run, so nothing can be pending.
@@ -367,6 +387,20 @@ mod tests {
             let x: ExecX = std::mem::transmute(slot(q, 35));
             x(q, 1, lists.as_ptr(), 0, 0);
             assert_eq!(d.submitted_lists.load(Ordering::Relaxed), 2);
+            XObject::<QueueData>::release(q);
+        }
+    }
+
+    #[test]
+    fn present_x_is_filled() {
+        type Present = unsafe extern "win64" fn(*mut c_void, u32, *const u8, *const u8) -> HRESULT;
+        unsafe {
+            let q = queue();
+            assert_eq!(slot(q, 32), present_x as *const ());
+            let p: Present = std::mem::transmute(slot(q, 32));
+            let n = std::ptr::null();
+            assert_eq!(p(q, 0, n, n), S_OK);
+            assert_eq!(p(q, 1, n, n), S_OK);
             XObject::<QueueData>::release(q);
         }
     }

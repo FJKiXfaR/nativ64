@@ -10,7 +10,7 @@ use crate::d3d12::device::{E_INVALIDARG, E_OUTOFMEMORY};
 use crate::d3d12::info::HeapProperties;
 use crate::d3d12::object::{guid, hand_out, with_child_methods, PAGEABLE_IIDS};
 use crate::texture::Layout;
-use crate::xobj::{Guid, Iface, SlotTable, HRESULT, S_OK};
+use crate::xobj::{Guid, Iface, SlotTable, XObject, HRESULT, S_OK};
 
 pub static RESOURCE_IIDS: [Guid; 4] = [
     guid(
@@ -72,6 +72,18 @@ static TABLE: SlotTable<32> =
         .with(9, unmap as *const ())
         .with(10, get_desc as *const ())
         .with(11, get_gpu_virtual_address as *const ());
+
+/// The description of `ptr` when it is one of our resources (its vtable pointer is ours), else
+/// `None`.
+///
+/// # Safety
+/// `ptr` is NULL or points at readable memory of at least 8 bytes.
+pub(crate) unsafe fn desc_of(ptr: *mut c_void) -> Option<ResourceDesc> {
+    if ptr.is_null() || ptr.cast::<usize>().read_unaligned() != std::ptr::addr_of!(TABLE) as usize {
+        return None;
+    }
+    Some(XObject::<ResourceData>::data(ptr).desc)
+}
 
 /// `ID3D12Device::CreateResourceAtAddressX(address, desc1, layout, clear, riid, out)` (device
 /// slot 133): a resource over memory the title mapped itself. The clear value is not kept.

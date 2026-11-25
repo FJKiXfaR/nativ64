@@ -32,6 +32,7 @@ pub mod list_work;
 mod list_work_tests;
 pub mod object;
 pub mod pipeline;
+pub mod present;
 pub mod query;
 pub mod queue;
 pub mod resource;
