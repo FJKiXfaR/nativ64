@@ -1126,6 +1126,44 @@ mod tests {
         assert_eq!(b.frames(), n + 1);
     }
 
+    fn rss_kb() -> u64 {
+        let s = std::fs::read_to_string("/proc/self/statm").unwrap();
+        s.split_whitespace().nth(1).unwrap().parse::<u64>().unwrap() * 4
+    }
+
+    /// Frames of a title: clear a 4K back buffer, present it. The resident size must not grow
+    /// with the frame count (images are reused, per-frame buffers freed).
+    #[test]
+    fn long_run_keeps_a_stable_footprint() {
+        let Some(g) = gpu_or_skip() else { return };
+        let mut b = VkBackend::new(&g);
+        let dir = std::env::temp_dir().join(format!("nativ64-rss-{}", std::process::id()));
+        b.set_dump_dir(dir.clone());
+        let back = [texture(3840, 2160, 28, 1), texture(3840, 2160, 28, 1)];
+        let views = back.map(rtv);
+        let mut frame = |i: usize| {
+            b.execute(&[vec![Command::ClearRenderTarget {
+                handle: views[i % 2],
+                color: [0.0; 4],
+                rects: vec![],
+            }]]);
+            b.present(back[i % 2], None, None);
+        };
+        for i in 0..8 {
+            frame(i);
+        }
+        let before = rss_kb();
+        for i in 8..136 {
+            frame(i);
+        }
+        let grown = rss_kb().saturating_sub(before);
+        let _ = std::fs::remove_dir_all(dir);
+        assert!(
+            grown < 200_000,
+            "resident size grew by {grown} kB over 128 frames"
+        );
+    }
+
     fn tex_copy(tex: usize, buf: usize) -> Command {
         Command::CopyTextureRegion {
             dst: CopyLocation::Subresource {

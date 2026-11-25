@@ -43,8 +43,14 @@ pub fn write_png(path: &Path, w: u32, h: u32, rgba: &[u8]) -> std::io::Result<()
     writer.write_image_data(rgba).map_err(std::io::Error::other)
 }
 
+/// Which presented frames are dumped: 1, 2, 4, 8, ... and every 60th, so a long run does not
+/// fill the disk with 4K PNGs.
+pub fn dump_wanted(frame: u64) -> bool {
+    frame.is_power_of_two() || frame.is_multiple_of(60)
+}
+
 impl<'g> VkBackend<'g> {
-    /// Write every presented image as a PNG in `dir` (created when missing).
+    /// Dump presented images (see `dump_wanted`) as PNGs in `dir` (created when missing).
     pub fn set_dump_dir(&mut self, dir: std::path::PathBuf) {
         if let Err(e) = std::fs::create_dir_all(&dir) {
             log_once(format!("cannot create {}: {e}", dir.display()));
@@ -65,7 +71,7 @@ impl<'g> VkBackend<'g> {
             log_once("PresentX of a resource nothing rendered to: nothing shown".into());
             return;
         };
-        if let Some(dir) = self.dump.clone() {
+        if let Some(dir) = self.dump.clone().filter(|_| dump_wanted(self.frames)) {
             self.dump_frame(resource, &dir);
         }
         let Some(win) = window else { return };
@@ -146,6 +152,12 @@ impl<'g> VkBackend<'g> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dump_subset() {
+        let picked: Vec<u64> = (1..=130).filter(|&f| dump_wanted(f)).collect();
+        assert_eq!(picked, [1, 2, 4, 8, 16, 32, 60, 64, 120, 128]);
+    }
 
     #[test]
     fn bgra_is_swapped_to_rgba() {
