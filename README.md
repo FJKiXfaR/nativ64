@@ -25,6 +25,22 @@ Windows (excluding the 265 its own DLLs ship). 46 already have portable code in
 base, 69 have VIctory code that still calls Windows, and **580 are host Windows APIs a
 native port must write**.
 
+## Stability first
+
+Other projects aim to get a title on screen as fast as possible, borrowing whatever the
+host Windows (or Wine) already provides. nativ64 takes the slower road on purpose: a
+**stable, native Linux runtime** that does not inherit behaviour from a layer it does not
+control.
+
+- **Written and tested one function at a time.** Each function has its own tests,
+  error cases included (null pointers, too-small buffers, overflows, timeouts,
+  contention), and CI runs formatting, lints and tests on every push.
+- **Exact Windows behaviour, Linux primitives.** Structure layouts and calling
+  conventions match Windows bit for bit; underneath, it is plain Linux (futexes,
+  syscalls), with no translation layer in between.
+- **Once done, done.** A finished function is not revisited when the title changes or
+  the base above it moves on, and every base that adopts the library gets it for free.
+
 ## How it fits
 
 ```
@@ -49,18 +65,20 @@ native port must write**.
 
 ## Status
 
-Early. The import map is done, and the library has a first set of functions with tests.
-Next: the biggest areas on the map, C runtime (165 functions), system (136), threads and
-sync (84).
+Early. The import map is done, and the library implements 132 of the 697 functions the
+first title needs (18.9%), each with tests: the C runtime math, string and conversion
+functions, plus a first set of system calls. Left to write:
 
 | Area | To write |
 |---|---|
-| C/C++ runtime (`api-ms-win-crt-*`) | 165 |
-| System | 136 |
-| Threads & sync | 84 |
-| Network & crypto | 21 |
-| Files | 14 |
-| Memory, loader, audio | 10 |
+| System | 173 |
+| C/C++ runtime (`api-ms-win-crt-*`) | 133 |
+| Threads & sync | 93 |
+| Network & crypto | 52 |
+| Files | 32 |
+| Memory | 22 |
+| Loader | 14 |
+| Other (Xbox services, graphics, input, audio...) | 46 |
 
 Also needed, outside the library: SEH and TLS support in the base's loader, and a
 Direct3D 12 to Vulkan path for the GPU.
