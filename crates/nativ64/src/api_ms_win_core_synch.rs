@@ -317,12 +317,23 @@ fn bucket(addr: *const ()) -> &'static AtomicU32 {
     &ADDR_TABLE[h % TABLE]
 }
 
+/// Reads the watched value. Other threads change it with interlocked (atomic) operations, so an
+/// aligned value is read atomically; a misaligned one (allowed by Windows) falls back to a
+/// volatile read.
 unsafe fn load_sized(p: *const u8, size: usize) -> u64 {
+    use std::sync::atomic::{AtomicU16, AtomicU64, AtomicU8};
+    if !(p as usize).is_multiple_of(size) {
+        return match size {
+            2 => std::ptr::read_volatile(p as *const u16) as u64,
+            4 => std::ptr::read_volatile(p as *const u32) as u64,
+            _ => std::ptr::read_volatile(p as *const u64),
+        };
+    }
     match size {
-        1 => std::ptr::read_volatile(p) as u64,
-        2 => std::ptr::read_volatile(p as *const u16) as u64,
-        4 => std::ptr::read_volatile(p as *const u32) as u64,
-        _ => std::ptr::read_volatile(p as *const u64),
+        1 => AtomicU8::from_ptr(p as *mut u8).load(SeqCst) as u64,
+        2 => AtomicU16::from_ptr(p as *mut u16).load(SeqCst) as u64,
+        4 => AtomicU32::from_ptr(p as *mut u32).load(SeqCst) as u64,
+        _ => AtomicU64::from_ptr(p as *mut u64).load(SeqCst),
     }
 }
 
@@ -846,7 +857,7 @@ mod tests {
                 let (v, w) = (v.clone(), woke.clone());
                 std::thread::spawn(move || unsafe {
                     let zero = 0u32;
-                    while std::ptr::read_volatile(v.p() as *const u32) == 0 {
+                    while AtomicU32::from_ptr(v.p() as *mut u32).load(SeqCst) == 0 {
                         WaitOnAddress(v.p() as _, &zero as *const u32 as _, 4, INFINITE);
                     }
                     w.fetch_add(1, SeqCst);
@@ -855,7 +866,7 @@ mod tests {
             .collect();
         std::thread::sleep(Duration::from_millis(30));
         unsafe {
-            std::ptr::write_volatile(v.p() as *mut u32, 1);
+            AtomicU32::from_ptr(v.p() as *mut u32).store(1, SeqCst);
             WakeByAddressAll(v.p() as _);
         }
         hs.into_iter().for_each(|h| h.join().unwrap());
@@ -865,13 +876,13 @@ mod tests {
         let vc = v.clone();
         let h = std::thread::spawn(move || unsafe {
             let zero = 0u32;
-            while std::ptr::read_volatile(vc.p()) == 0 {
+            while AtomicU32::from_ptr(vc.p()).load(SeqCst) == 0 {
                 WaitOnAddress(vc.p() as _, &zero as *const u32 as _, 4, INFINITE);
             }
         });
         std::thread::sleep(Duration::from_millis(20));
         unsafe {
-            std::ptr::write_volatile(v.p(), 1);
+            AtomicU32::from_ptr(v.p()).store(1, SeqCst);
             WakeByAddressSingle(v.p() as _);
         }
         h.join().unwrap();
