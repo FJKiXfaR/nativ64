@@ -12,6 +12,7 @@ pub const WSAVERNOTSUPPORTED: i32 = 10092;
 pub const WSANOTINITIALISED: i32 = 10093;
 pub const WSAEINVAL: i32 = 10022;
 pub const WSAEFAULT: i32 = 10014;
+pub const WSAHOST_NOT_FOUND: i32 = 11001;
 const SOCKET_ERROR: i32 = -1;
 const WSADATA_SIZE: usize = 408;
 
@@ -110,6 +111,16 @@ win32! {
         std::ptr::copy_nonoverlapping(buf.as_ptr(), name, n + 1);
         0
     }
+    // No network: every name is unknown. The error is also the return value (not -1).
+    Native fn getaddrinfo(_node: *const u8, _service: *const u8, _hints: *const u8, res: *mut *mut u8) -> i32 {
+        if !res.is_null() {
+            *res = std::ptr::null_mut();
+        }
+        set_error(WSAHOST_NOT_FOUND);
+        WSAHOST_NOT_FOUND
+    }
+    // Nothing is ever allocated by getaddrinfo, so there is nothing to free.
+    Native fn freeaddrinfo(_res: *mut u8) {}
     Native fn WSAGetLastError() -> i32 {
         LAST_ERROR.with(|c| c.get())
     }
@@ -173,6 +184,23 @@ mod tests {
             assert_eq!(gethostname(buf.as_mut_ptr(), 0), SOCKET_ERROR);
         }
         assert_eq!(lookup_ordinal("ws2_32.dll", 57).unwrap().name, "gethostname");
+    }
+
+    #[test]
+    fn getaddrinfo_finds_no_host() {
+        unsafe {
+            let mut res = 0x1234 as *mut u8;
+            let name = b"example.org\0";
+            let r = getaddrinfo(name.as_ptr(), null_mut(), std::ptr::null(), &mut res);
+            assert_eq!(r, WSAHOST_NOT_FOUND);
+            assert!(res.is_null());
+            assert_eq!(WSAGetLastError(), WSAHOST_NOT_FOUND);
+            assert_eq!(
+                getaddrinfo(name.as_ptr(), null_mut(), std::ptr::null(), null_mut()),
+                WSAHOST_NOT_FOUND
+            );
+            freeaddrinfo(res);
+        }
     }
 
     #[test]
