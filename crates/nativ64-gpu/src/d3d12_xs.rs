@@ -34,6 +34,11 @@ nativ64::win32! {
         (config.lowest, config.highest) = USER_SPACE;
         S_OK
     }
+
+    Native fn D3D12XboxCreateDevice(adapter: *mut c_void, params: *const u32, iid: *const crate::xobj::Guid, out: *mut *mut c_void) -> i32 {
+        // SAFETY: the title passes its own parameters; each pointer is checked inside.
+        unsafe { crate::d3d12::device::create_device(adapter, params, iid, out) }
+    }
 }
 
 #[cfg(test)]

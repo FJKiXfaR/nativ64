@@ -16,6 +16,10 @@ APIs only (libc as its only dependency).
 
 - `d3d12_xs`: `D3D12ConfigureVirtualMemoryX` (E_INVALIDARG on null, else the out range is all
   of user space, `0x10000..0x7fff_fffe_ffff`: GPU addresses are CPU addresses).
+- `d3d12_xs`: `D3D12XboxCreateDevice` (`d3d12/device.rs`): version 0x00020004 only
+  (else DXGI_ERROR_UNSUPPORTED), IID of ID3D12Device or any level, E_NOINTERFACE otherwise. One
+  device per process (later calls AddRef the same one). Object 0x58 bytes with the out-of-line
+  flag at +0x18 = 1; table of 160 slots, only IUnknown filled, every other slot a trap.
 - `xmem`: `XMemVirtualAlloc` (placement by XMem flags: 32-bit below 4 GiB, else 4 GiB up to
   2^40..2^46; 2 MiB alignment; reserve then commit), `XMemAllocDefault`, `XMemFreeDefault`,
   `XMemAlloc`, `XMemFree` (shortcut: the title's allocation hooks are not consulted),

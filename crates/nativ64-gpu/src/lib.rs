@@ -4,6 +4,7 @@
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 compile_error!("nativ64-gpu supports Linux x86_64 only");
 
+pub mod d3d12;
 pub mod d3d12_xs;
 pub mod xcrdapi;
 pub mod xmem;
