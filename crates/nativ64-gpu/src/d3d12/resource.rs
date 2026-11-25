@@ -423,11 +423,17 @@ unsafe extern "win64" fn get_gpu_virtual_address(this: *mut c_void) -> u64 {
 }
 
 /// Page pools the title registered, as `(address, pages)`; a handle is the index plus one, a
-/// removed pool leaves `None`. Nothing reads them yet.
+/// removed pool leaves `None`. `CopyPageMappingsBatchX` reads them.
 static PAGE_POOLS: std::sync::Mutex<Vec<Option<(u64, u32)>>> = std::sync::Mutex::new(Vec::new());
 
 fn page_pools() -> std::sync::MutexGuard<'static, Vec<Option<(u64, u32)>>> {
     PAGE_POOLS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The address of the live page pool with this handle.
+pub fn page_pool_address(handle: u64) -> Option<u64> {
+    let index = usize::try_from(handle).ok()?.checked_sub(1)?;
+    page_pools().get(index).copied().flatten().map(|(a, _)| a)
 }
 
 /// The console's `RegisterPagePoolX(address, page count, handle out)` (device slot 74, `+0x250`).

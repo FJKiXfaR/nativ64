@@ -239,6 +239,28 @@ The executable imports from `d3d12_xs` only `D3D12XboxCreateDevice` and
   the title's window and, with `NATIV64_DUMP_FRAMES=<dir>`, writes it as a PNG. Extra planes
   (a UI plane over the game's) are composed in order once the run shows any.
 
+### CopyPageMappingsBatchX (queue slot 31, +0xf8)
+
+- **Call** (VIctory, older layout slot 29; ours reached it after 64 frames):
+  `HRESULT CopyPageMappingsBatchX(this, u32 count, const Batch *batches, u64 pool, u32
+  pool_pages, u32 flags)`. `Batch { u64 destination; u32 count; const Range *ranges }` (16+8
+  bytes, pointer at +0x10), `Range { u32 kind; u32 start; u32 count }`, pages of 64 KiB. From
+  `destination` on, each range covers `count` pages, then the next range follows:
+  kind 0 = pool pages `start..start+count` one to one; kind 1 = pool page `start` repeated
+  `count` times; kind 2 = unmap; kind 3 = leave as is. Any other kind or a range past
+  `pool_pages` fails that range (logged once), the call still returns S_OK.
+- **`pool`**: VIctory reads it as the pool's address. Our `RegisterPagePoolX` hands out
+  index + 1 handles: on the first call, log the raw arguments and accept both (a value that
+  is a live handle maps to its pool's address; otherwise it is an address).
+- **Mapping = aliasing, never a copy**: the title keeps writing the pool and expects the
+  destination to see it. A pool page whose memory is one of our physical pages (memfd slots
+  mapped by `XMemMapPhysicalPages[Scatter]`) is `mmap`ped `MAP_SHARED | MAP_FIXED` from that
+  slot at the destination page. xmem keeps a reverse table (host page address → slot) filled
+  by its map calls and cleared on remap/free, and exposes `alias_pages(dst, src, pages) ->
+  bool` and `unmap_pages(dst, pages)` (unmap = fresh zero anonymous pages, as unmapped tiles
+  read zero). A pool page that is not physical memory fails (logged once with the address).
+- Done at once (null backend: nothing in flight). In G3, after the queue's earlier work.
+
 ### Validation
 
 - Unit tests per object (slots, refcounts, recorded commands) with the null backend; Vulkan

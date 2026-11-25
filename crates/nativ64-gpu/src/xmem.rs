@@ -122,6 +122,9 @@ struct PhysicalPool {
     in_use: usize,
     /// Slots handed out and not freed.
     live: std::collections::HashSet<usize>,
+    /// Reverse table: host address of each 64 KiB page that views a pool slot (filled by the map
+    /// calls and `alias_pages`, cleared on remap, unmap and free).
+    views: std::collections::HashMap<usize, usize>,
 }
 
 fn pool() -> &'static Mutex<PhysicalPool> {
@@ -155,11 +158,14 @@ fn map_physical(address: *mut c_void, n: usize, pages: *const usize) -> bool {
     }
     let api = nativ64::api_ms_win_core_memory::free;
     if pages.is_null() {
+        let mut p = pool().lock().unwrap_or_else(|e| e.into_inner());
+        forget_views(&mut p, base, n);
+        drop(p);
         return api(base, len, 0x4000).is_ok();
     }
     // SAFETY: the title passes `n` page numbers.
     let numbers = unsafe { std::slice::from_raw_parts(pages, n) };
-    let p = pool().lock().unwrap_or_else(|e| e.into_inner());
+    let mut p = pool().lock().unwrap_or_else(|e| e.into_inner());
     let mut slots = Vec::with_capacity(n);
     for &number in numbers {
         match live_slot(&p, number) {
@@ -169,12 +175,13 @@ fn map_physical(address: *mut c_void, n: usize, pages: *const usize) -> bool {
     }
     let Some(fd) = p.fd else { return false };
     // Inside one reservation, and reported committed from now on.
-    let protect = match nativ64::api_ms_win_core_memory::query(base) {
-        Ok(i) if i.allocation_protect != 0x01 && i.allocation_protect != 0 => i.allocation_protect,
-        _ => 0x04,
-    };
+    let protect = view_protect(base);
     if nativ64::api_ms_win_core_memory::mark_mapped(base, len, protect).is_err() {
         return false;
+    }
+    forget_views(&mut p, base, n);
+    for (i, &s) in slots.iter().enumerate() {
+        p.views.insert(base + i * PHYSICAL_PAGE, s);
     }
     let mut i = 0;
     while i < n {
@@ -200,6 +207,94 @@ fn map_physical(address: *mut c_void, n: usize, pages: *const usize) -> bool {
         i += run;
     }
     true
+}
+
+/// Protection a new view at `base` takes: the reservation's, or read/write.
+fn view_protect(base: usize) -> u32 {
+    match nativ64::api_ms_win_core_memory::query(base) {
+        Ok(i) if i.allocation_protect != 0x01 && i.allocation_protect != 0 => i.allocation_protect,
+        _ => 0x04,
+    }
+}
+
+/// Drops the reverse-table entries of `n` pages from `base`.
+fn forget_views(p: &mut PhysicalPool, base: usize, n: usize) {
+    for i in 0..n {
+        p.views.remove(&(base + i * PHYSICAL_PAGE));
+    }
+}
+
+/// Makes the `pages` pages at `dst` a second view of the physical pages that `src` views, so
+/// writes through either show in both. All or nothing: false when `dst` is misaligned, or a
+/// source page is not one of our physical pages (or `dst` lies outside a reservation).
+pub fn alias_pages(dst: usize, src: &[usize]) -> bool {
+    let n = src.len();
+    let Some(len) = n.checked_mul(PHYSICAL_PAGE) else {
+        return false;
+    };
+    if n == 0 || !dst.is_multiple_of(PHYSICAL_PAGE) {
+        return false;
+    }
+    let mut p = pool().lock().unwrap_or_else(|e| e.into_inner());
+    let Some(fd) = p.fd else { return false };
+    let mut slots = Vec::with_capacity(n);
+    for &a in src {
+        match p.views.get(&a) {
+            Some(&s) if p.live.contains(&s) => slots.push(s),
+            _ => return false,
+        }
+    }
+    let protect = view_protect(dst);
+    if nativ64::api_ms_win_core_memory::mark_mapped(dst, len, protect).is_err() {
+        return false;
+    }
+    forget_views(&mut p, dst, n);
+    for (i, &s) in slots.iter().enumerate() {
+        // SAFETY: replaces pages of a reservation the table owns with a view of the pool file.
+        let m = unsafe {
+            libc::mmap(
+                (dst + i * PHYSICAL_PAGE) as *mut c_void,
+                PHYSICAL_PAGE,
+                host_prot(protect),
+                libc::MAP_SHARED | libc::MAP_FIXED,
+                fd,
+                (s * PHYSICAL_PAGE) as libc::off_t,
+            )
+        };
+        if m == libc::MAP_FAILED {
+            return false;
+        }
+        p.views.insert(dst + i * PHYSICAL_PAGE, s);
+    }
+    true
+}
+
+/// Gives `pages` pages from `dst` fresh zero memory (an unmapped tile reads zero).
+pub fn unmap_pages(dst: usize, pages: usize) -> bool {
+    let Some(len) = pages.checked_mul(PHYSICAL_PAGE) else {
+        return false;
+    };
+    if pages == 0 || !dst.is_multiple_of(PHYSICAL_PAGE) {
+        return false;
+    }
+    let protect = view_protect(dst);
+    if nativ64::api_ms_win_core_memory::mark_mapped(dst, len, protect).is_err() {
+        return false;
+    }
+    let mut p = pool().lock().unwrap_or_else(|e| e.into_inner());
+    forget_views(&mut p, dst, pages);
+    // SAFETY: replaces pages of a reservation the table owns with fresh anonymous memory.
+    let m = unsafe {
+        libc::mmap(
+            dst as *mut c_void,
+            len,
+            host_prot(protect),
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_FIXED,
+            -1,
+            0,
+        )
+    };
+    m != libc::MAP_FAILED
 }
 
 /// Windows protection to host protection bits (the console's extra bits dropped).
@@ -408,6 +503,7 @@ nativ64::win32! {
         for &number in std::slice::from_raw_parts(pages, n) {
             let Some(slot) = live_slot(&p, number) else { continue };
             p.live.remove(&slot);
+            p.views.retain(|_, s| *s != slot);
             p.free.push(slot);
             p.in_use -= 1;
             if let Some(fd) = p.fd {
@@ -678,6 +774,87 @@ mod tests {
             assert_eq!(XMemFreePhysicalPages(2, pages.as_ptr()), 1);
             assert_eq!(XMemFreePhysicalPages(1, std::ptr::null()), 0);
             assert!(XMemMapPhysicalPages(base, 1, pages.as_ptr()).is_null());
+        }
+    }
+
+    /// A reserved region of `n` pages, and `m` physical pages mapped at its start.
+    unsafe fn region_with_pages(n: usize, m: usize) -> (usize, Vec<usize>) {
+        let base = XMemVirtualAlloc(std::ptr::null_mut(), n * PHYSICAL_PAGE, MEM_RESERVE, 3, RW);
+        assert!(!base.is_null());
+        let mut count = m;
+        let mut pages = vec![0usize; m];
+        assert_eq!(
+            XMemAllocatePhysicalPages(0, &mut count, pages.as_mut_ptr()),
+            1
+        );
+        assert_eq!(XMemMapPhysicalPages(base, m, pages.as_ptr()), base);
+        (base as usize, pages)
+    }
+
+    #[test]
+    fn alias_pages_share_memory_and_unmap_reads_zero() {
+        unsafe {
+            let (pool, _pages) = region_with_pages(2, 2);
+            let dst = XMemVirtualAlloc(std::ptr::null_mut(), 6 * PHYSICAL_PAGE, MEM_RESERVE, 3, RW)
+                as usize;
+            // write through the pool, read at the destination and back
+            (pool as *mut u8).write(11);
+            ((pool + PHYSICAL_PAGE) as *mut u8).write(22);
+            assert!(alias_pages(dst, &[pool, pool + PHYSICAL_PAGE]));
+            assert_eq!((dst as *const u8).read(), 11);
+            assert_eq!(((dst + PHYSICAL_PAGE) as *const u8).read(), 22);
+            (dst as *mut u8).add(1).write(33);
+            assert_eq!((pool as *const u8).add(1).read(), 33);
+            // one page repeated
+            let rep = dst + 2 * PHYSICAL_PAGE;
+            assert!(alias_pages(rep, &[pool; 3]));
+            for i in 0..3 {
+                assert_eq!(((rep + i * PHYSICAL_PAGE) as *const u8).read(), 11);
+            }
+            ((rep + PHYSICAL_PAGE) as *mut u8).write(44);
+            assert_eq!((pool as *const u8).read(), 44);
+            assert_eq!((dst as *const u8).read(), 44);
+            // unmapped reads zero, and no longer writes through
+            assert!(unmap_pages(dst, 1));
+            assert_eq!((dst as *const u8).read(), 0);
+            (dst as *mut u8).write(9);
+            assert_eq!((pool as *const u8).read(), 44);
+            // not physical memory, misaligned, empty: nothing changes
+            let plain =
+                XMemVirtualAlloc(std::ptr::null_mut(), PHYSICAL_PAGE, MEM_RESERVE, 3, RW) as usize;
+            assert!(!alias_pages(dst, &[plain]));
+            assert!(!alias_pages(dst, &[pool, plain]));
+            assert_eq!((dst as *const u8).read(), 9);
+            assert!(!alias_pages(dst + 1, &[pool]));
+            assert!(!alias_pages(dst, &[]));
+        }
+    }
+
+    #[test]
+    fn remapping_the_pool_updates_the_reverse_table() {
+        unsafe {
+            let (pool, pages) = region_with_pages(2, 2);
+            let dst =
+                XMemVirtualAlloc(std::ptr::null_mut(), PHYSICAL_PAGE, MEM_RESERVE, 3, RW) as usize;
+            (pool as *mut u8).write(1);
+            // the pool address now views the second physical page
+            assert_eq!(
+                XMemMapPhysicalPages(pool as *mut c_void, 1, pages.as_ptr().add(1)),
+                pool as *mut c_void
+            );
+            (pool as *mut u8).write(2);
+            assert!(alias_pages(dst, &[pool]));
+            assert_eq!((dst as *const u8).read(), 2);
+            // unmapped, then freed: no longer a source
+            assert_eq!(
+                XMemMapPhysicalPages(pool as *mut c_void, 1, std::ptr::null()),
+                pool as *mut c_void
+            );
+            assert!(!alias_pages(dst, &[pool]));
+            let (pool2, pages2) = region_with_pages(1, 1);
+            assert!(alias_pages(dst, &[pool2]));
+            assert_eq!(XMemFreePhysicalPages(1, pages2.as_ptr()), 1);
+            assert!(!alias_pages(dst, &[pool2]));
         }
     }
 

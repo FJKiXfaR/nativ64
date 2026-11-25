@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::d3d12::command::Command;
 use crate::d3d12::device::E_INVALIDARG;
 use crate::d3d12::object::{guid, hand_out, with_child_methods, PAGEABLE_IIDS};
-use crate::d3d12::{fence, list, present};
+use crate::d3d12::{fence, list, present, resource};
 use crate::xobj::{Guid, Iface, SlotTable, XObject, HRESULT, S_OK};
 
 /// `D3D12_COMMAND_QUEUE_DESC` (PC form).
@@ -64,6 +64,7 @@ static TABLE: SlotTable<36> =
         .with(17, wait as *const ())
         .with(18, get_timestamp_frequency as *const ())
         .with(28, get_desc as *const ())
+        .with(31, copy_page_mappings_batch_x as *const ())
         .with(32, present_x as *const ())
         .with(34, signal_x as *const ())
         .with(35, execute_command_lists_x as *const ());
@@ -127,6 +128,111 @@ unsafe extern "win64" fn signal_x(
     _top: *const u8,
 ) -> HRESULT {
     signal(this, fence, value)
+}
+
+/// One `Batch` of `CopyPageMappingsBatchX`: `{ u64 destination; u32 count; const Range *ranges }`.
+#[repr(C)]
+struct PageBatch {
+    destination: u64,
+    count: u32,
+    ranges: *const [u32; 3],
+}
+
+const PAGE: u64 = 64 << 10;
+
+/// Reports a range that failed, once per kind of failure.
+fn page_failure(slot: usize, what: std::fmt::Arguments) {
+    static LOGGED: [std::sync::Once; 4] = [
+        std::sync::Once::new(),
+        std::sync::Once::new(),
+        std::sync::Once::new(),
+        std::sync::Once::new(),
+    ];
+    LOGGED[slot].call_once(|| eprintln!("CopyPageMappingsBatchX: failed: {what}"));
+}
+
+/// Slot 31, `CopyPageMappingsBatchX(count, batches, pool, pool_pages, flags)`: from each batch's
+/// destination, every range maps pool pages there (kind 0 one to one, 1 one page repeated, 2
+/// unmapped, 3 left alone) as aliases of the pool's memory. A bad range fails alone, logged once.
+///
+/// `pool` is a `RegisterPagePoolX` handle or the pool's address (the first call logs it raw).
+///
+/// shortcut: done at once, not after the queue's earlier work (nothing is in flight).
+unsafe extern "win64" fn copy_page_mappings_batch_x(
+    _this: *mut c_void,
+    count: u32,
+    batches: *const PageBatch,
+    pool: u64,
+    pool_pages: u32,
+    flags: u32,
+) -> HRESULT {
+    static FIRST: std::sync::Once = std::sync::Once::new();
+    FIRST.call_once(|| {
+        eprintln!(
+            "CopyPageMappingsBatchX: first call count={count} batches={batches:p} pool={pool:#x} \
+             pool_pages={pool_pages} flags={flags:#x}"
+        );
+    });
+    if count == 0 {
+        return S_OK;
+    }
+    if batches.is_null() {
+        return E_INVALIDARG;
+    }
+    let base = resource::page_pool_address(pool).unwrap_or(pool);
+    for b in std::slice::from_raw_parts(batches, count as usize) {
+        if b.count == 0 {
+            continue;
+        }
+        if b.ranges.is_null() {
+            page_failure(
+                0,
+                format_args!("batch with {} ranges and no ranges", b.count),
+            );
+            continue;
+        }
+        let mut at = b.destination;
+        for &[kind, start, n] in std::slice::from_raw_parts(b.ranges, b.count as usize) {
+            let (from, to) = (u64::from(start), u64::from(start) + u64::from(n));
+            let _ = match kind {
+                3 => true,
+                2 => {
+                    let done = crate::xmem::unmap_pages(at as usize, n as usize);
+                    if !done {
+                        page_failure(3, format_args!("cannot unmap {n} pages at {at:#x}"));
+                    }
+                    done
+                }
+                0 if to > u64::from(pool_pages) => {
+                    page_failure(1, format_args!("range {start}+{n} past {pool_pages} pages"));
+                    false
+                }
+                1 if start >= pool_pages => {
+                    page_failure(1, format_args!("range {start}+{n} past {pool_pages} pages"));
+                    false
+                }
+                0 | 1 => {
+                    let src: Vec<usize> = (0..u64::from(n))
+                        .map(|i| (base + (from + if kind == 0 { i } else { 0 }) * PAGE) as usize)
+                        .collect();
+                    let done = crate::xmem::alias_pages(at as usize, &src);
+                    if !done {
+                        page_failure(
+                            2,
+                            format_args!("pool page at {:#x} is not physical memory", src[0]),
+                        );
+                    }
+                    done
+                }
+                _ => {
+                    page_failure(1, format_args!("range kind {kind}"));
+                    false
+                }
+            };
+            at += u64::from(n) * PAGE;
+        }
+    }
+    S_OK
 }
 
 /// Slot 32, `PresentX(plane_count, planes, params)`: see `present.rs`.
@@ -401,6 +507,82 @@ mod tests {
             let n = std::ptr::null();
             assert_eq!(p(q, 0, n, n), S_OK);
             assert_eq!(p(q, 1, n, n), S_OK);
+            XObject::<QueueData>::release(q);
+        }
+    }
+
+    #[test]
+    fn copy_page_mappings_aliases_the_pool() {
+        type Copy =
+            unsafe extern "win64" fn(*mut c_void, u32, *const PageBatch, u64, u32, u32) -> HRESULT;
+        use crate::xmem::{XMemAllocatePhysicalPages, XMemMapPhysicalPages, XMemVirtualAlloc};
+        const P: usize = 64 << 10;
+        unsafe {
+            let q = queue();
+            assert_eq!(slot(q, 31), copy_page_mappings_batch_x as *const ());
+            let f: Copy = std::mem::transmute(slot(q, 31));
+            let area =
+                |n: usize| XMemVirtualAlloc(std::ptr::null_mut(), n * P, 0x2000, 3, 4) as usize;
+            let pool = area(2);
+            let mut n = 2usize;
+            let mut pages = [0usize; 2];
+            assert_eq!(XMemAllocatePhysicalPages(0, &mut n, pages.as_mut_ptr()), 1);
+            assert_eq!(
+                XMemMapPhysicalPages(pool as *mut c_void, 2, pages.as_ptr()),
+                pool as *mut c_void
+            );
+            (pool as *mut u8).write(5);
+            ((pool + P) as *mut u8).write(6);
+            let mut handle = 0usize;
+            assert_eq!(
+                resource::register_page_pool(std::ptr::null_mut(), pool as u64, 2, &mut handle),
+                S_OK
+            );
+            // kind 0 (two pages), 3 (skip one), 1 (page 1 twice), 2 (unmap), then a bad kind
+            let ranges = [
+                [0u32, 0, 2],
+                [3, 0, 1],
+                [1, 1, 2],
+                [2, 0, 1],
+                [9, 0, 1],
+                [0, 1, 5],
+            ];
+            for (pool_arg, dst) in [(handle as u64, area(8)), (pool as u64, area(8))] {
+                let batch = PageBatch {
+                    destination: dst as u64,
+                    count: ranges.len() as u32,
+                    ranges: ranges.as_ptr(),
+                };
+                assert_eq!(f(q, 1, &batch, pool_arg, 2, 0), S_OK);
+                assert_eq!((dst as *const u8).read(), 5);
+                assert_eq!(((dst + P) as *const u8).read(), 6);
+                assert_eq!(((dst + 3 * P) as *const u8).read(), 6);
+                assert_eq!(((dst + 4 * P) as *const u8).read(), 6);
+                // the unmapped page reads zero
+                assert_eq!(((dst + 5 * P) as *const u8).read(), 0);
+                // the failed ranges map nothing: that page is still only reserved
+                let info = nativ64::api_ms_win_core_memory::query(dst + 6 * P).unwrap();
+                assert_ne!(info.state, 0x1000);
+                ((dst + 3 * P) as *mut u8).add(1).write(7);
+                assert_eq!(((pool + P) as *const u8).add(1).read(), 7);
+            }
+            // no batches is fine; a NULL array with a count is not
+            assert_eq!(f(q, 0, std::ptr::null(), 0, 0, 0), S_OK);
+            assert_eq!(f(q, 1, std::ptr::null(), 0, 0, 0), E_INVALIDARG);
+            // NULL ranges and empty batches are skipped
+            let bad = [
+                PageBatch {
+                    destination: 0,
+                    count: 3,
+                    ranges: std::ptr::null(),
+                },
+                PageBatch {
+                    destination: 0,
+                    count: 0,
+                    ranges: std::ptr::null(),
+                },
+            ];
+            assert_eq!(f(q, 2, bad.as_ptr(), pool as u64, 2, 0), S_OK);
             XObject::<QueueData>::release(q);
         }
     }
