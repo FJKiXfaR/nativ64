@@ -1,4 +1,4 @@
-# Audio: `AcpHal.dll` and `xapu.dll`
+# Audio: `AcpHal.dll`, `xapu.dll` and `chad.dll`
 
 Code: `crates/nativ64/src/acphal.rs` and `xapu.rs`. Both are console DLLs, not API sets.
 
@@ -83,4 +83,14 @@ shared. "VI" and "XCL" below name them.
 - XMA and Opus decoding into the title's buffers.
 - Output through the host. The title also asks COM for `{BCDE0395-E52F-467C-8E3D-C4579291692E}`
   (MMDeviceEnumerator), currently refused.
-- `chad.dll` (the processor's DSP): `XDspConnectWithMaximumStreamLimit` is the next import hit.
+
+## `chad.dll` (the processor's DSP)
+
+Imports used by the title: `XDspConnectWithMaximumStreamLimit`, `XDspActivate`,
+`XDspSubmitCommand`, `XDspDeactivate`, `XDspDisconnect`. Both references agree: the DSP gets no
+commands in observed runs, and a retail title stops at a breakpoint when connecting fails.
+`XDspConnectWithMaximumStreamLimit(a, b, c, max streams, flags, &handle)` returns a handle; the
+other four take the handle first. Here (`chad.rs`) connect succeeds with a heap-allocated handle
+(null `&handle` is refused), the other calls accept a live handle and do nothing, and a null,
+unknown or already disconnected handle gets `E_INVALIDARG`. Shortcut: the arguments after the
+handle are not read; nothing is run.
