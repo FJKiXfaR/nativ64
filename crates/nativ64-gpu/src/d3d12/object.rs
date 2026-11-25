@@ -16,6 +16,8 @@ use crate::xobj::{
 
 /// `S_FALSE`: creation would succeed (the title passed no output pointer).
 pub const S_FALSE: HRESULT = 1;
+/// `E_OUTOFMEMORY`.
+pub const E_OUTOFMEMORY: HRESULT = 0x8007_000E_u32 as i32;
 /// `DXGI_ERROR_NOT_FOUND`: private data absent.
 pub const NOT_FOUND: HRESULT = 0x887A_0002_u32 as i32;
 /// `DXGI_ERROR_MORE_DATA`: the buffer is too small.

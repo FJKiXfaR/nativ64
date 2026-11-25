@@ -2,6 +2,7 @@
 
 pub mod allocator;
 pub mod command;
+pub mod descriptor;
 pub mod device;
 pub mod fence;
 pub mod frame;
@@ -10,3 +11,4 @@ pub mod list;
 pub mod list_record;
 pub mod object;
 pub mod queue;
+pub mod resource;

@@ -165,6 +165,18 @@ The executable imports from `d3d12_xs` only `D3D12XboxCreateDevice` and
   about 23k lines (decoder 3.6k, IR + structuring 3.3k, resources 3.6k, DXIL emitter 19k): it
   is the long part, with its own spec before any code.
 
+### Deviations decided during G1
+
+- **View descriptors are ours, not RDNA2.** A CBV/SRV/UAV/sampler written through the device
+  holds a tag and an index into our view registry (32 or 16 bytes, RTV/DSV in 128), so the
+  title's byte copies of descriptors keep working. RDNA2 decoding is only needed if the
+  title writes raw descriptors itself: the inline CBV path does, but our device's flag at
+  +0x18 turns it off. Translated shaders (G4) will read the index.
+- **Texture sizes need the real GFX10 layout.** Texture data in the archives is stored in
+  the console's swizzled layout, so `GetResourceAllocationInfo`, `xg_xs` and the upload
+  detiler must agree with the hardware's addressing (swizzle modes, mip tail, pitch). Own
+  spec: `docs/textures.md`.
+
 ### Validation
 
 - Unit tests per object (slots, refcounts, recorded commands) with the null backend; Vulkan

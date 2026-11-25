@@ -117,6 +117,49 @@ static DEVICE_TABLE: SlotTable<160> = SlotTable::new(Iface::Device)
     )
     .with(8, crate::d3d12::queue::create_command_queue as *const ())
     .with(
+        14,
+        crate::d3d12::descriptor::create_descriptor_heap as *const (),
+    )
+    .with(
+        17,
+        crate::d3d12::descriptor::create_constant_buffer_view as *const (),
+    )
+    .with(
+        18,
+        crate::d3d12::descriptor::create_shader_resource_view as *const (),
+    )
+    .with(
+        19,
+        crate::d3d12::descriptor::create_unordered_access_view as *const (),
+    )
+    .with(
+        20,
+        crate::d3d12::descriptor::create_render_target_view as *const (),
+    )
+    .with(
+        21,
+        crate::d3d12::descriptor::create_depth_stencil_view as *const (),
+    )
+    .with(22, crate::d3d12::descriptor::create_sampler as *const ())
+    .with(23, crate::d3d12::descriptor::copy_descriptors as *const ())
+    .with(
+        24,
+        crate::d3d12::descriptor::copy_descriptors_simple as *const (),
+    )
+    .with(
+        70,
+        crate::d3d12::descriptor::create_placed_shader_resource_view as *const (),
+    )
+    .with(
+        71,
+        crate::d3d12::descriptor::create_placed_unordered_access_view as *const (),
+    )
+    .with(
+        25,
+        crate::d3d12::resource::get_resource_allocation_info as *const (),
+    )
+    .with(133, crate::d3d12::resource::create_at_address as *const ())
+    .with(
         26,
         crate::d3d12::info::get_custom_heap_properties as *const (),
     );
