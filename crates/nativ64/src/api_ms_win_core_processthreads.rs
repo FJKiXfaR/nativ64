@@ -10,6 +10,8 @@ const ERROR_NOT_ENOUGH_MEMORY: u32 = 8;
 /// 64 slots plus 1024 expansion slots, as Windows.
 const MAX_TLS: usize = 1088;
 
+const STARTUPINFO_SIZE: usize = 104;
+
 static TLS: SlotTable = SlotTable::new(MAX_TLS);
 
 thread_local! {
@@ -97,6 +99,17 @@ win32! {
             }
         }
     }
+    // STARTUPINFOW/A are 104 bytes; a process started without startup options has every
+    // field zero but `cb` (no std handles, no window placement, NULL desktop and title).
+    Native fn GetStartupInfoW(info: *mut u8) {
+        if !info.is_null() {
+            std::ptr::write_bytes(info, 0, STARTUPINFO_SIZE);
+            *(info as *mut u32) = STARTUPINFO_SIZE as u32;
+        }
+    }
+    Native fn GetStartupInfoA(info: *mut u8) {
+        GetStartupInfoW(info)
+    }
     Native fn TlsSetValue(index: u32, value: *mut c_void) -> i32 {
         if TLS.set(index, value as usize, &TLS_VALUES) {
             1
@@ -110,6 +123,18 @@ win32! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn startup_info() {
+        unsafe {
+            let mut b = [0xAAu8; 112];
+            GetStartupInfoW(b.as_mut_ptr());
+            assert_eq!(u32::from_le_bytes(b[..4].try_into().unwrap()), 104);
+            assert!(b[4..104].iter().all(|&x| x == 0));
+            assert_eq!(b[104], 0xAA);
+            GetStartupInfoA(std::ptr::null_mut());
+        }
+    }
 
     #[test]
     fn ids() {

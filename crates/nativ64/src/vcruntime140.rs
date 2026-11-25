@@ -74,6 +74,20 @@ win32! {
             p = p.add(1);
         }
     }
+    // Wide `strrchr`: `c` is a UTF-16 unit; the terminating NUL is part of the string.
+    Native fn wcsrchr(s: *const u16, c: u16) -> *const u16 {
+        let mut p = s;
+        let mut found = std::ptr::null();
+        loop {
+            if *p == c {
+                found = p;
+            }
+            if *p == 0 {
+                return found;
+            }
+            p = p.add(1);
+        }
+    }
     // An empty needle matches at the start of the haystack.
     Native fn strstr(h: *const c_char, n: *const c_char) -> *const c_char {
         let nl = std::ffi::CStr::from_ptr(n).to_bytes();
@@ -96,6 +110,7 @@ mod tests {
     fn registered_both_names() {
         for n in [
             "memchr", "memcmp", "memcpy", "memmove", "memset", "strchr", "strrchr", "strstr",
+            "wcsrchr",
         ] {
             assert!(crate::lookup("VCRUNTIME140.dll", n).is_some(), "{n}");
             assert!(crate::lookup("ucrtbase", n).is_some(), "{n}");
@@ -146,6 +161,10 @@ mod tests {
             assert_eq!(strrchr(s, b'b' as c_int), s.add(4));
             assert_eq!(strchr(s, 0), s.add(6));
             assert_eq!(strrchr(s, 0), s.add(6));
+            let w: [u16; 7] = [97, 98, 99, 97, 98, 99, 0];
+            assert_eq!(wcsrchr(w.as_ptr(), 98), w.as_ptr().add(4));
+            assert_eq!(wcsrchr(w.as_ptr(), 0), w.as_ptr().add(6));
+            assert!(wcsrchr(w.as_ptr(), 122).is_null());
             assert!(strchr(s, b'z' as c_int).is_null());
             assert!(strrchr(s, b'z' as c_int).is_null());
             assert_eq!(strstr(s, c"ca".as_ptr()), s.add(2));

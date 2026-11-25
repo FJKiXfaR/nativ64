@@ -30,6 +30,7 @@ pub mod api_ms_win_crt_time;
 pub mod api_ms_win_crt_utility;
 
 mod handles;
+pub mod msvcp140;
 pub mod printf;
 pub mod process;
 mod scanf;
@@ -63,6 +64,7 @@ pub static TABLES: &[&[Export]] = &[
     api_ms_win_crt_string::EXPORTS,
     api_ms_win_crt_time::EXPORTS,
     api_ms_win_crt_utility::EXPORTS,
+    msvcp140::EXPORTS,
     vcruntime140::EXPORTS,
 ];
 
