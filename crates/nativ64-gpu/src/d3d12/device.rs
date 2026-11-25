@@ -134,6 +134,11 @@ static DEVICE_TABLE: SlotTable<160> = SlotTable::new(Iface::Device)
     .with(11, crate::d3d12::pipeline::create_compute as *const ())
     .with(62, crate::d3d12::pipeline::create_compute_x as *const ())
     .with(86, crate::d3d12::pipeline::create_stream as *const ())
+    .with(52, crate::d3d12::pipeline::set_debug_flags_x as *const ())
+    .with(56, crate::d3d12::pipeline::serialize_x as *const ())
+    .with(66, crate::d3d12::pipeline::serialize_x as *const ())
+    .with(57, crate::d3d12::pipeline::deserialize_x as *const ())
+    .with(67, crate::d3d12::pipeline::deserialize_x as *const ())
     .with(
         17,
         crate::d3d12::descriptor::create_constant_buffer_view as *const (),

@@ -37,6 +37,7 @@ APIs only (libc as its only dependency).
   topology type, sample description, deep-copied input layout and the raw description or stream.
   Nothing is compiled (G4). Null description, compute without code, unknown or overrunning stream
   subobject (logged) are E_INVALIDARG; null `out` is S_FALSE.
+- `d3d12/pipeline.rs` (console extras): `DeserializeGraphicsPipelineStateX` / `DeserializeComputePipelineStateX` (57, 67: `*out` cleared, E_NOTIMPL, warns once), `SerializePipelineStateX` (56, 66: E_ACCESSDENIED), `SetDebugFlagsX` (52: S_OK).
 - `d3d12/query.rs`: `CreateQueryHeap` (slot 39): keeps the description only; no results yet.
 - `d3d12/descriptor.rs`: `CreateSamplerX` (slot 61, `+0x1e8`) records the console's 27-word sampler as
   `View::ConsoleSampler`.

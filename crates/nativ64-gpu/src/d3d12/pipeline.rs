@@ -290,6 +290,50 @@ pub unsafe extern "win64" fn create_compute_x(
     create_compute(this, desc, iid, out)
 }
 
+/// `E_NOTIMPL`.
+const E_NOTIMPL: HRESULT = 0x8000_4001_u32 as i32;
+/// `E_ACCESSDENIED`.
+const E_ACCESSDENIED: HRESULT = 0x8007_0005_u32 as i32;
+
+/// The console's `Deserialize{Graphics,Compute}PipelineStateX(state, riid, out)` (device slots 57
+/// and 67): the cache is the console driver's format, so `*out` is cleared and `E_NOTIMPL` makes
+/// the title create the pipeline from its description. Warns once.
+///
+/// # Safety
+/// `out` is NULL or writable.
+pub unsafe extern "win64" fn deserialize_x(
+    _this: *mut c_void,
+    _state: *const u8,
+    _iid: *const Guid,
+    out: *mut *mut c_void,
+) -> HRESULT {
+    static WARNED: std::sync::Once = std::sync::Once::new();
+    WARNED.call_once(|| {
+        eprintln!("nativ64: DeserializePipelineStateX: console pipeline caches are not supported");
+    });
+    if !out.is_null() {
+        *out = std::ptr::null_mut();
+    }
+    E_NOTIMPL
+}
+
+/// The console's `SerializePipelineStateX(pso, ...)` (device slots 56 and 66): not available in a
+/// release runtime, `E_ACCESSDENIED`.
+///
+/// # Safety
+/// Nothing is read.
+pub unsafe extern "win64" fn serialize_x(_this: *mut c_void, _pso: *mut c_void) -> HRESULT {
+    E_ACCESSDENIED
+}
+
+/// The console's `SetDebugFlagsX(flags)` (device slot 52): accepted and ignored.
+///
+/// # Safety
+/// Nothing is read.
+pub unsafe extern "win64" fn set_debug_flags_x(_this: *mut c_void, _flags: u32) -> HRESULT {
+    0
+}
+
 /// A stream subobject type's size (type included), and the stage it is if it is a shader.
 fn subobject(kind: u32) -> Option<(usize, Option<&'static str>)> {
     let shader = |name| Some((24, Some(name)));
@@ -431,6 +475,24 @@ mod tests {
         };
         assert_eq!(hr, S_OK);
         (r, blob)
+    }
+
+    #[test]
+    fn console_cache_and_debug_slots() {
+        let mut out = 0x1234 as *mut c_void;
+        unsafe {
+            assert_eq!(
+                deserialize_x(N, std::ptr::null(), std::ptr::null(), &mut out),
+                E_NOTIMPL
+            );
+            assert!(out.is_null());
+            assert_eq!(
+                deserialize_x(N, std::ptr::null(), std::ptr::null(), std::ptr::null_mut()),
+                E_NOTIMPL
+            );
+            assert_eq!(serialize_x(N, N), E_ACCESSDENIED);
+            assert_eq!(set_debug_flags_x(N, 7), 0);
+        }
     }
 
     #[test]
