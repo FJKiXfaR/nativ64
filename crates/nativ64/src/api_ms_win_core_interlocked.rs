@@ -17,6 +17,7 @@
 //!
 //! Functions are registered under their API set and under `kernel32`.
 
+#[cfg(not(nativ64_tsan))]
 use std::arch::asm;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -35,7 +36,22 @@ fn require_cx16() {
     }
 }
 
+/// ThreadSanitizer cannot see the `cmpxchg16b` below as synchronization, so its CI build
+/// (`--cfg nativ64_tsan`) swaps it for a lock and release stores with the same effect.
+#[cfg(nativ64_tsan)]
+unsafe fn cas(h: *mut SListHeader, old: (u64, u64), new: (u64, u64)) -> bool {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _g = LOCK.lock().unwrap();
+    if (*h).low.load(Ordering::Acquire) != old.0 || (*h).high.load(Ordering::Acquire) != old.1 {
+        return false;
+    }
+    (*h).low.store(new.0, Ordering::Release);
+    (*h).high.store(new.1, Ordering::Release);
+    true
+}
+
 /// Replaces `(low, high)` by `new` if the header still holds `old`.
+#[cfg(not(nativ64_tsan))]
 unsafe fn cas(h: *mut SListHeader, old: (u64, u64), new: (u64, u64)) -> bool {
     let ok: u8;
     asm!(
@@ -77,7 +93,8 @@ win32! {
         require_cx16();
         loop {
             let (low, high) = load(h);
-            *entry = high as usize;
+            // Atomic: a popper may still read the link of an entry being pushed again.
+            AtomicU64::from_ptr(entry as *mut u64).store(high, Ordering::Relaxed);
             if cas(h, (low, high), (next_low(low, 1), entry as u64)) {
                 return high as *mut usize;
             }
@@ -90,7 +107,7 @@ win32! {
             if high == 0 {
                 return std::ptr::null_mut();
             }
-            let next = *(high as *const u64);
+            let next = AtomicU64::from_ptr(high as *mut u64).load(Ordering::Relaxed);
             if cas(h, (low, high), (next_low(low, -1), next)) {
                 return high as *mut usize;
             }

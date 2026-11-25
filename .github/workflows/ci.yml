@@ -21,6 +21,6 @@ jobs:
           components: rust-src
       - run: cargo test -Zbuild-std --target x86_64-unknown-linux-gnu -p nativ64
         env:
-          RUSTFLAGS: -Zsanitizer=thread
+          RUSTFLAGS: -Zsanitizer=thread --cfg nativ64_tsan
           RUSTDOCFLAGS: -Zsanitizer=thread
           TSAN_OPTIONS: halt_on_error=1
