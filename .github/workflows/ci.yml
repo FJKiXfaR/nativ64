@@ -23,4 +23,4 @@ jobs:
         env:
           RUSTFLAGS: -Zsanitizer=thread --cfg nativ64_tsan
           RUSTDOCFLAGS: -Zsanitizer=thread
-          TSAN_OPTIONS: halt_on_error=1
+          TSAN_OPTIONS: halt_on_error=1 allocator_may_return_null=1
