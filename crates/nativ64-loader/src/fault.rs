@@ -1,6 +1,6 @@
 //! Crash and timeout reporting for guest code.
 
-use std::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 
 static IMAGE_BASE: AtomicU64 = AtomicU64::new(0);
 static IMAGE_SIZE: AtomicUsize = AtomicUsize::new(0);
@@ -12,6 +12,8 @@ static DLL_END: [AtomicU64; MAX_DLLS] = [const { AtomicU64::new(0) }; MAX_DLLS];
 static DLL_NAME: [[AtomicU8; NAME_LEN]; MAX_DLLS] =
     [const { [const { AtomicU8::new(0) }; NAME_LEN] }; MAX_DLLS];
 const ALT_STACK: usize = 64 * 1024;
+/// `NATIV64_NO_SEH=1`: faults are reported, not turned into guest exceptions.
+static NO_SEH: AtomicBool = AtomicBool::new(false);
 
 struct Buf {
     b: [u8; 512],
@@ -34,28 +36,8 @@ fn say(args: std::fmt::Arguments) {
     unsafe { libc::write(2, b.b.as_ptr().cast(), b.n) };
 }
 
-extern "C" fn on_fault(sig: i32, info: *mut libc::siginfo_t, uc: *mut libc::c_void) {
-    if sig == libc::SIGILL && unsafe { emulate_cpu_gap(uc as *mut libc::ucontext_t) } {
-        return;
-    }
-    let (addr, rip) = unsafe {
-        let uc = uc as *mut libc::ucontext_t;
-        (
-            (*info).si_addr() as usize,
-            (*uc).uc_mcontext.gregs[libc::REG_RIP as usize] as u64,
-        )
-    };
-    let name = match sig {
-        libc::SIGSEGV => "SIGSEGV",
-        libc::SIGILL => "SIGILL",
-        libc::SIGBUS => "SIGBUS",
-        libc::SIGFPE => "SIGFPE",
-        libc::SIGTRAP => "SIGTRAP",
-        _ => "signal",
-    };
-    say(format_args!(
-        "nativ64: fatal {name} ({sig}) at address {addr:#x}, rip {rip:#x}"
-    ));
+/// Prints `image+0xOFF` / `dll+0xOFF` for a guest `rip`.
+fn say_location(rip: u64) {
     let base = IMAGE_BASE.load(Ordering::Relaxed);
     let size = IMAGE_SIZE.load(Ordering::Relaxed) as u64;
     if base != 0 && rip >= base && rip < base + size {
@@ -76,6 +58,155 @@ extern "C" fn on_fault(sig: i32, info: *mut libc::siginfo_t, uc: *mut libc::c_vo
             ));
         }
     }
+}
+
+/// The report of an exception nobody handled (`nativ64::seh`'s fatal hook): same shape as a
+/// fault in host code, then ends the process.
+fn report_unhandled(rec: *const nativ64::seh::ExceptionRecord) {
+    let r = unsafe { &*rec };
+    say(format_args!(
+        "nativ64: fatal exception {:#x} at address {:#x}, rip {:#x}",
+        r.code, r.info[1], r.address
+    ));
+    say_location(r.address as u64);
+    say(format_args!("\n"));
+    unsafe { libc::_exit(139) }
+}
+
+const STATUS_ACCESS_VIOLATION: u32 = 0xc000_0005;
+const STATUS_BREAKPOINT: u32 = 0x8000_0003;
+const STATUS_ILLEGAL_INSTRUCTION: u32 = 0xc000_001d;
+const STATUS_INTEGER_DIVIDE_BY_ZERO: u32 = 0xc000_0094;
+const STATUS_INTEGER_OVERFLOW: u32 = 0xc000_0095;
+const SI_KERNEL: i32 = 0x80;
+const TRAP_BRKPT: i32 = 1;
+const FPE_INTOVF: i32 = 2;
+
+/// The Windows exception a signal stands for: `(code, info[0..2], nparams, back)` where `back`
+/// is how many bytes `rip` moves back (an `int3` reports the instruction itself). `None` for a
+/// signal that has no counterpart (single-step, ...). `err` is the page-fault error code,
+/// `addr` the faulting address, `si_code` the signal's code.
+fn classify(sig: i32, si_code: i32, err: u64, addr: usize) -> Option<(u32, [usize; 2], u32, u64)> {
+    match sig {
+        libc::SIGSEGV | libc::SIGBUS => {
+            // bit 1: write, bit 4: instruction fetch.
+            let kind = if err & 0x10 != 0 { 8 } else { (err >> 1) & 1 };
+            Some((STATUS_ACCESS_VIOLATION, [kind as usize, addr], 2, 0))
+        }
+        libc::SIGILL => Some((STATUS_ILLEGAL_INSTRUCTION, [0; 2], 0, 0)),
+        libc::SIGFPE if si_code == FPE_INTOVF => Some((STATUS_INTEGER_OVERFLOW, [0; 2], 0, 0)),
+        libc::SIGFPE => Some((STATUS_INTEGER_DIVIDE_BY_ZERO, [0; 2], 0, 0)),
+        libc::SIGTRAP if si_code == SI_KERNEL || si_code == TRAP_BRKPT => {
+            Some((STATUS_BREAKPOINT, [0; 2], 0, 1))
+        }
+        _ => None,
+    }
+}
+
+/// Whether a fault should become a guest exception: `NATIV64_NO_SEH` unset and the (exception)
+/// address inside a guest image.
+fn dispatchable(rip: u64) -> bool {
+    !NO_SEH.load(Ordering::Relaxed) && in_guest_code(rip)
+}
+
+/// Rewrites the signal context so that returning from the handler runs
+/// [`nativ64::seh::dispatch_fault`] on the guest stack, with the faulting `CONTEXT` and a record
+/// copied there. False (nothing changed) when the stack below the fault is not mapped.
+unsafe fn divert_to_dispatch(
+    uc: *mut libc::ucontext_t,
+    code: u32,
+    info: [usize; 2],
+    nparams: u32,
+    back: u64,
+) -> bool {
+    use nativ64::seh::*;
+    let g = &mut (*uc).uc_mcontext.gregs;
+    let rsp = g[libc::REG_RSP as usize] as u64;
+    let rip = g[libc::REG_RIP as usize] as u64 - back;
+    // Below the red zone: context, record, home space and a fake return address.
+    let top = (rsp.wrapping_sub(128)) & !15;
+    let ctx = top.wrapping_sub(CONTEXT_SIZE as u64);
+    let rec = ctx.wrapping_sub(std::mem::size_of::<ExceptionRecord>() as u64) & !15;
+    let new_rsp = rec.wrapping_sub(0x28);
+    if new_rsp > rsp || !stack_mapped(new_rsp, rsp - new_rsp) {
+        return false;
+    }
+    let c = ctx as *mut u8;
+    std::ptr::write_bytes(c, 0, CONTEXT_SIZE);
+    let put = |off: usize, v: u64| (c.add(off) as *mut u64).write(v);
+    put(CONTEXT_FLAGS_OFF, CONTEXT_CAPTURE_FLAGS as u64);
+    let fp = (*uc).uc_mcontext.fpregs;
+    if !fp.is_null() {
+        std::ptr::copy_nonoverlapping(fp as *const u8, c.add(0x100), 512);
+        (c.add(CONTEXT_MXCSR_OFF) as *mut u32).write((*fp).mxcsr);
+    }
+    (c.add(CONTEXT_SEGCS_OFF) as *mut u16).write(g[libc::REG_CSGSFS as usize] as u16);
+    (c.add(CONTEXT_EFLAGS_OFF) as *mut u32).write(g[libc::REG_EFL as usize] as u32);
+    for (i, r) in GREG.iter().enumerate() {
+        put(CONTEXT_RAX_OFF + 8 * i, g[*r as usize] as u64);
+    }
+    put(CONTEXT_RIP_OFF, rip);
+    let r = rec as *mut ExceptionRecord;
+    r.write(std::mem::zeroed());
+    (*r).code = code;
+    (*r).address = rip as usize;
+    (*r).nparams = nparams;
+    (*r).info[0] = info[0];
+    (*r).info[1] = info[1];
+    (new_rsp as *mut u64).write(0);
+    g[libc::REG_RCX as usize] = rec as i64;
+    g[libc::REG_RDX as usize] = ctx as i64;
+    g[libc::REG_RSP as usize] = new_rsp as i64;
+    g[libc::REG_RIP as usize] = dispatch_fault as *const () as usize as i64;
+    true
+}
+
+/// Whether `[addr, addr + len)` (at most a few pages) is mapped, without faulting.
+fn stack_mapped(addr: u64, len: u64) -> bool {
+    let start = addr & !0xfff;
+    let end = (addr + len + 0xfff) & !0xfff;
+    let mut v = [0u8; 8];
+    let pages = ((end - start) / 4096) as usize;
+    pages <= v.len()
+        && unsafe {
+            libc::mincore(
+                start as *mut libc::c_void,
+                (end - start) as usize,
+                v.as_mut_ptr(),
+            )
+        } == 0
+}
+
+extern "C" fn on_fault(sig: i32, info: *mut libc::siginfo_t, uc: *mut libc::c_void) {
+    if sig == libc::SIGILL && unsafe { emulate_cpu_gap(uc as *mut libc::ucontext_t) } {
+        return;
+    }
+    let uc = uc as *mut libc::ucontext_t;
+    let (addr, rip, code, err) = unsafe {
+        (
+            (*info).si_addr() as usize,
+            (*uc).uc_mcontext.gregs[libc::REG_RIP as usize] as u64,
+            (*info).si_code,
+            (*uc).uc_mcontext.gregs[libc::REG_ERR as usize] as u64,
+        )
+    };
+    if let Some((status, args, n, back)) = classify(sig, code, err, addr) {
+        if dispatchable(rip - back) && unsafe { divert_to_dispatch(uc, status, args, n, back) } {
+            return;
+        }
+    }
+    let name = match sig {
+        libc::SIGSEGV => "SIGSEGV",
+        libc::SIGILL => "SIGILL",
+        libc::SIGBUS => "SIGBUS",
+        libc::SIGFPE => "SIGFPE",
+        libc::SIGTRAP => "SIGTRAP",
+        _ => "signal",
+    };
+    say(format_args!(
+        "nativ64: fatal {name} ({sig}) at address {addr:#x}, rip {rip:#x}"
+    ));
+    say_location(rip);
     say(format_args!("\n"));
     unsafe { libc::_exit(139) }
 }
@@ -98,6 +229,11 @@ unsafe fn handle(sig: i32, f: usize, flags: i32) {
 pub fn install(base: u64, size: usize) {
     IMAGE_BASE.store(base, Ordering::Relaxed);
     IMAGE_SIZE.store(size, Ordering::Relaxed);
+    NO_SEH.store(
+        std::env::var_os("NATIV64_NO_SEH").is_some_and(|v| v != "0" && !v.is_empty()),
+        Ordering::Relaxed,
+    );
+    nativ64::seh::set_fatal_hook(report_unhandled);
     for sig in [
         libc::SIGSEGV,
         libc::SIGILL,
@@ -491,6 +627,7 @@ mod tests {
         if has {
             return;
         }
+        let _g = GUEST.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             let page = libc::mmap(
                 std::ptr::null_mut(),
@@ -518,5 +655,209 @@ mod tests {
                 assert_eq!(*data.add(i) == 0, inside, "byte {i}");
             }
         }
+    }
+
+    // ---- faults turned into guest exceptions ----
+
+    use nativ64::api_ms_win_core_errorhandling::AddVectoredExceptionHandler;
+    use nativ64::seh::{ExceptionPointers, CONTEXT_RIP_OFF};
+    use std::sync::atomic::AtomicU32;
+    use std::sync::OnceLock;
+
+    const REGION: usize = 0x10000;
+    /// Tests that call `install` (it sets the process-wide image range) run one at a time.
+    static GUEST: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static CODE: OnceLock<usize> = OnceLock::new();
+    static SEEN_DIVIDE: AtomicU32 = AtomicU32::new(0);
+    static SEEN_BREAK: AtomicU32 = AtomicU32::new(0);
+
+    /// Vectored handler: skips the `int3` and the `div ecx` of the test functions (matched by
+    /// address, so other tests' exceptions pass through).
+    unsafe extern "win64" fn skipper(p: *mut ExceptionPointers) -> i32 {
+        let rec = &*(*p).record;
+        let base = *CODE.get().unwrap();
+        if rec.address < base || rec.address >= base + REGION {
+            return 0;
+        }
+        let rip = ((*p).context.add(CONTEXT_RIP_OFF)) as *mut u64;
+        match rec.code {
+            STATUS_BREAKPOINT => {
+                assert_eq!(rec.address, base + 0x1104, "int3 address");
+                SEEN_BREAK.store(1, Ordering::SeqCst);
+                *rip += 1;
+                -1
+            }
+            STATUS_INTEGER_DIVIDE_BY_ZERO => {
+                SEEN_DIVIDE.store(1, Ordering::SeqCst);
+                *rip += 2;
+                -1
+            }
+            _ => 0,
+        }
+    }
+
+    fn put(base: usize, off: usize, bytes: &[u8]) {
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), (base + off) as *mut u8, bytes.len())
+        }
+    }
+
+    /// Maps the generated guest code once, installs the handlers like the loader does and
+    /// returns its base (with the guard that serializes the tests using `install`).
+    ///
+    /// Functions (RVA 0x1000 + 0x100 i, unwind info at 0x2000 + 0x100 i, stub at 0x3000):
+    /// 0 `__try { *NULL } __except (1) { return 7 }`, 1 `int3; return 42`,
+    /// 2 `1 / 0` (returns 5 once skipped).
+    fn code() -> (std::sync::MutexGuard<'static, ()>, usize) {
+        let guard = GUEST.lock().unwrap_or_else(|e| e.into_inner());
+        let base = *CODE.get_or_init(|| {
+            let p = unsafe {
+                libc::mmap(
+                    std::ptr::null_mut(),
+                    REGION,
+                    libc::PROT_READ | libc::PROT_WRITE | libc::PROT_EXEC,
+                    libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                    -1,
+                    0,
+                )
+            };
+            assert_ne!(p, libc::MAP_FAILED);
+            let b = p as usize;
+            // jmp [rip+0] to __C_specific_handler
+            put(b, 0x3000, &[0xff, 0x25, 0, 0, 0, 0]);
+            let h = nativ64::vcruntime140::__C_specific_handler as *const () as u64;
+            put(b, 0x3006, &h.to_le_bytes());
+            let info = |flags: u8, scopes: &[[u32; 4]]| {
+                let mut v = vec![1 | flags << 3, 4, 1, 0, 4, 0x42, 0, 0];
+                if flags != 0 {
+                    v.extend_from_slice(&0x3000u32.to_le_bytes());
+                    v.extend_from_slice(&(scopes.len() as u32).to_le_bytes());
+                    for x in scopes.iter().flatten() {
+                        v.extend_from_slice(&x.to_le_bytes());
+                    }
+                }
+                v
+            };
+            let epilogue = [0x48, 0x83, 0xc4, 0x28, 0xc3];
+            let funcs: [(Vec<u8>, Vec<u8>); 3] = [
+                (
+                    // sub rsp,0x28; xor eax,eax; mov eax,[rax]; add rsp,0x28; ret; mov eax,7; ...
+                    [
+                        &[0x48, 0x83, 0xec, 0x28, 0x31, 0xc0, 0x8b, 0x00][..],
+                        &epilogue,
+                        &[0xb8, 7, 0, 0, 0],
+                        &epilogue,
+                    ]
+                    .concat(),
+                    info(1, &[[0x1006, 0x1008, 1, 0x100d]]),
+                ),
+                (
+                    [
+                        &[0x48, 0x83, 0xec, 0x28, 0xcc, 0xb8, 42, 0, 0, 0][..],
+                        &epilogue,
+                    ]
+                    .concat(),
+                    info(0, &[]),
+                ),
+                (
+                    // xor ecx,ecx; mov eax,1; xor edx,edx; div ecx; mov eax,5
+                    [
+                        &[
+                            0x48, 0x83, 0xec, 0x28, 0x31, 0xc9, 0xb8, 1, 0, 0, 0, 0x31, 0xd2, 0xf7,
+                            0xf1, 0xb8, 5, 0, 0, 0,
+                        ][..],
+                        &epilogue,
+                    ]
+                    .concat(),
+                    info(0, &[]),
+                ),
+            ];
+            for (i, (c, u)) in funcs.iter().enumerate() {
+                let (begin, ui) = (0x1000 + 0x100 * i as u32, 0x2000 + 0x100 * i as u32);
+                put(b, begin as usize, c);
+                put(b, ui as usize, u);
+                let rf = [begin, begin + c.len() as u32, ui];
+                for (k, v) in rf.iter().enumerate() {
+                    put(b, 0x800 + 12 * i + 4 * k, &v.to_le_bytes());
+                }
+            }
+            assert!(nativ64::seh::add_function_table(b + 0x800, 3, b));
+            unsafe { AddVectoredExceptionHandler(0, skipper as *const () as usize) };
+            b
+        });
+        // The image range is process-wide: take it over for this test (see `GUEST`).
+        install(base as u64, REGION);
+        setup_thread();
+        (guard, base)
+    }
+
+    fn call(base: usize, rva: usize) -> u32 {
+        let f: extern "win64" fn() -> u32 = unsafe { std::mem::transmute(base + rva) };
+        f()
+    }
+
+    #[test]
+    fn null_read_in_try_resumes_at_the_except_handler() {
+        let (_g, b) = code();
+        assert_eq!(call(b, 0x1000), 7);
+    }
+
+    #[test]
+    fn int3_under_a_vectored_handler_is_skipped() {
+        let (_g, b) = code();
+        assert_eq!(call(b, 0x1100), 42);
+        assert_eq!(SEEN_BREAK.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn integer_divide_by_zero_raises_c0000094() {
+        let (_g, b) = code();
+        assert_eq!(call(b, 0x1200), 5);
+        assert_eq!(SEEN_DIVIDE.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn signals_map_to_windows_codes() {
+        // page-fault error code: bit 1 write, bit 4 instruction fetch
+        let av = |err| classify(libc::SIGSEGV, 1, err, 0x1234);
+        assert_eq!(av(0), Some((STATUS_ACCESS_VIOLATION, [0, 0x1234], 2, 0)));
+        assert_eq!(av(2).unwrap().1[0], 1);
+        assert_eq!(av(0x14).unwrap().1[0], 8);
+        assert_eq!(
+            classify(libc::SIGBUS, 2, 0, 0).unwrap().0,
+            STATUS_ACCESS_VIOLATION
+        );
+        assert_eq!(
+            classify(libc::SIGILL, 1, 0, 0).unwrap().0,
+            STATUS_ILLEGAL_INSTRUCTION
+        );
+        assert_eq!(
+            classify(libc::SIGFPE, 1, 0, 0).unwrap().0,
+            STATUS_INTEGER_DIVIDE_BY_ZERO
+        );
+        assert_eq!(
+            classify(libc::SIGFPE, FPE_INTOVF, 0, 0).unwrap().0,
+            STATUS_INTEGER_OVERFLOW
+        );
+        assert_eq!(
+            classify(libc::SIGTRAP, SI_KERNEL, 0, 0),
+            Some((STATUS_BREAKPOINT, [0; 2], 0, 1))
+        );
+        assert_eq!(
+            classify(libc::SIGTRAP, 2, 0, 0),
+            None,
+            "single-step is not an exception"
+        );
+    }
+
+    #[test]
+    fn only_guest_code_is_dispatched() {
+        let (_g, b) = code();
+        let b = b as u64;
+        assert!(dispatchable(b + 0x1000));
+        assert!(!dispatchable(
+            signals_map_to_windows_codes as *const () as u64
+        ));
+        assert!(!dispatchable(0));
     }
 }

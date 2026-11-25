@@ -645,6 +645,33 @@ pub fn take_stopped() -> Vec<(u32, usize)> {
     STOPPED.with(|s| std::mem::take(&mut *s.borrow_mut()))
 }
 
+/// A reporter for unhandled exceptions (the loader's, which names `image+0xOFF` and DLLs). It
+/// gets the record (`code`, `address`, `info`) and should end the process; if it returns, the
+/// default report runs.
+pub type FatalHook = fn(*const ExceptionRecord);
+
+static FATAL_HOOK: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Installs the unhandled-exception reporter.
+pub fn set_fatal_hook(hook: FatalHook) {
+    FATAL_HOOK.store(hook as usize, std::sync::atomic::Ordering::Release);
+}
+
+/// Entry for a hardware fault turned into an exception: the loader's signal handler copies the
+/// `CONTEXT` and `EXCEPTION_RECORD` onto the faulting thread's stack, then resumes the thread
+/// here (as if called, so `rsp` is 8 mod 16). Dispatches like `RaiseException`; resumes the
+/// (possibly changed) context when a handler continued, otherwise reports and ends the process.
+///
+/// # Safety
+/// `rec` and `ctx` must be a valid record and a 16-aligned `CONTEXT` that stay readable and
+/// writable for the whole dispatch (they live on the guest stack below the fault).
+pub unsafe extern "win64" fn dispatch_fault(rec: *mut ExceptionRecord, ctx: *mut u8) -> ! {
+    if !search(rec, ctx) {
+        unhandled(rec, ctx);
+    }
+    nativ64_rtl_restore_context(ctx, std::ptr::null())
+}
+
 /// Reports a fatal exception (`fatal exception 0x… at image+0x…`) and ends the process.
 fn stop(code: u32, address: usize) {
     #[cfg(test)]
@@ -653,6 +680,12 @@ fn stop(code: u32, address: usize) {
     }
     #[cfg(not(test))]
     {
+        let hook = FATAL_HOOK.load(std::sync::atomic::Ordering::Acquire);
+        if hook != 0 {
+            let rec = ExceptionRecord::new(code, 0, address);
+            let hook: FatalHook = unsafe { std::mem::transmute(hook) };
+            hook(&rec);
+        }
         match crate::process::image_base_of(address) {
             Some(b) => eprintln!(
                 "nativ64: fatal exception {code:#x} at image {b:#x}+{:#x}",

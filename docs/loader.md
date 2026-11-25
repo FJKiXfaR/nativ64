@@ -65,7 +65,8 @@ executable without any compatibility layer, and runs its entry point.
 `nativ64-run <exe>` maps, binds and runs the image; the entry's return value is the exit code.
 `--timeout SECONDS` (default 20, 0 = none) prints `nativ64: timeout` and exits 124. A
 SIGSEGV/SIGILL/SIGBUS/SIGFPE/SIGTRAP (an `int3`) in guest code (handled on a sigaltstack, see `fault.rs`) prints the
-signal, fault address, RIP and `image+0xOFFSET` when RIP is inside the image, then exits 139. A
+signal, fault address, RIP and `image+0xOFFSET` when RIP is inside the image, then exits 139. In guest code (and `NATIV64_NO_SEH` unset) the fault first becomes a Windows exception
+(docs/seh.md); only an unhandled one prints that report. A
 trap stub aborts (SIGABRT). `nativ64-run --check <exe>` only maps and binds, printing the base,
 entry point, section count and import statistics, the first 20 unresolved imports, the loaded
 package DLLs (base, path, import and unresolved counts) and the unresolved imports per module
@@ -85,7 +86,9 @@ Other Zen-only instructions are reported as faults, not emulated, until a title 
 
 ## Not done yet
 
-- Structured exception handling (`.pdata` unwind tables, vectored handlers).
+- Structured exception handling is done (docs/seh.md); guard-page faults and stack overflow
+  (`0xC00000FD`) are not raised, and the shipped vcruntime C++ exceptions were not run on the
+  real title yet.
 - Delay-load imports. Ordinal imports resolve only against a package DLL (nativ64 has an
   ordinal table for `ws2_32` only).
 - `LoadLibrary*` of a package DLL that was not an import: only the DLLs mapped at start are

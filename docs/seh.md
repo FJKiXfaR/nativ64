@@ -1,6 +1,6 @@
 # Structured exception handling (SEH) and C++ exceptions
 
-Status: design (2026-11-25). Chunks at the end; each is one Sonnet agent.
+Status: chunks 1-3 implemented (2026-11-26). Chunks at the end; each is one Sonnet agent.
 
 ## Role
 
@@ -120,11 +120,24 @@ the thread-name request, vectored handlers are stored, never called.
 - In test builds the report-and-stop step records `(code, address)` (`take_stopped`) and
   returns, so a raise returns to its caller after an unhandled exception.
 
+### Implementation notes (chunk 3)
+
+- `fault.rs::on_fault` keeps the clzero emulation first, then `classify` maps the signal (error
+  code from `uc_mcontext` gives read/write/execute) and, for a `rip` in a guest image or DLL
+  (`dispatchable`), `divert_to_dispatch` writes `CONTEXT` + `EXCEPTION_RECORD` 128 bytes
+  (red zone) below the faulting `rsp`, with home space and a null return address, and sets
+  `rip = nativ64::seh::dispatch_fault(rec, ctx)` (rcx, rdx) before the signal returns. The
+  `int3` record and context carry the `int3` address (`Rip` moved back by 1).
+- The loader installs `report_unhandled` as the fatal hook: an exception nobody handled prints
+  `fatal exception 0x... at address ..., rip ...` plus `image+0xOFF` / `dll+0xOFF`, exit 139.
+- Not dispatched (plain report): host-code faults, `NATIV64_NO_SEH=1`, a stack whose pages below
+  the fault are not mapped (`mincore` check), signals without counterpart (single-step).
+
 ### Shortcuts
 
 No `__CxxFrameHandler`/`_CxxThrowException` of our own (the shipped vcruntime ones);
 history table unused; guard-page exceptions and stack overflow (`0xC00000FD`) not raised;
-no stack-limit check from the TEB (the walks stop outside the images, when the stack does not
+SIGFPE other than integer overflow is reported as divide by zero (no x87/SSE exception codes); no stack-limit check from the TEB (the walks stop outside the images, when the stack does not
 climb, or after 100000 frames); `NestedException` only sets `NESTED_CALL` (the handler's own
 record is not chained); the `RtlUnwindEx` context argument is only scratch, the unwind runs on
 its own capture; exit unwind (`target_frame` NULL) resumes at `target_ip` in the last context
