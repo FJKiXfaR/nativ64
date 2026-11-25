@@ -18,8 +18,8 @@ const INVALID_FILE_ATTRIBUTES: u32 = 0xFFFF_FFFF;
 const FILE_ATTRIBUTE_READONLY: u32 = 0x1;
 const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
 const FILE_ATTRIBUTE_NORMAL: u32 = 0x80;
-const ERROR_FILE_NOT_FOUND: u32 = 2;
-const ERROR_PATH_NOT_FOUND: u32 = 3;
+pub(crate) const ERROR_FILE_NOT_FOUND: u32 = 2;
+pub(crate) const ERROR_PATH_NOT_FOUND: u32 = 3;
 const ERROR_ACCESS_DENIED: u32 = 5;
 const ERROR_INVALID_HANDLE: u32 = 6;
 const ERROR_FILE_EXISTS: u32 = 80;
@@ -165,7 +165,7 @@ fn attrs_of(m: &std::fs::Metadata) -> u32 {
 }
 
 /// Metadata of a title path: what the title saved first, then the package.
-fn stat_path(path: &str) -> std::io::Result<std::fs::Metadata> {
+pub(crate) fn stat_path(path: &str) -> std::io::Result<std::fs::Metadata> {
     if !path.starts_with('/') {
         if let Some(m) = crate::paths::map_write_path(path).and_then(|p| std::fs::metadata(p).ok())
         {
@@ -375,7 +375,7 @@ fn create_directory(path: &str) -> Result<(), u32> {
     })
 }
 
-fn delete_file(path: &str) -> Result<(), u32> {
+pub(crate) fn delete_file(path: &str) -> Result<(), u32> {
     let host = write_target(path)?;
     match std::fs::symlink_metadata(&host) {
         Ok(m) if m.is_dir() => Err(ERROR_ACCESS_DENIED),

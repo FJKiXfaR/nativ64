@@ -30,6 +30,7 @@ pub mod api_ms_win_core_sysinfo;
 pub mod api_ms_win_core_util;
 pub mod api_ms_win_crt_convert;
 pub mod api_ms_win_crt_environment;
+pub mod api_ms_win_crt_filesystem;
 pub mod api_ms_win_crt_heap;
 pub mod api_ms_win_crt_locale;
 pub mod api_ms_win_crt_math;
@@ -92,6 +93,7 @@ pub static TABLES: &[&[Export]] = &[
     api_ms_win_core_util::EXPORTS,
     api_ms_win_crt_convert::EXPORTS,
     api_ms_win_crt_environment::EXPORTS,
+    api_ms_win_crt_filesystem::EXPORTS,
     api_ms_win_crt_heap::EXPORTS,
     api_ms_win_crt_locale::EXPORTS,
     api_ms_win_crt_math::EXPORTS,
