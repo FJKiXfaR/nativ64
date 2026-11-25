@@ -8,6 +8,7 @@ mod device;
 mod image;
 mod instance;
 mod memory;
+mod swapchain;
 
 use ash::vk;
 use std::collections::HashSet;
@@ -16,6 +17,7 @@ use std::sync::{Mutex, OnceLock};
 
 pub use device::Gpu;
 pub use memory::{AlignedBuf, HostBuffer};
+pub use swapchain::Swapchain;
 
 #[derive(Debug)]
 pub enum VkError {

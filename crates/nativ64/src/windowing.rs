@@ -10,8 +10,9 @@
 //! - Queues: one per OS thread, keyed by thread id, so any thread may post to another.
 //!
 //! Host side: the [`WindowBackend`] trait is the seam to the real windowing system. Only the
-//! [`HeadlessBackend`] (no window, no events) exists now; a Wayland/X11 surface for Vulkan
-//! comes later and will feed input and close requests back through `poll_events`.
+//! [`HeadlessBackend`] (no window, no events) is the default; a real backend (Wayland, in
+//! `nativ64-gpu`) hands out a [`RawSurface`] for Vulkan and feeds resize and close requests
+//! back through `poll_events`.
 //!
 //! Skipped (documented, not forgotten): `WM_GETMINMAXINFO`, `WM_NCCALCSIZE`, `WM_WINDOWPOSCHANGING/
 //! CHANGED`, non-client area (client size = window size), z-order, focus/activation chains
@@ -136,7 +137,30 @@ pub trait WindowBackend: Send {
     fn on_destroy(&mut self, hwnd: usize);
     /// Host events (input, close request, ...) as messages to post; called by every peek.
     fn poll_events(&mut self) -> Vec<Msg>;
+    /// The native surface of `hwnd`, for a graphics API to render into (None when the backend
+    /// has no real window, as the headless one).
+    fn surface(&self, _hwnd: usize) -> Option<RawSurface> {
+        None
+    }
+    /// Current client size of `hwnd` as the host knows it (after resizes by the compositor).
+    fn client_size(&self, _hwnd: usize) -> Option<(i32, i32)> {
+        None
+    }
 }
+
+/// A host window surface as raw pointers, so `nativ64` needs no windowing-system crate. The
+/// pointers stay valid until `on_destroy` for that window (or the backend is dropped).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RawSurface {
+    /// `wl_display *` and `wl_surface *` (libwayland objects).
+    Wayland {
+        display: *mut std::ffi::c_void,
+        surface: *mut std::ffi::c_void,
+    },
+}
+
+// SAFETY: the pointers are opaque handles; using them is the receiver's responsibility.
+unsafe impl Send for RawSurface {}
 
 /// No window, no events: the only backend for now.
 pub struct HeadlessBackend;
@@ -155,6 +179,16 @@ static BACKEND: Mutex<Option<Box<dyn WindowBackend>>> = Mutex::new(None);
 /// Installs the host backend (default: headless).
 pub fn set_backend(b: Box<dyn WindowBackend>) {
     *lock(&BACKEND) = Some(b);
+}
+
+/// The native surface of `hwnd` in the installed backend (None when headless or unknown).
+pub fn window_surface(hwnd: usize) -> Option<RawSurface> {
+    with_backend(|b| b.surface(hwnd))
+}
+
+/// The host's current client size of `hwnd` (None when headless or unknown).
+pub fn window_client_size(hwnd: usize) -> Option<(i32, i32)> {
+    with_backend(|b| b.client_size(hwnd))
 }
 
 fn with_backend<R>(f: impl FnOnce(&mut dyn WindowBackend) -> R) -> R {
@@ -661,6 +695,22 @@ pub(crate) mod tests {
                 0,
             )
         }
+    }
+
+    #[test]
+    fn headless_has_no_surface() {
+        assert_eq!(HeadlessBackend.surface(0x10000), None);
+        // The trait default is what other backends without a window inherit.
+        struct Bare;
+        impl WindowBackend for Bare {
+            fn on_create(&mut self, _: usize, _: i32, _: i32, _: &str) {}
+            fn on_show(&mut self, _: usize, _: bool) {}
+            fn on_destroy(&mut self, _: usize) {}
+            fn poll_events(&mut self) -> Vec<Msg> {
+                Vec::new()
+            }
+        }
+        assert_eq!(Bare.surface(1), None);
     }
 
     #[test]

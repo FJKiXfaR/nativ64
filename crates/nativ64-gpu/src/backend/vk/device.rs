@@ -5,7 +5,7 @@
 //! `VK_EXT_external_memory_host`, buffer device address and timeline semaphores.
 
 use super::{instance, log_once, vk_try, Result, VkError};
-use ash::{ext::external_memory_host, vk, Device, Entry, Instance};
+use ash::{ext::external_memory_host, khr, vk, Device, Entry, Instance};
 use std::sync::Mutex;
 
 pub struct Gpu {
@@ -15,9 +15,14 @@ pub struct Gpu {
     pub(super) queue_family: u32,
     pub(super) mem_props: vk::PhysicalDeviceMemoryProperties,
     pub(super) import_align: usize,
+    pub(super) phys: vk::PhysicalDevice,
+    /// `VK_KHR_surface` and `VK_KHR_wayland_surface` are enabled on the instance.
+    pub(super) wsi_instance: bool,
+    /// `VK_KHR_swapchain` is enabled on the device.
+    pub(super) wsi_device: bool,
+    pub(super) entry: Entry,
     name: String,
-    instance: Instance,
-    _entry: Entry,
+    pub(super) instance: Instance,
 }
 
 /// The queue family to use on `phys`, or why the device cannot be used.
@@ -77,9 +82,9 @@ impl Gpu {
     pub fn open_with(over: Option<&str>) -> Result<Gpu> {
         // SAFETY: loads libvulkan.so.1; the entry is kept alive by the Gpu.
         let entry = unsafe { Entry::load() }.map_err(|e| VkError::Load(e.to_string()))?;
-        let instance = instance::create(&entry)?;
+        let (instance, wsi_instance) = instance::create(&entry)?;
         match Self::pick_and_create(&instance, over) {
-            Ok((device, queue_family, phys, name)) => {
+            Ok((device, queue_family, phys, name, wsi_device)) => {
                 // SAFETY: valid handles of this instance.
                 let (mem_props, import_align, ext_host, queue) = unsafe {
                     let mut hp = vk::PhysicalDeviceExternalMemoryHostPropertiesEXT::default();
@@ -99,9 +104,12 @@ impl Gpu {
                     queue_family,
                     mem_props,
                     import_align,
+                    phys,
+                    wsi_instance,
+                    wsi_device,
+                    entry,
                     name,
                     instance,
-                    _entry: entry,
                 })
             }
             Err(e) => {
@@ -115,7 +123,7 @@ impl Gpu {
     fn pick_and_create(
         instance: &Instance,
         over: Option<&str>,
-    ) -> Result<(Device, u32, vk::PhysicalDevice, String)> {
+    ) -> Result<(Device, u32, vk::PhysicalDevice, String, bool)> {
         // SAFETY: plain enumeration.
         let devs = vk_try("vkEnumeratePhysicalDevices", unsafe {
             instance.enumerate_physical_devices()
@@ -149,8 +157,8 @@ impl Gpu {
         for (_, d, name, _) in cands {
             match check(instance, d) {
                 Ok(family) => {
-                    let device = Self::create_device(instance, d, family)?;
-                    return Ok((device, family, d, name));
+                    let (device, wsi) = Self::create_device(instance, d, family)?;
+                    return Ok((device, family, d, name, wsi));
                 }
                 Err(why) => {
                     log_once(format!("skipping {name}: {why}"));
@@ -165,7 +173,12 @@ impl Gpu {
         }))
     }
 
-    fn create_device(instance: &Instance, phys: vk::PhysicalDevice, family: u32) -> Result<Device> {
+    /// The device and whether `VK_KHR_swapchain` was enabled on it.
+    fn create_device(
+        instance: &Instance,
+        phys: vk::PhysicalDevice,
+        family: u32,
+    ) -> Result<(Device, bool)> {
         let prio = [1.0f32];
         let qi = [vk::DeviceQueueCreateInfo::default()
             .queue_family_index(family)
@@ -173,15 +186,25 @@ impl Gpu {
         let mut f12 = vk::PhysicalDeviceVulkan12Features::default()
             .buffer_device_address(true)
             .timeline_semaphore(true);
-        let exts: [*const std::ffi::c_char; 1] = [external_memory_host::NAME.as_ptr()];
+        // SAFETY: query on a physical device of this instance.
+        let have =
+            unsafe { instance.enumerate_device_extension_properties(phys) }.unwrap_or_default();
+        let swapchain = have
+            .iter()
+            .any(|e| e.extension_name_as_c_str() == Ok(khr::swapchain::NAME));
+        let mut exts: Vec<*const std::ffi::c_char> = vec![external_memory_host::NAME.as_ptr()];
+        if swapchain {
+            exts.push(khr::swapchain::NAME.as_ptr());
+        }
         let info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&qi)
             .enabled_extension_names(&exts)
             .push_next(&mut f12);
         // SAFETY: `info` and its pointees outlive the call.
-        vk_try("vkCreateDevice", unsafe {
+        let device = vk_try("vkCreateDevice", unsafe {
             instance.create_device(phys, &info, None)
-        })
+        })?;
+        Ok((device, swapchain))
     }
 
     /// Name of the chosen physical device.

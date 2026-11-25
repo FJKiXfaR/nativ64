@@ -1,6 +1,20 @@
 use nativ64_loader::{Image, LoadOptions};
 use std::process::ExitCode;
 
+/// Real windows over Wayland when a compositor is set and `NATIV64_WINDOW` is not "headless";
+/// otherwise (or when the connection fails) the headless default stays.
+fn install_window_backend() {
+    if std::env::var_os("WAYLAND_DISPLAY").is_none()
+        || std::env::var("NATIV64_WINDOW").as_deref() == Ok("headless")
+    {
+        return;
+    }
+    match nativ64_gpu::wsi::wayland::WaylandBackend::new() {
+        Ok(b) => nativ64::windowing::set_backend(Box::new(b)),
+        Err(e) => eprintln!("nativ64-run: {e}; windows stay headless"),
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let check = args.iter().any(|a| a == "--check");
@@ -78,6 +92,7 @@ fn main() -> ExitCode {
     };
     drop(data);
     if !check {
+        install_window_backend();
         let full = std::fs::canonicalize(path)
             .map_or_else(|_| path.clone(), |p| p.to_string_lossy().into_owned());
         nativ64::process::set_main_module(img.base() as usize, &full);

@@ -26,6 +26,17 @@ APIs only (libc as its only dependency).
   behind a mutex, `submit_once`. `import_host(ptr, len)` binds a buffer to caller pages (zero
   copy, alignment checked); `clear_and_read` proves the read-back. `NATIV64_VK_VALIDATION=1`
   enables the validation layer. Tests skip without a device.
+- `wsi/wayland.rs`: `WaylandBackend` (a `WindowBackend`): one `xdg_toplevel` per HWND, connected
+  at `new()` (an error without a compositor), globals bound at the first `on_create`.
+  `poll_events` is non-blocking and maps configure to `WM_SIZE`, close to `WM_CLOSE`, the
+  activated state to `WM_ACTIVATE`; no input yet. `nativ64::windowing` gains `RawSurface`,
+  `WindowBackend::surface` / `client_size` and `window_surface` / `window_client_size`.
+  `nativ64-run` installs it when `WAYLAND_DISPLAY` is set (`NATIV64_WINDOW=headless` opts out).
+- `backend/vk/swapchain.rs`: `Gpu::create_swapchain(RawSurface, size)` (instance gets
+  `VK_KHR_surface` + `VK_KHR_wayland_surface`, device `VK_KHR_swapchain`, when offered; headless
+  `Gpu::open` is unchanged). FIFO, two frames in flight, rebuilt on resize / out-of-date /
+  suboptimal; `present_clear(rgba)`. `nativ64-vkdemo [--frames N]` runs it through the windowing
+  API with a cycling colour.
 - `xmem`: `XMemVirtualAlloc` (placement by XMem flags: 32-bit below 4 GiB, else 4 GiB up to
   2^40..2^46; 2 MiB alignment; reserve then commit), `XMemAllocDefault`, `XMemFreeDefault`,
   `XMemAlloc`, `XMemFree` (shortcut: the title's allocation hooks are not consulted),

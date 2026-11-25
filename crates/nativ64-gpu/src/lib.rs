@@ -7,6 +7,7 @@ compile_error!("nativ64-gpu supports Linux x86_64 only");
 pub mod backend;
 pub mod d3d12;
 pub mod d3d12_xs;
+pub mod wsi;
 pub mod xcrdapi;
 pub mod xmem;
 pub mod xobj;
