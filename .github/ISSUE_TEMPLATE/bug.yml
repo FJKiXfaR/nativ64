@@ -1,0 +1,30 @@
+name: Bug
+description: A function behaves differently from Windows, or the build or tools fail
+labels: ["bug"]
+body:
+  - type: input
+    id: what
+    attributes:
+      label: Function or tool
+      placeholder: kernel32!QueryPerformanceCounter, tools/import_map.py...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What Windows does
+      description: Expected behaviour, with a source if you have one.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What nativ64 does
+      description: Minimal reproduction (a test case is ideal). Never attach game files or anything extracted from them.
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      placeholder: distro, kernel, rustc version, commit

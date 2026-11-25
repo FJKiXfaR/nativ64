@@ -1,0 +1,29 @@
+name: Implement functions
+description: Propose or claim a group of Windows functions to implement
+labels: ["enhancement"]
+body:
+  - type: input
+    id: module
+    attributes:
+      label: Windows module
+      placeholder: api-ms-win-crt-string
+    validations:
+      required: true
+  - type: textarea
+    id: functions
+    attributes:
+      label: Functions
+      description: One per line, or a space-separated list.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Tricky behaviour, ABI details, sources, or how you plan to test.
+  - type: checkboxes
+    id: claim
+    attributes:
+      label: Claim
+      options:
+        - label: I'm working on this myself
