@@ -5,12 +5,13 @@
 compile_error!("nativ64-gpu supports Linux x86_64 only");
 
 pub mod d3d12_xs;
+pub mod xcrdapi;
 pub mod xmem;
 
 use nativ64::{normalize_module, Export};
 
 /// One table per Windows module file. Add a new module file here.
-pub static TABLES: &[&[Export]] = &[d3d12_xs::EXPORTS, xmem::EXPORTS];
+pub static TABLES: &[&[Export]] = &[d3d12_xs::EXPORTS, xcrdapi::EXPORTS, xmem::EXPORTS];
 
 /// Every registered graphics export.
 pub fn exports() -> impl Iterator<Item = &'static Export> {

@@ -103,6 +103,15 @@ enum Object {
     Mutex(Obj<MutexState>),
     Semaphore(Obj<SemState>),
     Thread(threads::ThreadObj),
+    File(FileObj),
+}
+
+/// An open file: the descriptor and the current position (for calls without an offset). A file
+/// handle is never signaled, so waiting on one times out.
+pub struct FileObj {
+    pub fd: std::os::fd::OwnedFd,
+    pub pos: Mutex<u64>,
+    waiters: Waiters,
 }
 
 #[derive(PartialEq)]
@@ -118,6 +127,7 @@ impl Object {
             Object::Mutex(o) => &o.waiters,
             Object::Semaphore(o) => &o.waiters,
             Object::Thread(o) => &o.waiters,
+            Object::File(o) => &o.waiters,
         }
     }
 
@@ -135,6 +145,7 @@ impl Object {
             }
             Object::Semaphore(o) => lock(&o.state).count > 0,
             Object::Thread(o) => lock(&o.state).exited,
+            Object::File(_) => false,
         }
     }
 
@@ -168,7 +179,7 @@ impl Object {
                 Taken::Normal
             }
             // A thread stays signaled for good.
-            Object::Thread(_) => Taken::Normal,
+            Object::Thread(_) | Object::File(_) => Taken::Normal,
         }
     }
 }
@@ -446,6 +457,28 @@ pub fn close_handle(h: Handle) -> i32 {
         return 0;
     }
     1
+}
+
+/// A new handle owning an open file at position 0.
+pub fn create_file_handle(fd: std::os::fd::OwnedFd) -> Handle {
+    let o = Arc::new(Object::File(FileObj {
+        fd,
+        pos: Mutex::new(0),
+        waiters: Waiters::default(),
+    }));
+    kernel().insert(o)
+}
+
+/// Runs `f` on the file behind `h`; `None` (and `ERROR_INVALID_HANDLE`) if `h` is not a file.
+pub fn with_file<R>(h: Handle, f: impl FnOnce(&FileObj) -> R) -> Option<R> {
+    let o = kernel().get(h);
+    match o.as_deref() {
+        Some(Object::File(file)) => Some(f(file)),
+        _ => {
+            set_last_error(ERROR_INVALID_HANDLE);
+            None
+        }
+    }
 }
 
 pub const DUPLICATE_CLOSE_SOURCE: u32 = 1;

@@ -57,7 +57,9 @@ their own vtable struct.
 
 `\` maps to `/`; relative paths resolve against the package root (the exe's directory). The
 package directory is never written: writes go to `$XDG_DATA_HOME/nativ64/<exe stem>` (default
-`~/.local/share`). Not implemented yet.
+`~/.local/share`). `nativ64::paths` implements the read side (`map_read_path`, with a
+case-insensitive fallback per component; a path starting with `/` as written is a host path),
+plus `package_root` and `write_dir`; no write API uses them yet.
 
 ## ABI rules
 

@@ -79,6 +79,23 @@ win32! {
     }
     // The pseudo-handle -1, the one `DuplicateHandle` accepts as the current process.
     Native fn GetCurrentProcess() -> usize { usize::MAX }
+    // Only the current process (the pseudo-handle) is known; no other process handle exists.
+    Native fn GetProcessId(h: usize) -> u32 {
+        if h == usize::MAX {
+            libc::getpid() as u32
+        } else {
+            set_last_error(ERROR_INVALID_HANDLE);
+            0
+        }
+    }
+    // Ends the process at once, without the CRT's exit handlers, as the real call does.
+    Native fn TerminateProcess(h: usize, code: u32) -> i32 {
+        if h == usize::MAX {
+            libc::_exit(code as i32)
+        }
+        set_last_error(ERROR_INVALID_HANDLE);
+        0
+    }
     // Only the current process (the pseudo-handle) can be queried; the boost is a stored flag.
     Native fn SetProcessPriorityBoost(h: usize, disable: i32) -> i32 {
         if h != usize::MAX {

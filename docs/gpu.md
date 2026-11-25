@@ -20,6 +20,10 @@ dependency yet.
   2^40..2^46; 2 MiB alignment; reserve then commit), `XMemAllocDefault`, `XMemFreeDefault`,
   `XMemAlloc`, `XMemFree` (shortcut: the title's allocation hooks are not consulted),
   `XMemIsToolsMemAvailable`.
+- `xcrdapi`: DirectStorage (`DStorageGetFactory`; factory, file, queue, status array as COM
+  objects). Uncompressed memory/file to memory requests, run synchronously at `Submit`; errors
+  in the queue's error record and event. TODO: zlib/BCPack, page and GPU destinations, fence
+  signalling (recorded only). Details in the module header.
 
 ## Plan
 

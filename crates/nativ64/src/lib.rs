@@ -9,6 +9,7 @@ mod registry;
 
 pub mod api_ms_win_core_errorhandling;
 pub mod api_ms_win_core_fibers;
+pub mod api_ms_win_core_file;
 pub mod api_ms_win_core_handle;
 pub mod api_ms_win_core_interlocked;
 pub mod api_ms_win_core_libraryloader;
@@ -34,8 +35,9 @@ pub mod api_ms_win_crt_utility;
 
 pub mod com;
 pub mod gameinput;
-mod handles;
+pub mod handles;
 pub mod msvcp140;
+pub mod paths;
 pub mod printf;
 pub mod process;
 mod scanf;
@@ -51,6 +53,7 @@ pub use registry::{lookup, lookup_ordinal, nativ64_lookup, normalize_module, Exp
 pub static TABLES: &[&[Export]] = &[
     api_ms_win_core_errorhandling::EXPORTS,
     api_ms_win_core_fibers::EXPORTS,
+    api_ms_win_core_file::EXPORTS,
     api_ms_win_core_handle::EXPORTS,
     api_ms_win_core_interlocked::EXPORTS,
     api_ms_win_core_libraryloader::EXPORTS,
