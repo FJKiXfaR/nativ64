@@ -391,7 +391,7 @@ pub fn create_semaphore(name: Option<String>, initial: i32, max: i32) -> Handle 
     .0
 }
 
-/// Returns `(ok, previous count)`; the previous count is reported on a `TOO_MANY_POSTS` failure too.
+/// Returns `(ok, previous count)`; the previous count is only reported on success.
 pub fn release_semaphore(h: Handle, n: i32) -> (i32, Option<i32>) {
     let k = kernel();
     let obj = k.get(h);
@@ -407,7 +407,7 @@ pub fn release_semaphore(h: Handle, n: i32) -> (i32, Option<i32>) {
     let prev = st.count;
     if prev as i64 + n as i64 > st.max as i64 {
         set_last_error(ERROR_TOO_MANY_POSTS);
-        return (0, Some(prev));
+        return (0, None);
     }
     st.count += n;
     drop(st);
@@ -791,9 +791,12 @@ mod tests {
             SetLastError(0);
             assert_eq!(ReleaseSemaphore(s, 1, &mut prev), 0);
             assert_eq!(GetLastError(), 298);
-            assert_eq!(prev, 3);
-            assert_eq!(ReleaseSemaphore(s, 0, null_mut()), 0);
+            // Behaviour per Wine's dlls/kernel32/tests/sync.c (run on Windows): a failed
+            // release leaves the caller's previous-count slot untouched.
+            assert_eq!(prev, 2);
+            assert_eq!(ReleaseSemaphore(s, 0, &mut prev), 0);
             assert_eq!(GetLastError(), 87);
+            assert_eq!(prev, 2);
             assert_eq!(ReleaseSemaphore(s, -1, null_mut()), 0);
             assert_eq!(poll(s), 0);
             assert_eq!(poll(s), 0);
