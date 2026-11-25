@@ -3,9 +3,9 @@
 //! ABI notes (MSVC x64): `long` is 32 bits, so `atol`, `strtol`, `strtoul` and `wcstoul` use
 //! 32-bit ranges and saturate there; `wchar_t`/`wint_t` are 16 bits; `size_t` is 64 bits.
 //! Integer parsing skips C-locale whitespace, accepts a sign, and for base 0/16 a `0x` prefix
-//! (only when a hex digit follows). An invalid base or no digits yields 0 with `*endptr = nptr`.
+//! (a bare `0x` is no conversion). An invalid base or no digits yields 0 with `*endptr = nptr`.
 //! Unsigned parsers negate like C (`"-1"` gives the type's maximum); out of range gives the
-//! type's limit.
+//! type's maximum, negated for a `-` sign (so `"-4294967296"` gives 1).
 //!
 //! `strtod`/`strtof`/`atof` delegate to the host libc (glibc) `strtod`/`strtof`: the process
 //! never calls `setlocale`, so it parses in the "C" locale, and it handles decimal, hex floats
@@ -70,11 +70,9 @@ unsafe fn scan<T: Unit>(s: *const T, base: i32) -> Scan<T> {
         p = p.add(1);
     }
     let mut base = base as u32;
-    if (base == 0 || base == 16)
-        && at(p, 0) == '0' as u32
-        && (at(p, 1) | 0x20) == 'x' as u32
-        && digit_val(at(p, 2)) < 16
-    {
+    if (base == 0 || base == 16) && at(p, 0) == '0' as u32 && (at(p, 1) | 0x20) == 'x' as u32 {
+        // Behaviour per Wine's dlls/msvcrt/tests/string.c (run on Windows): the prefix is
+        // consumed even with no digit after it, which then counts as no conversion at all.
         p = p.add(2);
         base = 16;
     } else if base == 0 {
@@ -130,16 +128,19 @@ unsafe fn strto_i<T: Unit>(s: *const T, end: *mut *mut T, base: i32, min: i64, m
     }
 }
 
-/// Unsigned conversion: negation wraps at the type's width; overflow gives `max`.
+/// Unsigned conversion: overflow saturates to `max`, then a `-` sign negates at the type's width.
 unsafe fn strto_u<T: Unit>(s: *const T, end: *mut *mut T, base: i32, max: u64) -> u64 {
     let sc = scan(s, base);
     set_end(end, sc.end);
-    if sc.overflow || sc.mag > max {
+    let mag = if sc.overflow || sc.mag > max {
         max
-    } else if sc.neg {
-        sc.mag.wrapping_neg() & max
     } else {
         sc.mag
+    };
+    if sc.neg {
+        mag.wrapping_neg() & max
+    } else {
+        mag
     }
 }
 
@@ -281,12 +282,10 @@ win32! {
             return EINVAL;
         }
         if dst.is_null() {
-            // Size query: bytes needed including the NUL.
+            // Size query: bytes needed including the NUL. As in the UCRT's "C" locale, the
+            // characters are only counted, not checked (Wine's msvcrt/tests/string.c).
             let mut n = 0;
             while *src.add(n) != 0 && n < count {
-                if wc_to_byte(*src.add(n)).is_none() {
-                    return EILSEQ;
-                }
                 n += 1;
             }
             if !ret.is_null() {
@@ -406,8 +405,9 @@ mod tests {
             assert_eq!(tl("0", 0), (0, 1));
             assert_eq!(tl("zz", 36), (1295, 2));
             assert_eq!(tl("1012", 2), (5, 3));
-            // "0x" with no hex digit parses just the zero
-            assert_eq!(tl("0xg", 16), (0, 1));
+            // a bare "0x" prefix is no conversion (Wine's msvcrt/tests/string.c, run on Windows)
+            assert_eq!(tl("0xg", 16), (0, 0));
+            assert_eq!(tl("-0x", 0), (0, 0));
             // no digits: endptr = start, even after whitespace/sign
             assert_eq!(tl("  -x", 10), (0, 0));
             assert_eq!(tl("", 10), (0, 0));
@@ -445,6 +445,13 @@ mod tests {
                 u32::MAX
             );
             assert_eq!(strtoul(p(&c("-1")), std::ptr::null_mut(), 10), u32::MAX);
+            // Overflow saturates first, then the sign negates: -(2^32) gives 1.
+            assert_eq!(strtoul(p(&c("-4294967295")), std::ptr::null_mut(), 10), 1);
+            assert_eq!(strtoul(p(&c("-4294967296")), std::ptr::null_mut(), 10), 1);
+            assert_eq!(
+                strtoull(p(&c("-99999999999999999999")), std::ptr::null_mut(), 10),
+                1
+            );
             assert_eq!(strtoul(p(&c("-2")), std::ptr::null_mut(), 10), u32::MAX - 1);
             assert_eq!(strtoul(p(&c("ff")), std::ptr::null_mut(), 16), 255);
             assert_eq!(
@@ -660,6 +667,10 @@ mod tests {
                 EILSEQ
             );
             assert_eq!((ret, d[0]), (0, 0));
+            // a size query only counts: unconvertible characters are not reported
+            ret = 99;
+            let q = wcstombs_s(&mut ret, std::ptr::null_mut(), 0, w("\u{fffd}").as_ptr(), 1);
+            assert_eq!((q, ret), (0, 2));
             // bad arguments
             assert_eq!(
                 wcstombs_s(&mut ret, dp, 8, std::ptr::null(), TRUNCATE),
