@@ -6,15 +6,148 @@
 //! fetched one by one through `QueryApiImpl`.
 //!
 //! The bootstrap calls are all that is modelled so far: initialization succeeds and keeps a
-//! count, `UninitializeApiImpl` undoes one. `QueryApiImpl` reports every API as unavailable
-//! (`E_NOTIMPL`) until the individual APIs are implemented. `XErrorReport` is accepted and
+//! count, `UninitializeApiImpl` undoes one. `QueryApiImpl(api GUID, interface GUID, out)` refuses
+//! every API with `E_GAMERUNTIME_API_NOT_FOUND` and a NULL out pointer until the individual
+//! APIs are implemented; each distinct (api, interface) pair is logged once. `XErrorReport` is accepted and
 //! ignored. No Wine oracle exists for this module (Wine has no game runtime).
 
+use std::collections::HashSet;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Mutex;
+
+use crate::com::{
+    add_ref, query_interface, release, ComObject, Guid, IUnknownVtbl, E_INVALIDARG, E_POINTER,
+};
 
 pub const S_OK: i32 = 0;
 pub const E_NOTIMPL: i32 = 0x8000_4001u32 as i32;
+
+/// "API not found": what a provider the host does not offer answers.
+pub const E_API_NOT_FOUND: i32 = 0x8924_010Du32 as i32;
+
+/// The system API (`XSystem*`) as the title asks for it.
+pub const API_SYSTEM: Guid = Guid::new(
+    0xe349bd1a,
+    0xfc20,
+    0x4e40,
+    [0xb9, 0x9c, 0x41, 0x78, 0xcc, 0x6b, 0x40, 0x9f],
+);
+pub const IID_SYSTEM: Guid = Guid::new(
+    0x1861cf2e,
+    0xe18b,
+    0x4834,
+    [0xa9, 0xf5, 0xb4, 0xa4, 0xe6, 0xef, 0xb4, 0xcf],
+);
+/// `E_NOT_SUFFICIENT_BUFFER`.
+pub const E_BUFFER_TOO_SMALL: i32 = 0x8007_007Au32 as i32;
+/// The sandbox the title is told it runs in.
+pub const SANDBOX_ID: &[u8] = b"RETAIL\0";
+
+extern "win64" fn trap<const SLOT: usize>() -> ! {
+    eprintln!(
+        "nativ64: unimplemented xgameruntime {} slot {SLOT}",
+        guid_string(&API_SYSTEM)
+    );
+    // SAFETY: abort never returns.
+    unsafe { libc::abort() }
+}
+
+type SystemObj = ComObject<SystemVtbl, ()>;
+
+/// Slots 0-2 are `IUnknown`, 4 is the sandbox id; the others are traps.
+#[repr(C)]
+struct SystemVtbl {
+    unknown: IUnknownVtbl<SystemVtbl, ()>,
+    slot3: extern "win64" fn() -> !,
+    sandbox_id: unsafe extern "win64" fn(*mut SystemObj, usize, *mut u8, *mut usize) -> i32,
+    slot5: extern "win64" fn() -> !,
+    slot6: extern "win64" fn() -> !,
+    slot7: extern "win64" fn() -> !,
+    slot8: extern "win64" fn() -> !,
+    slot9: extern "win64" fn() -> !,
+    slot10: extern "win64" fn() -> !,
+    slot11: extern "win64" fn() -> !,
+    slot12: extern "win64" fn() -> !,
+}
+
+/// `GetXboxLiveSandboxId(size, buffer, used)`: the id with its terminator.
+///
+/// # Safety
+/// `buffer` is NULL or valid for `size` bytes; `used` is NULL or valid.
+unsafe extern "win64" fn sandbox_id(
+    _this: *mut SystemObj,
+    size: usize,
+    buffer: *mut u8,
+    used: *mut usize,
+) -> i32 {
+    if buffer.is_null() && size != 0 {
+        return E_POINTER;
+    }
+    if !used.is_null() {
+        *used = SANDBOX_ID.len();
+    }
+    if size < SANDBOX_ID.len() {
+        return E_BUFFER_TOO_SMALL;
+    }
+    std::ptr::copy_nonoverlapping(SANDBOX_ID.as_ptr(), buffer, SANDBOX_ID.len());
+    S_OK
+}
+
+static SYSTEM_VTBL: SystemVtbl = SystemVtbl {
+    unknown: IUnknownVtbl {
+        query_interface: query_interface::<SystemVtbl, ()>,
+        add_ref: add_ref::<SystemVtbl, ()>,
+        release: release::<SystemVtbl, ()>,
+    },
+    slot3: trap::<3>,
+    sandbox_id,
+    slot5: trap::<5>,
+    slot6: trap::<6>,
+    slot7: trap::<7>,
+    slot8: trap::<8>,
+    slot9: trap::<9>,
+    slot10: trap::<10>,
+    slot11: trap::<11>,
+    slot12: trap::<12>,
+};
+static SYSTEM_IIDS: [Guid; 1] = [IID_SYSTEM];
+
+/// The answer to a request for an API: only the system API exists.
+fn query_api(api: &Guid, iid: &Guid) -> Option<*mut c_void> {
+    if *api == API_SYSTEM && *iid == IID_SYSTEM {
+        Some(SystemObj::create(&SYSTEM_VTBL, &SYSTEM_IIDS, ()) as *mut c_void)
+    } else {
+        None
+    }
+}
+
+static SEEN: Mutex<Option<HashSet<(Guid, Guid)>>> = Mutex::new(None);
+
+fn guid_string(g: &Guid) -> String {
+    format!(
+        "{:08x}-{:04x}-{:04x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        g.data1,
+        g.data2,
+        g.data3,
+        g.data4[0],
+        g.data4[1],
+        g.data4[2],
+        g.data4[3],
+        g.data4[4],
+        g.data4[5],
+        g.data4[6],
+        g.data4[7]
+    )
+}
+
+/// Records a (api, interface) request; true the first time the pair is seen.
+fn first_request(api: Guid, iid: Guid) -> bool {
+    SEEN.lock()
+        .unwrap()
+        .get_or_insert_with(HashSet::new)
+        .insert((api, iid))
+}
 
 static INIT_COUNT: AtomicU32 = AtomicU32::new(0);
 
@@ -30,12 +163,30 @@ fn initialize() -> i32 {
 
 win32! {
     module "xgameruntime";
-    // (api id, api version, out function table): no API is available yet.
-    Native fn QueryApiImpl(_a: u64, _b: u64, out: *mut *const c_void) -> i32 {
+    // (api GUID, interface GUID, out object): no API is available yet.
+    Native fn QueryApiImpl(api: *const Guid, iid: *const Guid, out: *mut *mut c_void) -> i32 {
         if !out.is_null() {
-            *out = std::ptr::null();
+            *out = std::ptr::null_mut();
         }
-        E_NOTIMPL
+        if api.is_null() || iid.is_null() {
+            return E_API_NOT_FOUND;
+        }
+        if let Some(obj) = query_api(&*api, &*iid) {
+            if !out.is_null() {
+                *out = obj;
+                return S_OK;
+            }
+            release(obj as *mut SystemObj);
+            return E_INVALIDARG;
+        }
+        if first_request(*api, *iid) {
+            eprintln!(
+                "nativ64: xgameruntime api {} interface {} refused",
+                guid_string(&*api),
+                guid_string(&*iid)
+            );
+        }
+        E_API_NOT_FOUND
     }
     // Pre-versioned entry: (major, minor).
     Native fn InitializeApiImpl(_major: u32, _minor: u32) -> i32 {
@@ -82,6 +233,50 @@ mod tests {
     }
 
     #[test]
+    fn guid_text_and_first_request() {
+        let g = Guid::new(
+            0x073b7dcb,
+            0x1fcf,
+            0x4030,
+            [0x94, 0xbe, 0xe3, 0xc9, 0xeb, 0x62, 0x34, 0x28],
+        );
+        assert_eq!(guid_string(&g), "073b7dcb-1fcf-4030-94be-e3c9eb623428");
+        let h = Guid::new(9, 9, 9, [9; 8]);
+        assert!(first_request(g, h));
+        assert!(!first_request(g, h));
+    }
+
+    #[test]
+    fn system_api_gives_the_sandbox_id() {
+        unsafe {
+            let mut obj = std::ptr::null_mut();
+            assert_eq!(QueryApiImpl(&API_SYSTEM, &IID_SYSTEM, &mut obj), S_OK);
+            let o = obj as *mut SystemObj;
+            let mut buf = [0xffu8; 16];
+            let mut used = 0usize;
+            assert_eq!(sandbox_id(o, 16, buf.as_mut_ptr(), &mut used), S_OK);
+            assert_eq!(used, 7);
+            assert_eq!(&buf[..7], b"RETAIL\0");
+            // Too small a buffer: error, the needed size is reported, nothing written.
+            let mut small = [0xffu8; 4];
+            assert_eq!(
+                sandbox_id(o, 4, small.as_mut_ptr(), &mut used),
+                E_BUFFER_TOO_SMALL
+            );
+            assert_eq!(used, 7);
+            assert_eq!(small, [0xff; 4]);
+            assert_eq!(sandbox_id(o, 4, std::ptr::null_mut(), &mut used), E_POINTER);
+            assert_eq!(release(o), 0);
+            // The interface GUID must match too.
+            assert_eq!(
+                QueryApiImpl(&API_SYSTEM, &API_SYSTEM, &mut obj),
+                E_API_NOT_FOUND
+            );
+            assert!(obj.is_null());
+        }
+    }
+
+    #[test]
     fn init_and_uninit_balance() {
         unsafe {
             let base = init_count();
@@ -93,7 +288,14 @@ mod tests {
             assert_eq!(UninitializeApiImpl(), S_OK);
             assert_eq!(UninitializeApiImpl(), S_OK);
             assert_eq!(init_count(), base);
-            assert_eq!(QueryApiImpl(1, 2, &mut out), E_NOTIMPL);
+            let g = Guid::new(1, 2, 3, [4; 8]);
+            let mut obj = std::ptr::dangling_mut::<c_void>();
+            assert_eq!(QueryApiImpl(&g, &g, &mut obj), E_API_NOT_FOUND);
+            assert!(obj.is_null());
+            assert_eq!(
+                QueryApiImpl(std::ptr::null(), &g, &mut obj),
+                E_API_NOT_FOUND
+            );
         }
     }
 }
