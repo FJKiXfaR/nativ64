@@ -22,6 +22,11 @@ requests for code.
   comment with your source.
 - A function that only pretends to work is registered as `Stub`, never `Native`.
 - Every `Native` function has tests, including its error cases.
+- Take expected behaviour from real Windows, not from memory. The best public record is
+  Wine's conformance tests (`dlls/kernel32/tests`, `dlls/ucrtbase/tests`,
+  `dlls/msvcrt/tests`...), which Wine runs on real Windows: read the relevant ones and
+  write our own tests for the same behaviours (error codes, edge cases). Do not copy
+  their code: it is LGPL, which is not compatible with this project's license.
 
 ## Before opening a pull request
 
