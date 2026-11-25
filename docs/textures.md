@@ -63,7 +63,7 @@ own implementation in `crates/nativ64-gpu/src/texture/` and `xg_xs.rs`.
   `GetMaxNumMipsInTail` / `GetMipTailDim`; single-mip textures have no tail. Array slices
   follow each other at the slice size.
 - **Formats**: element size and block-compressed (BC: 4 × 4 texels in 8 or 16 bytes) per DXGI
-  format, plus console-only formats 116-120 and 189-191 (to fill as the title uses them).
+  format, plus console-only formats 118-120 (UNVERIFIED, from memory of the GDK header: 118 D16_UNORM_S8_UINT, 119 R16_UNORM_X8_TYPELESS, 120 X16_TYPELESS_G8_UINT) and 116, 117, 189-191 (to fill as the title uses them).
   Depth + stencil formats have two planes (depth, then stencil aligned to its plane alignment).
 - **Metadata planes**: a single-mip render target has a CMASK plane: (w and h padded to 1024)
   × / 128 bytes per slice, aligned 0x2000, after the colour plane; a depth buffer has an

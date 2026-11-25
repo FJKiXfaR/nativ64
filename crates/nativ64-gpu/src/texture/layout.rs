@@ -751,6 +751,29 @@ mod tests {
     }
 
     #[test]
+    fn d16_s8_depth_buffer_2560_x_1440() {
+        // Console format 118 (D16_UNORM_S8_UINT, unverified number), Z_X. Depth: 2-byte
+        // elements, 64 KiB = 2^15 elements -> 256 x 128 blocks; 10 x 12 (1440 / 128 = 11.25)
+        // = 120 blocks. Stencil: 1-byte elements, 2^16 -> 256 x 256; 10 x 6 (5.6) = 60 blocks,
+        // at 120 blocks. HTILE: 3072 x 2048 (padded to 1024) / 16 = 6 blocks, at 180 blocks.
+        let d = with(tex(3, 2560, 1440, 1, 1, 118), 0, FLAG_DEPTH_STENCIL);
+        let l = Layout::new(&d).unwrap();
+        assert_eq!(l.mode, SwizzleMode::SW_64KB_Z_X);
+        let (depth, stencil) = (&l.planes[0], &l.planes[1]);
+        assert_eq!((depth.element_bytes, depth.block), (2, [256, 128, 1]));
+        assert_eq!(depth.size, 120 * 65536);
+        assert_eq!(stencil.kind, PlaneKind::Stencil);
+        assert_eq!(stencil.block, [256, 256, 1]);
+        assert_eq!((stencil.offset, stencil.size), (120 * 65536, 60 * 65536));
+        assert_eq!(l.metadata[0].kind, MetaKind::Htile);
+        assert_eq!(
+            (l.metadata[0].offset, l.metadata[0].size),
+            (180 * 65536, 6 * 65536)
+        );
+        assert_eq!(l.size, 186 * 65536);
+    }
+
+    #[test]
     fn depth_stencil_two_planes() {
         // D32_FLOAT_S8X24 depth buffer 1024 x 1024: Z_X, depth 128 x 128 blocks of 4 bytes,
         // stencil 256 x 256 blocks of 1 byte, then HTILE

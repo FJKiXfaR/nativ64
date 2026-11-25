@@ -1,7 +1,9 @@
 //! Texel formats: element size, block compression and planes, per DXGI format number.
 //!
 //! An element is a texel, or a 4 x 4 block of texels for the BC formats. Console-only formats
-//! (116-120, 189-191) come with the titles that use them: until then they are unknown.
+//! (116-120, 189-191) come with the titles that use them: 118-120 are known, the others are
+//! unknown. UNVERIFIED (numbers from memory of the GDK header): 118 D16_UNORM_S8_UINT,
+//! 119 R16_UNORM_X8_TYPELESS (its depth plane view), 120 X16_TYPELESS_G8_UINT (its stencil view).
 
 /// How a format's data is split into planes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -85,6 +87,9 @@ pub fn format_info(format: u32) -> Option<FormatInfo> {
         85..=86 => color(2),
         87..=93 => color(4),
         115 => color(2),
+        118 => depth_stencil(2),
+        119 => color(2),
+        120 => color(1),
         _ => None,
     }
 }
@@ -133,11 +138,18 @@ mod tests {
             );
         }
         assert!(!format_info(41).unwrap().depth);
+        let d16s8 = format_info(118).unwrap();
+        assert_eq!(
+            (d16s8.planes, d16s8.element_bytes, d16s8.depth),
+            (Planes::DepthStencil, 2, true)
+        );
+        assert_eq!(format_info(119).unwrap().element_bytes, 2);
+        assert_eq!(format_info(120).unwrap().element_bytes, 1);
     }
 
     #[test]
     fn unknown_formats() {
-        for f in [0, 66, 68, 69, 103, 113, 116, 120, 189, 191, 500] {
+        for f in [0, 66, 68, 69, 103, 113, 116, 117, 189, 191, 500] {
             assert!(format_info(f).is_none(), "{f}");
         }
     }
