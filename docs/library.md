@@ -1,6 +1,6 @@
-# vn-win32: the host API library
+# nativ64: the host API library
 
-`crates/vn-win32` reimplements, natively on Linux x86_64, the Windows host APIs the title's
+`crates/nativ64` reimplements, natively on Linux x86_64, the Windows host APIs the title's
 binaries import (kernel32, `api-ms-win-core-*`, `api-ms-win-crt-*`, ...). It does not depend on
 the compatibility layer ("base") that loads the game: VIctory today, possibly others later.
 
@@ -10,9 +10,9 @@ the compatibility layer ("base") that loads the game: VIctory today, possibly ot
   (lowercase, no `.dll`, API-set version suffix dropped, `-` becomes `_`):
   `api-ms-win-core-synch` -> `src/api_ms_win_core_synch.rs`.
 - `src/registry.rs`: `Export { module, name, addr, status }`, `Status::{Native, Stub}`,
-  `lookup(module, name)`, `normalize_module`, and the C function `vn_win32_lookup`.
+  `lookup(module, name)`, `normalize_module`, and the C function `nativ64_lookup`.
 - `src/lib.rs`: `TABLES` lists each module's `EXPORTS`; `exports()` iterates them all.
-- `src/bin/vn-win32-status.rs`: prints the status file for the import map
+- `src/bin/nativ64-status.rs`: prints the status file for the import map
   (see "Library view" in `import-map.md`).
 
 ## Adding a function
@@ -47,7 +47,7 @@ function. Then check the new tab of the map.
 A base plugs in through a thin adapter. It must:
 
 1. For each import `module!function` (or ordinal) of the loaded binaries, call
-   `vn_win32_lookup(module, name)` (C) or `vn_win32::lookup` (Rust). Module names may be given
+   `nativ64_lookup(module, name)` (C) or `nativ64::lookup` (Rust). Module names may be given
    as in the import table; the library normalizes them.
 2. Patch the returned address into the import thunk. NULL means "not implemented here":
    the base falls back to its own implementation or traps.

@@ -1,8 +1,8 @@
-//! vn-win32: Windows host APIs (kernel32, api-ms-win-core-*, ...) reimplemented natively
+//! nativ64: Windows host APIs (kernel32, api-ms-win-core-*, ...) reimplemented natively
 //! on Linux, independent of the compatibility layer that loads the game.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
-compile_error!("vn-win32 supports Linux x86_64 only");
+compile_error!("nativ64 supports Linux x86_64 only");
 
 #[macro_use]
 mod registry;
@@ -13,7 +13,7 @@ pub mod api_ms_win_core_profile;
 pub mod api_ms_win_core_synch;
 pub mod api_ms_win_core_sysinfo;
 
-pub use registry::{lookup, normalize_module, vn_win32_lookup, Export, Status};
+pub use registry::{lookup, nativ64_lookup, normalize_module, Export, Status};
 
 /// One table per Windows module file. Add a new module file here.
 pub static TABLES: &[&[Export]] = &[

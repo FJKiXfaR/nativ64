@@ -85,10 +85,7 @@ pub fn lookup(module: &str, name: &str) -> Option<&'static Export> {
 /// # Safety
 /// `module` and `name` must be NULL or valid NUL-terminated strings.
 #[no_mangle]
-pub unsafe extern "C" fn vn_win32_lookup(
-    module: *const c_char,
-    name: *const c_char,
-) -> *mut c_void {
+pub unsafe extern "C" fn nativ64_lookup(module: *const c_char, name: *const c_char) -> *mut c_void {
     if module.is_null() || name.is_null() {
         return std::ptr::null_mut();
     }
@@ -124,12 +121,12 @@ mod tests {
         assert_eq!(e.status, Status::Native);
         assert!(lookup("kernel32", "Nope").is_none());
         let p = unsafe {
-            vn_win32_lookup(
+            nativ64_lookup(
                 c"api-ms-win-core-synch-l1-2-0.dll".as_ptr(),
                 c"Sleep".as_ptr(),
             )
         };
         assert!(!p.is_null());
-        assert!(unsafe { vn_win32_lookup(std::ptr::null(), c"x".as_ptr()) }.is_null());
+        assert!(unsafe { nativ64_lookup(std::ptr::null(), c"x".as_ptr()) }.is_null());
     }
 }

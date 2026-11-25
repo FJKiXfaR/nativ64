@@ -14,7 +14,7 @@ requests for code.
 
 ## Write it
 
-- One Rust module per Windows module, under `crates/vn-win32/src/`. A function is
+- One Rust module per Windows module, under `crates/nativ64/src/`. A function is
   declared and registered in one place (see `docs/library.md`).
 - Match Windows, not glibc: Windows x64 calling convention (`extern "win64"`), `LONG` is
   32 bits, wide strings are UTF-16, failures set the last error. When Windows

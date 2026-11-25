@@ -118,16 +118,16 @@ Run it after each mirror sync to follow VIctory's progress. On the package DLLs 
 
 ## Library view
 
-The `vn-win32` crate (`crates/vn-win32`, see `docs/library.md`) registers every function it
-implements. Its `vn-win32-status` binary turns that registry into a status file, so a third
+The `nativ64` crate (`crates/nativ64`, see `docs/library.md`) registers every function it
+implements. Its `nativ64-status` binary turns that registry into a status file, so a third
 tab shows how much of the title's import list the library covers, whatever base loads the game:
 
 ```bash
-cargo run -q -p vn-win32 --bin vn-win32-status > reports/status-vn-win32.json
+cargo run -q -p nativ64 --bin nativ64-status > reports/status-nativ64.json
 python -I tools/import_map.py game/*.dll \
     --status reports/status-victory-windows.json \
     --status reports/status-victory-linux.json \
-    --status reports/status-vn-win32.json \
+    --status reports/status-nativ64.json \
     --out reports/import-map.html
 ```
 

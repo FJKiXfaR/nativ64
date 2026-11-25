@@ -1,19 +1,25 @@
-# vice-native
+# nativ64
 
-**A Linux-native runtime for an Xbox Series title: no Wine, no Proton, function by function.**
+**Xbox Series games on Linux, natively: no Wine, no Proton, function by function.**
 
-Compatibility layers already run the title's own x86-64 code on a Windows PC. Underneath,
-they all lean on the same thing: hundreds of Windows APIs borrowed from the host
-(`kernel32`, `ntdll`, the C runtime, threads, files, sockets...). vice-native rewrites
-those APIs natively on Linux, as a standalone library that any of these layers can load
-through a thin adapter.
+Compatibility layers and recompilers already run Xbox Series code on a Windows PC.
+Underneath, they all lean on the same thing: hundreds of Windows APIs borrowed from the
+host (`kernel32`, `ntdll`, the C runtime, threads, files, sockets...). nativ64 rewrites
+those APIs natively on Linux, as a standalone library that any of these projects can
+load through a thin adapter.
+
+The library is not tied to one game: the functions it implements are the same for every
+title. Priorities come from the import map, which reads a game's import tables and shows
+what is done and what is left. The first title measured is a large open-world game; more
+titles can be added to the map, and functions shared by many games come first.
 
 ![Linux-native coverage](docs/import-map-linux.svg)
 
-Of the 498 system functions the title needs from Windows (excluding the 113 its own DLLs
-ship), 28 already have portable code in [VIctory](https://github.com/Marvisak/VIctory),
-38 have VIctory code that still calls Windows, and **430 are host Windows APIs a native
-port must write**. This covers the package DLLs; the executable comes next.
+For that first title, 498 system functions are needed from Windows (excluding the 113
+its own DLLs ship). 28 already have portable code in
+[VIctory](https://github.com/Marvisak/VIctory), the compatibility layer used as the first
+base, 38 have VIctory code that still calls Windows, and **430 are host Windows APIs a
+native port must write**. This covers the package DLLs; the executable comes next.
 
 ## How it fits
 
@@ -23,7 +29,7 @@ port must write**. This covers the package DLLs; the executable comes next.
    ┌────▼─────┐
    │ adapter   │  small, the only part tied to one base
    └────┬─────┘
- vn-win32: the Windows APIs, reimplemented on Linux (Rust, Windows x64 calling convention)
+ nativ64: the Windows APIs, reimplemented on Linux (Rust, Windows x64 calling convention)
         │
       Linux (syscalls, futexes, Vulkan, PipeWire...)
 ```
@@ -60,17 +66,17 @@ Direct3D 12 to Vulkan path for the GPU.
 Requirements: Linux x86-64, Rust (stable), Python 3 (no dependencies).
 
 ```bash
-git clone https://github.com/Ybucaille/vice-native.git
-cd vice-native
+git clone https://github.com/Ybucaille/nativ64.git
+cd nativ64
 cargo test
 ```
 
-To draw the import map you need your own, legally obtained copy of the title's files
-and a VIctory checkout next to this repository. See [`docs/import-map.md`](docs/import-map.md).
+To draw the import map you need your own, legally obtained copy of a game's files and,
+for the base tabs, a VIctory checkout next to this repository. See [`docs/import-map.md`](docs/import-map.md).
 
 ## Contributing
 
-The map is the to-do list: pick a grey cell, implement the function in `vn-win32` with
+The map is the to-do list: pick a grey cell, implement the function in `nativ64` with
 its tests, open a pull request. [`CONTRIBUTING.md`](CONTRIBUTING.md) explains how, and
 [`docs/library.md`](docs/library.md) covers the ABI rules (calling convention, 32-bit
 `LONG`, UTF-16 strings, `SetLastError`).
@@ -82,7 +88,7 @@ calls, synchronization primitives on futexes.
 
 | Path | What |
 |---|---|
-| `crates/vn-win32/` | The library: Windows APIs on Linux, one module per Windows module |
+| `crates/nativ64/` | The library: Windows APIs on Linux, one module per Windows module |
 | `tools/` | Import map scripts and page template |
 | `docs/` | Documentation |
 | `game/` | Your local game files (not versioned) |
@@ -92,7 +98,7 @@ calls, synchronization primitives on futexes.
 
 This project contains no game files, no console system files and nothing extracted from
 them, and never will: you supply your own legally obtained copy. It is not affiliated
-with Microsoft, the title's publisher or any compatibility-layer project.
+with Microsoft, any game publisher or any compatibility-layer project.
 
 ## License
 
