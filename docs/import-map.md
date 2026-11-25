@@ -111,7 +111,7 @@ executable, 351 of them imported by it alone):
 - Linux view: 46 portable, 69 tied to Windows, 580 host APIs to write (C/C++ runtime 240,
   system 155, threads & sync 95, network & crypto 48, files 18, other 24), 2 unresolved,
   265 shipped (46 of 697 = 6.6%).
-- nativ64 view: 13 native of 697 (1.9%).
+- nativ64 view: 67 native of 697 (9.6%).
 
 ## Library view
 
