@@ -102,6 +102,7 @@ enum Object {
     Event(Obj<EventState>),
     Mutex(Obj<MutexState>),
     Semaphore(Obj<SemState>),
+    Thread(threads::ThreadObj),
 }
 
 #[derive(PartialEq)]
@@ -116,6 +117,7 @@ impl Object {
             Object::Event(o) => &o.waiters,
             Object::Mutex(o) => &o.waiters,
             Object::Semaphore(o) => &o.waiters,
+            Object::Thread(o) => &o.waiters,
         }
     }
 
@@ -132,6 +134,7 @@ impl Object {
                 s.owner == 0 || s.owner == me
             }
             Object::Semaphore(o) => lock(&o.state).count > 0,
+            Object::Thread(o) => lock(&o.state).exited,
         }
     }
 
@@ -164,6 +167,8 @@ impl Object {
                 s.count = (s.count - 1).max(0);
                 Taken::Normal
             }
+            // A thread stays signaled for good.
+            Object::Thread(_) => Taken::Normal,
         }
     }
 }
@@ -177,34 +182,50 @@ thread_local! {
 
 impl Drop for OwnedMutexes {
     fn drop(&mut self) {
-        let list = std::mem::take(&mut *self.0.borrow_mut());
-        if list.is_empty() {
-            return;
-        }
-        let me = tid();
-        let _k = kernel();
-        for o in list.iter().filter_map(Weak::upgrade) {
-            if let Object::Mutex(m) = &*o {
-                let mut s = lock(&m.state);
-                if s.owner == me {
-                    *s = MutexState {
-                        owner: 0,
-                        count: 0,
-                        abandoned: true,
-                    };
-                    drop(s);
-                    m.waiters.wake();
-                }
+        abandon(std::mem::take(&mut *self.0.borrow_mut()));
+    }
+}
+
+/// Marks every mutex the current thread still owns as abandoned. Kernel lock must not be held.
+fn abandon_owned() {
+    let list = OWNED
+        .try_with(|l| std::mem::take(&mut *l.0.borrow_mut()))
+        .unwrap_or_default();
+    abandon(list);
+}
+
+fn abandon(list: Vec<Weak<Object>>) {
+    if list.is_empty() {
+        return;
+    }
+    let me = tid();
+    let _k = kernel();
+    for o in list.iter().filter_map(Weak::upgrade) {
+        if let Object::Mutex(m) = &*o {
+            let mut s = lock(&m.state);
+            if s.owner == me {
+                *s = MutexState {
+                    owner: 0,
+                    count: 0,
+                    abandoned: true,
+                };
+                drop(s);
+                m.waiters.wake();
             }
         }
     }
 }
+
+mod threads;
+pub use threads::*;
 
 // ---------------------------------------------------------------- table
 
 struct Kernel {
     table: HashMap<Handle, Arc<Object>>,
     names: HashMap<String, Weak<Object>>,
+    /// Thread objects by thread id (for `OpenThread` and the current-thread pseudo handle).
+    threads: HashMap<u32, Weak<Object>>,
     next: Handle,
 }
 
@@ -212,6 +233,7 @@ static KERNEL: LazyLock<Mutex<Kernel>> = LazyLock::new(|| {
     Mutex::new(Kernel {
         table: HashMap::new(),
         names: HashMap::new(),
+        threads: HashMap::new(),
         next: 4,
     })
 });
@@ -430,6 +452,11 @@ pub const DUPLICATE_CLOSE_SOURCE: u32 = 1;
 
 /// Same-process duplication: a new handle to the same object. Rights are not modelled.
 pub fn duplicate_handle(src: Handle, close_source: bool) -> Option<Handle> {
+    if src == threads::CURRENT_THREAD {
+        // The pseudo handle becomes a real handle to the current thread's object.
+        let o = threads::current_thread();
+        return Some(kernel().insert(o));
+    }
     let mut k = kernel();
     let Some(o) = k.get(src) else {
         set_last_error(ERROR_INVALID_HANDLE);

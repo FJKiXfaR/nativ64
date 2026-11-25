@@ -1,0 +1,655 @@
+//! Thread objects of the handle table (`CreateThread`, `OpenThread`, ...).
+//!
+//! * A thread object is signaled once its thread has exited; its exit code is then final
+//!   (`STILL_ACTIVE` before). It lives while a handle, or the running thread, still refers to
+//!   it, so closing the handle of a running thread is fine.
+//! * Thread ids are Linux tids. `Kernel::threads` maps them to the objects (weakly) for
+//!   `OpenThread`. A thread not made by `CreateThread` (the main thread, ...) gets its object the
+//!   first time it asks for its pseudo handle (`-2`); a thread-local guard signals it on exit.
+//!   Such threads can only be opened by id from themselves.
+//! * `CREATE_SUSPENDED`: the new thread parks before the start routine until its suspend count
+//!   is 0. `SuspendThread` only works on a thread that has not started its routine yet: stopping
+//!   a running thread would need signals, which is deliberately not done, so it fails with
+//!   `ERROR_NOT_SUPPORTED`.
+//! * Priorities are validated and stored, not applied to the Linux scheduler.
+
+use super::*;
+use std::ffi::c_void;
+use std::sync::Condvar;
+
+/// `GetCurrentThread()`: the pseudo handle (-2).
+pub const CURRENT_THREAD: Handle = usize::MAX - 1;
+
+pub const STILL_ACTIVE: u32 = 259;
+pub const CREATE_SUSPENDED: u32 = 4;
+pub const ERROR_NOT_SUPPORTED: u32 = 50;
+pub const THREAD_PRIORITY_ERROR_RETURN: i32 = i32::MAX;
+const SUSPEND_ERROR: u32 = u32::MAX;
+const PRIORITY_IDLE: i32 = -15;
+const PRIORITY_TIME_CRITICAL: i32 = 15;
+const MIN_STACK: usize = 64 * 1024;
+
+pub type ThreadStart = unsafe extern "win64" fn(*mut c_void) -> u32;
+
+pub struct ThreadState {
+    tid: u32,
+    pub(super) exited: bool,
+    exit_code: u32,
+    priority: i32,
+    suspend: u32,
+    /// The start routine has been entered (or the thread was not made by `CreateThread`).
+    started: bool,
+}
+
+pub struct ThreadObj {
+    pub(super) state: Mutex<ThreadState>,
+    pub(super) waiters: Waiters,
+    resume: Condvar,
+}
+
+fn new_thread(tid: u32, suspend: u32, started: bool) -> Arc<Object> {
+    Arc::new(Object::Thread(ThreadObj {
+        state: Mutex::new(ThreadState {
+            tid,
+            exited: false,
+            exit_code: STILL_ACTIVE,
+            priority: 0,
+            suspend,
+            started,
+        }),
+        waiters: Waiters::default(),
+        resume: Condvar::new(),
+    }))
+}
+
+fn as_thread(o: &Object) -> &ThreadObj {
+    match o {
+        Object::Thread(t) => t,
+        _ => unreachable!("not a thread object"),
+    }
+}
+
+/// Signals the end of the thread and wakes its waiters. Kernel lock must not be held.
+fn finish(o: &Arc<Object>, code: u32) {
+    let _k = kernel();
+    let t = as_thread(o);
+    {
+        let mut s = lock(&t.state);
+        s.exited = true;
+        s.exit_code = code;
+    }
+    t.waiters.wake();
+}
+
+/// Signals a thread that was not made by `CreateThread` when it ends.
+struct ExitGuard(Arc<Object>);
+
+impl Drop for ExitGuard {
+    fn drop(&mut self) {
+        abandon_owned();
+        finish(&self.0, 0);
+    }
+}
+
+thread_local! {
+    static GUARD: RefCell<Option<ExitGuard>> = const { RefCell::new(None) };
+}
+
+/// The object of the calling thread, created on first use for threads `CreateThread` did not make.
+pub(super) fn current_thread() -> Arc<Object> {
+    let me = tid();
+    let mut k = kernel();
+    if let Some(o) = k.threads.get(&me).and_then(Weak::upgrade) {
+        if !lock(&as_thread(&o).state).exited {
+            return o;
+        }
+    }
+    let o = new_thread(me, 0, true);
+    k.threads.insert(me, Arc::downgrade(&o));
+    drop(k);
+    GUARD.with(|c| *c.borrow_mut() = Some(ExitGuard(o.clone())));
+    o
+}
+
+/// Resolves a thread handle (or the pseudo handle); sets `ERROR_INVALID_HANDLE` otherwise.
+fn thread_arg(h: Handle) -> Option<Arc<Object>> {
+    if h == CURRENT_THREAD {
+        return Some(current_thread());
+    }
+    match kernel().get(h) {
+        Some(o) if matches!(*o, Object::Thread(_)) => Some(o),
+        _ => {
+            set_last_error(ERROR_INVALID_HANDLE);
+            None
+        }
+    }
+}
+
+/// `CreateThread`. Returns the handle and the thread id, or 0.
+pub fn create_thread(
+    stack: usize,
+    start: Option<ThreadStart>,
+    param: *mut c_void,
+    flags: u32,
+) -> Option<(Handle, u32)> {
+    let Some(start) = start else {
+        set_last_error(ERROR_INVALID_PARAMETER);
+        return None;
+    };
+    let suspended = flags & CREATE_SUSPENDED != 0;
+    let obj = new_thread(0, suspended as u32, false);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let body_obj = obj.clone();
+    let param = param as usize;
+    let mut b = std::thread::Builder::new();
+    if stack != 0 {
+        b = b.stack_size(stack.max(MIN_STACK));
+    }
+    let spawned = b.spawn(move || {
+        let me = tid();
+        {
+            let mut k = kernel();
+            k.threads.insert(me, Arc::downgrade(&body_obj));
+            lock(&as_thread(&body_obj).state).tid = me;
+        }
+        let _ = tx.send(me);
+        drop(tx);
+        {
+            let t = as_thread(&body_obj);
+            let mut s = lock(&t.state);
+            while s.suspend > 0 {
+                s = t.resume.wait(s).unwrap_or_else(|e| e.into_inner());
+            }
+            s.started = true;
+        }
+        let code = unsafe { start(param as *mut c_void) };
+        abandon_owned();
+        finish(&body_obj, code);
+    });
+    let Ok(_) = spawned else {
+        set_last_error(8); // ERROR_NOT_ENOUGH_MEMORY
+        return None;
+    };
+    let Ok(id) = rx.recv() else {
+        set_last_error(8);
+        return None;
+    };
+    let h = kernel().insert(obj);
+    set_last_error(0);
+    Some((h, id))
+}
+
+pub fn get_exit_code(h: Handle) -> Option<u32> {
+    let o = thread_arg(h)?;
+    let code = lock(&as_thread(&o).state).exit_code;
+    Some(code)
+}
+
+pub fn open_thread(id: u32) -> Handle {
+    if id != 0 && id == tid() {
+        let o = current_thread();
+        return kernel().insert(o);
+    }
+    let mut k = kernel();
+    match k.threads.get(&id).and_then(Weak::upgrade) {
+        Some(o) if id != 0 => k.insert(o),
+        _ => {
+            set_last_error(ERROR_INVALID_PARAMETER);
+            0
+        }
+    }
+}
+
+/// Increments the suspend count; only possible before the start routine runs.
+pub fn suspend_thread(h: Handle) -> u32 {
+    let Some(o) = thread_arg(h) else {
+        return SUSPEND_ERROR;
+    };
+    let mut s = lock(&as_thread(&o).state);
+    if s.started || s.exited {
+        set_last_error(ERROR_NOT_SUPPORTED);
+        return SUSPEND_ERROR;
+    }
+    s.suspend += 1;
+    s.suspend - 1
+}
+
+pub fn resume_thread(h: Handle) -> u32 {
+    let Some(o) = thread_arg(h) else {
+        return SUSPEND_ERROR;
+    };
+    let t = as_thread(&o);
+    let mut s = lock(&t.state);
+    let prev = s.suspend;
+    if prev > 0 {
+        s.suspend -= 1;
+        if s.suspend == 0 {
+            t.resume.notify_all();
+        }
+    }
+    prev
+}
+
+fn valid_priority(p: i32) -> bool {
+    (-2..=2).contains(&p) || p == PRIORITY_IDLE || p == PRIORITY_TIME_CRITICAL
+}
+
+pub fn set_priority(h: Handle, p: i32) -> i32 {
+    let Some(o) = thread_arg(h) else { return 0 };
+    if !valid_priority(p) {
+        set_last_error(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    lock(&as_thread(&o).state).priority = p;
+    1
+}
+
+pub fn get_priority(h: Handle) -> i32 {
+    match thread_arg(h) {
+        Some(o) => lock(&as_thread(&o).state).priority,
+        None => THREAD_PRIORITY_ERROR_RETURN,
+    }
+}
+
+fn get_affinity(tid: u32) -> Option<u64> {
+    unsafe {
+        let mut set: libc::cpu_set_t = std::mem::zeroed();
+        if libc::sched_getaffinity(tid as i32, std::mem::size_of_val(&set), &mut set) != 0 {
+            return None;
+        }
+        Some(
+            (0..64usize)
+                .filter(|&i| libc::CPU_ISSET(i, &set))
+                .fold(0u64, |m, i| m | 1 << i),
+        )
+    }
+}
+
+/// Sets the affinity of the thread; returns the previous mask or 0 with the last error set.
+/// `!0` means "all processors of the process".
+pub fn set_affinity(h: Handle, mask: usize) -> usize {
+    let Some(o) = thread_arg(h) else { return 0 };
+    let id = lock(&as_thread(&o).state).tid;
+    let process = get_affinity(std::process::id()).unwrap_or(0);
+    let mask = if mask == usize::MAX {
+        process
+    } else {
+        mask as u64
+    };
+    let prev = get_affinity(id);
+    if mask == 0 || mask & !process != 0 || prev.is_none() {
+        set_last_error(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    unsafe {
+        let mut set: libc::cpu_set_t = std::mem::zeroed();
+        for i in (0..64usize).filter(|i| mask >> i & 1 == 1) {
+            libc::CPU_SET(i, &mut set);
+        }
+        if libc::sched_setaffinity(id as i32, std::mem::size_of_val(&set), &set) != 0 {
+            set_last_error(ERROR_INVALID_PARAMETER);
+            return 0;
+        }
+    }
+    prev.unwrap_or(0) as usize
+}
+
+pub fn switch_to_thread() -> i32 {
+    unsafe { libc::sched_yield() };
+    1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api_ms_win_core_errorhandling::{GetLastError, SetLastError};
+    use crate::api_ms_win_core_handle::*;
+    use crate::api_ms_win_core_processthreads::*;
+    use std::ptr::{null, null_mut};
+    use std::sync::atomic::AtomicUsize;
+
+    const CUR: usize = usize::MAX;
+
+    unsafe extern "win64" fn ret_param(p: *mut c_void) -> u32 {
+        p as usize as u32
+    }
+
+    unsafe extern "win64" fn sleep_then_ret(p: *mut c_void) -> u32 {
+        std::thread::sleep(std::time::Duration::from_millis(p as usize as u64));
+        42
+    }
+
+    unsafe extern "win64" fn dup_self(p: *mut c_void) -> u32 {
+        let out = &*(p as *const AtomicUsize);
+        let mut d = 0usize;
+        assert_eq!(
+            DuplicateHandle(CUR, GetCurrentThread(), CUR, &mut d, 0, 0, 2),
+            1
+        );
+        out.store(d, SeqCst);
+        7
+    }
+
+    unsafe fn spawn(f: ThreadStart, p: usize, flags: u32) -> (usize, u32) {
+        let mut id = 0u32;
+        let h = CreateThread(null(), 0, Some(f), p as *mut c_void, flags, &mut id);
+        assert_ne!(h, 0);
+        assert_ne!(id, 0);
+        (h, id)
+    }
+
+    #[test]
+    fn create_wait_exit_code() {
+        unsafe {
+            let (h, _) = spawn(ret_param, 1234, 0);
+            assert_eq!(wait(&[h], false, 5000), WAIT_OBJECT_0);
+            let mut c = 0;
+            assert_eq!(GetExitCodeThread(h, &mut c), 1);
+            assert_eq!(c, 1234);
+            // Stays signaled.
+            assert_eq!(wait(&[h], false, 0), WAIT_OBJECT_0);
+            assert_eq!(CloseHandle(h), 1);
+            // Optional id, errors.
+            let h = CreateThread(null(), 0, Some(ret_param), null_mut(), 0, null_mut());
+            assert_ne!(h, 0);
+            wait(&[h], false, 5000);
+            SetLastError(0);
+            assert_eq!(CreateThread(null(), 0, None, null_mut(), 0, null_mut()), 0);
+            assert_eq!(GetLastError(), 87);
+            SetLastError(0);
+            assert_eq!(GetExitCodeThread(h, null_mut()), 0);
+            assert_eq!(GetLastError(), 87);
+            assert_eq!(CloseHandle(h), 1);
+            SetLastError(0);
+            let mut c = 0;
+            assert_eq!(GetExitCodeThread(h, &mut c), 0);
+            assert_eq!(GetLastError(), 6);
+            let ev = create_event(None, true, false);
+            assert_eq!(GetExitCodeThread(ev, &mut c), 0);
+            assert_eq!(GetLastError(), 6);
+            assert_eq!(GetExitCodeThread(CUR, &mut c), 0);
+        }
+    }
+
+    #[test]
+    fn still_active_while_running() {
+        unsafe {
+            let (h, _) = spawn(sleep_then_ret, 300, 0);
+            let mut c = 0;
+            assert_eq!(GetExitCodeThread(h, &mut c), 1);
+            assert_eq!(c, STILL_ACTIVE);
+            assert_eq!(wait(&[h], false, 0), WAIT_TIMEOUT);
+            assert_eq!(wait(&[h], false, 5000), WAIT_OBJECT_0);
+            assert_eq!(GetExitCodeThread(h, &mut c), 1);
+            assert_eq!(c, 42);
+            CloseHandle(h);
+            // The current thread is running.
+            assert_eq!(GetExitCodeThread(GetCurrentThread(), &mut c), 1);
+            assert_eq!(c, STILL_ACTIVE);
+        }
+    }
+
+    #[test]
+    fn suspended_start_then_resume() {
+        unsafe {
+            let (h, _) = spawn(ret_param, 5, CREATE_SUSPENDED);
+            assert_eq!(wait(&[h], false, 100), WAIT_TIMEOUT);
+            let mut c = 0;
+            GetExitCodeThread(h, &mut c);
+            assert_eq!(c, STILL_ACTIVE);
+            // Count bookkeeping before the routine starts.
+            assert_eq!(SuspendThread(h), 1);
+            assert_eq!(ResumeThread(h), 2);
+            assert_eq!(wait(&[h], false, 100), WAIT_TIMEOUT);
+            assert_eq!(ResumeThread(h), 1);
+            assert_eq!(wait(&[h], false, 5000), WAIT_OBJECT_0);
+            GetExitCodeThread(h, &mut c);
+            assert_eq!(c, 5);
+            // Not suspended any more.
+            assert_eq!(ResumeThread(h), 0);
+            // A started or finished thread cannot be suspended.
+            SetLastError(0);
+            assert_eq!(SuspendThread(h), u32::MAX);
+            assert_eq!(GetLastError(), ERROR_NOT_SUPPORTED);
+            SetLastError(0);
+            assert_eq!(SuspendThread(GetCurrentThread()), u32::MAX);
+            assert_eq!(GetLastError(), ERROR_NOT_SUPPORTED);
+            CloseHandle(h);
+            SetLastError(0);
+            assert_eq!(ResumeThread(h), u32::MAX);
+            assert_eq!(GetLastError(), 6);
+            SetLastError(0);
+            assert_eq!(SuspendThread(0x1234), u32::MAX);
+            assert_eq!(GetLastError(), 6);
+        }
+    }
+
+    #[test]
+    fn open_thread_by_id() {
+        unsafe {
+            let (h, id) = spawn(ret_param, 9, CREATE_SUSPENDED);
+            let o = OpenThread(0x1fffff, 0, id);
+            assert!(o != 0 && o != h);
+            ResumeThread(o);
+            assert_eq!(wait(&[o], false, 5000), WAIT_OBJECT_0);
+            assert_eq!(wait(&[h], false, 0), WAIT_OBJECT_0);
+            // Still openable while an object exists (handle h).
+            let o2 = OpenThread(0x1fffff, 0, id);
+            assert_ne!(o2, 0);
+            for x in [h, o, o2] {
+                CloseHandle(x);
+            }
+            // Unknown ids.
+            SetLastError(0);
+            assert_eq!(OpenThread(0x1fffff, 0, 0), 0);
+            assert_eq!(GetLastError(), 87);
+            SetLastError(0);
+            assert_eq!(OpenThread(0x1fffff, 0, 0x7fff_fff0), 0);
+            assert_eq!(GetLastError(), 87);
+            // The current thread, never created by CreateThread.
+            let me = OpenThread(0x1fffff, 0, GetCurrentThreadId());
+            assert_ne!(me, 0);
+            CloseHandle(me);
+        }
+    }
+
+    #[test]
+    fn priority_round_trip() {
+        unsafe {
+            let t = GetCurrentThread();
+            assert_eq!(t, usize::MAX - 1);
+            assert_eq!(GetThreadPriority(t), 0);
+            for p in [-15, -2, -1, 0, 1, 2, 15] {
+                assert_eq!(SetThreadPriority(t, p), 1);
+                assert_eq!(GetThreadPriority(t), p);
+            }
+            SetThreadPriority(t, 1);
+            for bad in [-3, 3, 14, -16, 16, i32::MAX] {
+                SetLastError(0);
+                assert_eq!(SetThreadPriority(t, bad), 0, "{bad}");
+                assert_eq!(GetLastError(), 87);
+                assert_eq!(GetThreadPriority(t), 1);
+            }
+            SetThreadPriority(t, 0);
+            // A real handle, per thread.
+            let (h, _) = spawn(ret_param, 0, CREATE_SUSPENDED);
+            assert_eq!(GetThreadPriority(h), 0);
+            assert_eq!(SetThreadPriority(h, -2), 1);
+            assert_eq!(GetThreadPriority(h), -2);
+            assert_eq!(GetThreadPriority(t), 0);
+            ResumeThread(h);
+            wait(&[h], false, 5000);
+            CloseHandle(h);
+            SetLastError(0);
+            assert_eq!(GetThreadPriority(h), i32::MAX);
+            assert_eq!(GetLastError(), 6);
+            SetLastError(0);
+            assert_eq!(SetThreadPriority(h, 0), 0);
+            assert_eq!(GetLastError(), 6);
+        }
+    }
+
+    #[test]
+    fn affinity() {
+        unsafe {
+            let t = GetCurrentThread();
+            let process = get_affinity(std::process::id()).unwrap() as usize;
+            let cur = get_affinity(tid()).unwrap() as usize;
+            let lowest = 1usize << process.trailing_zeros();
+            assert_eq!(SetThreadAffinityMask(t, lowest), cur);
+            assert_eq!(SetThreadAffinityMask(t, process), lowest);
+            // "All processors".
+            assert_eq!(SetThreadAffinityMask(t, usize::MAX), process);
+            // Errors: empty, outside the process mask, bad handle.
+            SetLastError(0);
+            assert_eq!(SetThreadAffinityMask(t, 0), 0);
+            assert_eq!(GetLastError(), 87);
+            SetLastError(0);
+            assert_eq!(
+                SetThreadAffinityMask(t, !process & (usize::MAX >> 1) | 1 << 62),
+                0
+            );
+            assert_eq!(GetLastError(), 87);
+            SetLastError(0);
+            assert_eq!(SetThreadAffinityMask(0x1234, 1), 0);
+            assert_eq!(GetLastError(), 6);
+            // Another thread by handle.
+            let (h, _) = spawn(ret_param, 0, CREATE_SUSPENDED);
+            assert_eq!(
+                SetThreadAffinityMask(h, lowest) as u64 & process as u64,
+                process as u64
+            );
+            ResumeThread(h);
+            wait(&[h], false, 5000);
+            CloseHandle(h);
+            assert_eq!(SwitchToThread(), 1);
+        }
+    }
+
+    #[test]
+    fn duplicate_pseudo_handle() {
+        unsafe {
+            let mut d = 0usize;
+            assert_eq!(
+                DuplicateHandle(CUR, GetCurrentThread(), CUR, &mut d, 0, 0, 2),
+                1
+            );
+            assert!(d != 0 && d != GetCurrentThread() && d.is_multiple_of(4));
+            let mut c = 0;
+            assert_eq!(GetExitCodeThread(d, &mut c), 1);
+            assert_eq!(c, STILL_ACTIVE);
+            // Same object as the pseudo handle: priorities are shared.
+            SetThreadPriority(d, 2);
+            assert_eq!(GetThreadPriority(GetCurrentThread()), 2);
+            SetThreadPriority(d, 0);
+            assert_eq!(wait(&[d], false, 0), WAIT_TIMEOUT);
+            CloseHandle(d);
+            // From a created thread: the duplicate outlives it and shows its exit code.
+            let out = AtomicUsize::new(0);
+            let (h, _) = spawn(dup_self, &out as *const _ as usize, 0);
+            assert_eq!(wait(&[h], false, 5000), WAIT_OBJECT_0);
+            let d = out.load(SeqCst);
+            assert_ne!(d, 0);
+            assert_ne!(d, h);
+            assert_eq!(wait(&[d], false, 0), WAIT_OBJECT_0);
+            assert_eq!(GetExitCodeThread(d, &mut c), 1);
+            assert_eq!(c, 7);
+            CloseHandle(h);
+            CloseHandle(d);
+            // The pseudo handle itself cannot be closed.
+            SetLastError(0);
+            assert_eq!(CloseHandle(GetCurrentThread()), 0);
+            assert_eq!(GetLastError(), 6);
+        }
+    }
+
+    #[test]
+    fn foreign_thread_object_is_signaled_on_exit() {
+        let h = std::thread::spawn(|| unsafe {
+            let mut d = 0usize;
+            assert_eq!(
+                DuplicateHandle(CUR, GetCurrentThread(), CUR, &mut d, 0, 0, 2),
+                1
+            );
+            d
+        })
+        .join()
+        .unwrap();
+        unsafe {
+            assert_eq!(wait(&[h], false, 5000), WAIT_OBJECT_0);
+            let mut c = 1;
+            assert_eq!(GetExitCodeThread(h, &mut c), 1);
+            assert_eq!(c, 0);
+            CloseHandle(h);
+        }
+    }
+
+    #[test]
+    fn wait_on_several_threads() {
+        unsafe {
+            let a = spawn(sleep_then_ret, 400, 0).0;
+            let b = spawn(sleep_then_ret, 20, 0).0;
+            let c = spawn(sleep_then_ret, 400, CREATE_SUSPENDED).0;
+            assert_eq!(wait(&[a, b, c], false, 5000), WAIT_OBJECT_0 + 1);
+            assert_eq!(wait(&[a, b, c], true, 100), WAIT_TIMEOUT);
+            ResumeThread(c);
+            assert_eq!(wait(&[a, b, c], true, 5000), WAIT_OBJECT_0);
+            for h in [a, b, c] {
+                CloseHandle(h);
+            }
+        }
+    }
+
+    #[test]
+    fn exiting_thread_abandons_its_mutex_before_signaling() {
+        unsafe extern "win64" fn own(p: *mut c_void) -> u32 {
+            assert_eq!(wait(&[p as usize], false, 0), WAIT_OBJECT_0);
+            0
+        }
+        unsafe {
+            let m = create_mutex(None, false);
+            let (h, _) = spawn(own, m, 0);
+            assert_eq!(wait(&[h], false, 5000), WAIT_OBJECT_0);
+            assert_eq!(wait(&[m], false, 0), WAIT_ABANDONED_0);
+            CloseHandle(m);
+            CloseHandle(h);
+        }
+    }
+
+    #[test]
+    fn closing_the_handle_of_a_running_thread_does_not_leak() {
+        unsafe {
+            let (h, id) = spawn(sleep_then_ret, 100, 0);
+            assert_eq!(CloseHandle(h), 1);
+            let gone = || kernel().threads.get(&id).and_then(Weak::upgrade).is_none();
+            assert!(!gone(), "alive while running");
+            for _ in 0..200 {
+                if gone() {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            panic!("thread object leaked");
+        }
+    }
+
+    #[test]
+    fn exported_through_lookup() {
+        for f in [
+            "CreateThread",
+            "GetCurrentThread",
+            "GetExitCodeThread",
+            "OpenThread",
+            "ResumeThread",
+            "SuspendThread",
+            "GetThreadPriority",
+            "SetThreadPriority",
+            "SetThreadAffinityMask",
+            "SwitchToThread",
+        ] {
+            for m in ["api-ms-win-core-processthreads-l1-1-0.dll", "KERNEL32.dll"] {
+                assert!(crate::registry::lookup(m, f).is_some(), "{m}!{f}");
+            }
+        }
+    }
+}
