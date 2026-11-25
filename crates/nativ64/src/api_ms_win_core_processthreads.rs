@@ -145,6 +145,19 @@ win32! {
     Native fn SetThreadGroupAffinity(h: usize, new: *const u8, old: *mut u8) -> i32 {
         handles::set_group_affinity(h, new, old)
     }
+    // The ideal processor is a scheduler hint Linux has no counterpart for: accepted and
+    // dropped. `ideal` and `previous` are PROCESSOR_NUMBERs (group u16, number u8, reserved
+    // u8); the previous one reads as group 0, processor 0. Shortcut: the handle is not checked.
+    Native fn SetThreadIdealProcessorEx(_h: usize, ideal: *const u8, previous: *mut u8) -> i32 {
+        if ideal.is_null() {
+            set_last_error(ERROR_INVALID_PARAMETER);
+            return 0;
+        }
+        if !previous.is_null() {
+            previous.cast::<u32>().write_unaligned(0);
+        }
+        1
+    }
     Native fn SwitchToThread() -> i32 { handles::switch_to_thread() }
     // TLS: per-thread slots, 1088 at most; a freed slot reads as NULL in every thread.
     Native fn TlsAlloc() -> u32 {
@@ -200,6 +213,7 @@ win32! {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api_ms_win_core_errorhandling::GetLastError;
 
     #[test]
     fn startup_info() {
@@ -269,6 +283,37 @@ mod tests {
             assert_eq!(a, b);
             assert!(TlsGetValue(b).is_null());
             TlsFree(b);
+        }
+    }
+
+    #[test]
+    fn ideal_processor_is_accepted() {
+        unsafe {
+            let ideal = [0u8, 0, 3, 0];
+            let mut previous = [0xffu8; 4];
+            assert_eq!(
+                SetThreadIdealProcessorEx(
+                    GetCurrentThread(),
+                    ideal.as_ptr(),
+                    previous.as_mut_ptr()
+                ),
+                1
+            );
+            assert_eq!(previous, [0; 4]);
+            assert_eq!(
+                SetThreadIdealProcessorEx(GetCurrentThread(), ideal.as_ptr(), std::ptr::null_mut()),
+                1
+            );
+            set_last_error(0);
+            assert_eq!(
+                SetThreadIdealProcessorEx(
+                    GetCurrentThread(),
+                    std::ptr::null(),
+                    std::ptr::null_mut()
+                ),
+                0
+            );
+            assert_eq!(GetLastError(), ERROR_INVALID_PARAMETER);
         }
     }
 
