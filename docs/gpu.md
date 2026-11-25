@@ -20,6 +20,10 @@ APIs only (libc as its only dependency).
   (else DXGI_ERROR_UNSUPPORTED), IID of ID3D12Device or any level, E_NOINTERFACE otherwise. One
   device per process (later calls AddRef the same one). Object 0x58 bytes with the out-of-line
   flag at +0x18 = 1; table of 160 slots, only IUnknown filled, every other slot a trap.
+- `d3d12/resource.rs`: `CreateCommittedResource` (slot 27) and `CreateCommittedResource3` (slot 127,
+  `+0x3f8`): zeroed memory sized and aligned by the console layout, taken from the host
+  reservation table (2^32..2^40) so its address is the GPU address; freed with the resource.
+  Heap properties and clear value are not kept; a size error is E_INVALIDARG.
 - `backend/vk` (no D3D12 yet): `Gpu::open()` loads Vulkan at run time (ash, no link-time
   dependency), picks discrete > integrated > CPU (`NATIV64_GPU=<index|name part>` overrides;
   needs 1.2, `VK_EXT_external_memory_host`, device address, timeline semaphores), one queue

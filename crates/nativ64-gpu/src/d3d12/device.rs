@@ -8,6 +8,7 @@ use crate::xobj::{
 };
 
 pub const E_INVALIDARG: HRESULT = 0x8007_0057_u32 as i32;
+pub const E_OUTOFMEMORY: HRESULT = 0x8007_000e_u32 as i32;
 /// What D3D returns when the request cannot be served (here: unknown interface version).
 pub const DXGI_ERROR_UNSUPPORTED: HRESULT = 0x887A_0004_u32 as i32;
 /// `params[0]` of the title's creation parameters.
@@ -157,6 +158,14 @@ static DEVICE_TABLE: SlotTable<160> = SlotTable::new(Iface::Device)
     .with(
         25,
         crate::d3d12::resource::get_resource_allocation_info as *const (),
+    )
+    .with(
+        27,
+        crate::d3d12::resource::create_committed_resource as *const (),
+    )
+    .with(
+        127,
+        crate::d3d12::resource::create_committed_resource3 as *const (),
     )
     .with(133, crate::d3d12::resource::create_at_address as *const ())
     .with(

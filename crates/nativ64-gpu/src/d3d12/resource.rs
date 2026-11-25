@@ -6,7 +6,8 @@
 
 use std::ffi::c_void;
 
-use crate::d3d12::device::E_INVALIDARG;
+use crate::d3d12::device::{E_INVALIDARG, E_OUTOFMEMORY};
+use crate::d3d12::info::HeapProperties;
 use crate::d3d12::object::{guid, hand_out, with_child_methods, PAGEABLE_IIDS};
 use crate::texture::Layout;
 use crate::xobj::{Guid, Iface, SlotTable, HRESULT, S_OK};
@@ -52,6 +53,16 @@ pub struct ResourceData {
     pub desc: ResourceDesc,
     /// Initial barrier layout (`-1` when the creation call gives none).
     pub layout: u32,
+    /// Committed resources own their memory (released with the resource).
+    owned: bool,
+}
+
+impl Drop for ResourceData {
+    fn drop(&mut self) {
+        if self.owned {
+            let _ = nativ64::api_ms_win_core_memory::free(self.address as usize, 0, 0x8000);
+        }
+    }
 }
 
 static TABLE: SlotTable<32> =
@@ -93,10 +104,129 @@ pub unsafe extern "win64" fn create_at_address(
             address,
             desc,
             layout,
+            owned: false,
         },
         iid,
         out,
     )
+}
+
+/// Committed resources land here: above the 32-bit memory, below the 2^40 title memory.
+const COMMITTED_LO: usize = 1 << 32;
+const COMMITTED_HI: usize = (1 << 40) - 1;
+
+/// Shared by the committed creation slots: zeroed memory sized and aligned by `footprint`, at
+/// an address that is the resource's GPU address. Shortcut: the heap properties and flags are
+/// not used (all memory is the same host memory) and the clear value is not kept.
+unsafe fn create_committed(
+    heap: *const HeapProperties,
+    desc: *const ResourceDesc,
+    layout: u32,
+    iid: *const Guid,
+    out: *mut *mut c_void,
+) -> HRESULT {
+    if heap.is_null() || desc.is_null() {
+        if !out.is_null() {
+            *out = std::ptr::null_mut();
+        }
+        return E_INVALIDARG;
+    }
+    let desc = desc.read_unaligned();
+    let info = match footprint(&desc) {
+        Ok(info) => info,
+        Err(why) => {
+            eprintln!("nativ64: no size for committed resource {desc:?}: {why}");
+            if !out.is_null() {
+                *out = std::ptr::null_mut();
+            }
+            return E_INVALIDARG;
+        }
+    };
+    if out.is_null() {
+        // only asks whether creation would work
+        return hand_out(
+            &TABLE,
+            Iface::Resource,
+            &RESOURCE_IIDS,
+            || -> ResourceData { unreachable!() },
+            iid,
+            out,
+        );
+    }
+    let Ok(size) = usize::try_from(info.size) else {
+        *out = std::ptr::null_mut();
+        return E_INVALIDARG;
+    };
+    let placement = nativ64::api_ms_win_core_memory::Placement {
+        lo: COMMITTED_LO,
+        hi: COMMITTED_HI,
+        align: (info.alignment as usize).max(KIB_64 as usize),
+    };
+    let Ok(address) =
+        nativ64::api_ms_win_core_memory::alloc(0, size, 0x3000, 0x04, Some(placement))
+    else {
+        eprintln!("nativ64: no memory for committed resource {desc:?}");
+        *out = std::ptr::null_mut();
+        return E_OUTOFMEMORY;
+    };
+    let hr = hand_out(
+        &TABLE,
+        Iface::Resource,
+        &RESOURCE_IIDS,
+        || ResourceData {
+            bits: 0,
+            console_refs: 0,
+            address: address as u64,
+            desc,
+            layout,
+            owned: true,
+        },
+        iid,
+        out,
+    );
+    if hr != S_OK {
+        let _ = nativ64::api_ms_win_core_memory::free(address, 0, 0x8000);
+    }
+    hr
+}
+
+/// `ID3D12Device::CreateCommittedResource(heap, heap_flags, desc, state, clear, riid, out)`
+/// (device slot 27). The initial state is not tracked (layout `-1`).
+///
+/// # Safety
+/// Pointers are NULL or valid.
+pub unsafe extern "win64" fn create_committed_resource(
+    _this: *mut c_void,
+    heap: *const HeapProperties,
+    _heap_flags: u32,
+    desc: *const ResourceDesc,
+    _state: u32,
+    _clear: *const c_void,
+    iid: *const Guid,
+    out: *mut *mut c_void,
+) -> HRESULT {
+    create_committed(heap, desc, u32::MAX, iid, out)
+}
+
+/// `CreateCommittedResource3(heap, heap_flags, desc1, initial_layout, clear, protected_session,
+/// castable_count, castable_formats, riid, out)` (device slot 127, `+0x3f8`).
+///
+/// # Safety
+/// Pointers are NULL or valid.
+pub unsafe extern "win64" fn create_committed_resource3(
+    _this: *mut c_void,
+    heap: *const HeapProperties,
+    _heap_flags: u32,
+    desc: *const ResourceDesc,
+    layout: u32,
+    _clear: *const c_void,
+    _protected_session: *mut c_void,
+    _castable_count: u32,
+    _castable: *const u32,
+    iid: *const Guid,
+    out: *mut *mut c_void,
+) -> HRESULT {
+    create_committed(heap, desc, layout, iid, out)
 }
 
 const BUFFER: u32 = 1;
@@ -463,6 +593,82 @@ mod tests {
             assert_eq!(
                 create_at_address(n, 0, &desc, 0, std::ptr::null(), iid, std::ptr::null_mut()),
                 E_INVALIDARG
+            );
+        }
+    }
+
+    #[test]
+    fn committed_resources() {
+        unsafe {
+            let n = std::ptr::null_mut();
+            let heap = HeapProperties {
+                kind: 1,
+                cpu_page_property: 0,
+                memory_pool: 0,
+                creation_node_mask: 0,
+                visible_node_mask: 0,
+            };
+            let desc = buffer(100);
+            let iid = &RESOURCE_IIDS[0];
+            let mut r = n;
+            assert_eq!(
+                create_committed_resource3(
+                    n,
+                    &heap,
+                    0,
+                    &desc,
+                    5,
+                    std::ptr::null(),
+                    n,
+                    0,
+                    std::ptr::null(),
+                    iid,
+                    &mut r
+                ),
+                S_OK
+            );
+            let address = get_gpu_virtual_address(r);
+            assert_eq!(address % 65536, 0);
+            assert!(address >= 1 << 32);
+            assert_eq!(*(address as *const u8), 0);
+            assert_eq!(XObject::<ResourceData>::data(r).layout, 5);
+            let mut r2 = n;
+            assert_eq!(
+                create_committed_resource(n, &heap, 0, &desc, 0, std::ptr::null(), iid, &mut r2),
+                S_OK
+            );
+            assert_ne!(get_gpu_virtual_address(r2), address);
+            assert_eq!(XObject::<ResourceData>::data(r2).layout, u32::MAX);
+            assert_eq!(XObject::<ResourceData>::release(r), 0);
+            assert_eq!(XObject::<ResourceData>::release(r2), 0);
+            // errors: null heap or desc, unknown layout (zero width), null out
+            let zero = buffer(0);
+            let mut bad = std::ptr::dangling_mut::<c_void>();
+            for (h, d) in [
+                (std::ptr::null(), &desc as *const _),
+                (&heap as *const _, std::ptr::null()),
+                (&heap as *const _, &zero as *const _),
+            ] {
+                bad = std::ptr::dangling_mut::<c_void>();
+                assert_eq!(
+                    create_committed_resource(n, h, 0, d, 0, std::ptr::null(), iid, &mut bad),
+                    E_INVALIDARG
+                );
+                assert!(bad.is_null());
+            }
+            let _ = bad;
+            assert_eq!(
+                create_committed_resource(
+                    n,
+                    &heap,
+                    0,
+                    &desc,
+                    0,
+                    std::ptr::null(),
+                    iid,
+                    std::ptr::null_mut()
+                ),
+                S_FALSE
             );
         }
     }
