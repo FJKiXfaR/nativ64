@@ -8,32 +8,42 @@ compile_error!("nativ64 supports Linux x86_64 only");
 mod registry;
 
 pub mod api_ms_win_core_errorhandling;
+pub mod api_ms_win_core_fibers;
 pub mod api_ms_win_core_handle;
+pub mod api_ms_win_core_interlocked;
 pub mod api_ms_win_core_processthreads;
 pub mod api_ms_win_core_profile;
 pub mod api_ms_win_core_synch;
 pub mod api_ms_win_core_sysinfo;
 pub mod api_ms_win_crt_convert;
+pub mod api_ms_win_crt_heap;
 pub mod api_ms_win_crt_math;
 pub mod api_ms_win_crt_runtime;
 pub mod api_ms_win_crt_string;
+pub mod api_ms_win_crt_utility;
 
 mod handles;
+mod slots;
 
 pub use registry::{lookup, nativ64_lookup, normalize_module, Export, Status};
 
 /// One table per Windows module file. Add a new module file here.
 pub static TABLES: &[&[Export]] = &[
     api_ms_win_core_errorhandling::EXPORTS,
+    api_ms_win_core_fibers::EXPORTS,
     api_ms_win_core_handle::EXPORTS,
+    api_ms_win_core_interlocked::EXPORTS,
     api_ms_win_core_processthreads::EXPORTS,
+    api_ms_win_core_processthreads::ALIASES,
     api_ms_win_core_profile::EXPORTS,
     api_ms_win_core_synch::EXPORTS,
     api_ms_win_core_sysinfo::EXPORTS,
     api_ms_win_crt_convert::EXPORTS,
+    api_ms_win_crt_heap::EXPORTS,
     api_ms_win_crt_math::EXPORTS,
     api_ms_win_crt_runtime::EXPORTS,
     api_ms_win_crt_string::EXPORTS,
+    api_ms_win_crt_utility::EXPORTS,
 ];
 
 /// Every registered export (each function appears once per module name it is known under).
