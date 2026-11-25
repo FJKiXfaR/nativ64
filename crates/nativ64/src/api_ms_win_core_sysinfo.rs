@@ -179,11 +179,12 @@ mod tests {
             GetSystemTime(utc.as_mut_ptr());
             GetLocalTime(local.as_mut_ptr());
         }
-        let year = 1970 + std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-            / 31_556_952;
+        let year = 1970
+            + std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                / 31_556_952;
         for t in [utc, local] {
             assert!((t[0] as u64).abs_diff(year) <= 1, "{t:?}");
             assert!((1..=12).contains(&t[1]) && t[2] <= 6 && (1..=31).contains(&t[3]));

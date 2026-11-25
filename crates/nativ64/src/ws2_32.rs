@@ -183,7 +183,10 @@ mod tests {
             assert_eq!(gethostname(buf.as_mut_ptr(), -1), SOCKET_ERROR);
             assert_eq!(gethostname(buf.as_mut_ptr(), 0), SOCKET_ERROR);
         }
-        assert_eq!(lookup_ordinal("ws2_32.dll", 57).unwrap().name, "gethostname");
+        assert_eq!(
+            lookup_ordinal("ws2_32.dll", 57).unwrap().name,
+            "gethostname"
+        );
     }
 
     #[test]

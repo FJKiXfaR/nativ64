@@ -9,6 +9,7 @@ mod registry;
 
 pub mod acphal;
 pub mod api_ms_win_core_com;
+pub mod api_ms_win_core_debug;
 pub mod api_ms_win_core_errorhandling;
 pub mod api_ms_win_core_fibers;
 pub mod api_ms_win_core_file;
@@ -67,6 +68,7 @@ pub use registry::{lookup, lookup_ordinal, nativ64_lookup, normalize_module, Exp
 pub static TABLES: &[&[Export]] = &[
     acphal::EXPORTS,
     api_ms_win_core_com::EXPORTS,
+    api_ms_win_core_debug::EXPORTS,
     api_ms_win_core_errorhandling::EXPORTS,
     api_ms_win_core_errorhandling::ASM_EXPORTS,
     api_ms_win_core_fibers::EXPORTS,
