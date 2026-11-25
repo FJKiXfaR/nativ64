@@ -21,6 +21,34 @@ unsafe fn store_filetime(out: *mut u32, t: u64) {
     out.add(1).write_unaligned((t >> 32) as u32);
 }
 
+/// Writes the current time as a SYSTEMTIME (eight little-endian WORDs), in UTC or local time.
+unsafe fn store_systemtime(out: *mut u16, local: bool) {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    libc::clock_gettime(libc::CLOCK_REALTIME, &mut ts);
+    let mut tm: libc::tm = std::mem::zeroed();
+    if local {
+        libc::localtime_r(&ts.tv_sec, &mut tm);
+    } else {
+        libc::gmtime_r(&ts.tv_sec, &mut tm);
+    }
+    let f = [
+        tm.tm_year + 1900,
+        tm.tm_mon + 1,
+        tm.tm_wday,
+        tm.tm_mday,
+        tm.tm_hour,
+        tm.tm_min,
+        tm.tm_sec.min(59),
+        (ts.tv_nsec / 1_000_000) as i32,
+    ];
+    for (i, v) in f.iter().enumerate() {
+        out.add(i).write_unaligned(*v as u16);
+    }
+}
+
 const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
 const ERROR_INVALID_PARAMETER: u32 = 87;
 /// `SYSTEM_LOGICAL_PROCESSOR_INFORMATION`: mask, relationship, 16 bytes of union.
@@ -90,6 +118,12 @@ win32! {
     Native fn GetSystemTimePreciseAsFileTime(out: *mut u32) {
         store_filetime(out, filetime_now());
     }
+    Native fn GetSystemTime(out: *mut u16) {
+        store_systemtime(out, false);
+    }
+    Native fn GetLocalTime(out: *mut u16) {
+        store_systemtime(out, true);
+    }
     // MEMORYSTATUSEX (64 bytes): the host's RAM and swap; virtual space is the user half (128 TiB).
     Native fn GlobalMemoryStatusEx(out: *mut u8) -> i32 {
         if out.is_null() || (out as *const u32).read_unaligned() != 64 {
@@ -135,6 +169,26 @@ mod tests {
         let avail = u64::from_le_bytes(b[16..24].try_into().unwrap());
         assert!(total > 0 && avail <= total);
         assert!(b[4] <= 100);
+    }
+
+    #[test]
+    fn systemtime_is_current_and_well_formed() {
+        let mut utc = [0u16; 8];
+        let mut local = [0u16; 8];
+        unsafe {
+            GetSystemTime(utc.as_mut_ptr());
+            GetLocalTime(local.as_mut_ptr());
+        }
+        let year = 1970 + std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            / 31_556_952;
+        for t in [utc, local] {
+            assert!((t[0] as u64).abs_diff(year) <= 1, "{t:?}");
+            assert!((1..=12).contains(&t[1]) && t[2] <= 6 && (1..=31).contains(&t[3]));
+            assert!(t[4] < 24 && t[5] < 60 && t[6] < 60 && t[7] < 1000);
+        }
     }
 
     #[test]
