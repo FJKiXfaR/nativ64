@@ -43,6 +43,20 @@ own implementation in `crates/nativ64-gpu/src/texture/` and `xg_xs.rs`.
   `isDisp`, with its dedicated 3D tables); only `_Z_X` and `_R_X` stay thin in 3D. 4KB_R_X
   (mode 23) has no pattern in addrlib and is refused. Example: 64 KiB, 4-byte
   elements → 128 × 128.
+- **MSAA** (2, 4 or 8 samples; D3D12 requires 2D and a single mip). Valid modes follow addrlib:
+  64KB_Z_X (24) for depth/stencil formats (elements of at most 4 bytes) and 64KB_R_X (27) for
+  colour; linear, `_S`, `_D`, `_S_X` and 4KB modes are refused (they also fail addrlib's
+  "block size >= pipe interleave x samples" rule or its z/colour rules). The block holds
+  `samples` times fewer elements; the extra bit of the element count goes to x, except for 2x
+  and 8x with an even block size, where it goes to y (addrlib's `ComputeThinBlockDimension`).
+  Example: 64 KiB, 4-byte elements: 2x 64 x 128, 4x 64 x 64,
+  8x 32 x 64. Sizes are the one-sample size times the sample count (whole blocks); the
+  alignment is at least 4 MiB. No FMASK plane (as VIctory); CMASK/HTILE are reserved as for one
+  sample. UNVERIFIED against the console library: FMASK, and the CMASK/HTILE sizes with
+  samples. `tile`/`detile` and texel offsets refuse MSAA (`TileError::Multisampled`, E_NOTIMPL
+  at the XG copy slots) until a sample-aware equation exists. Errors: sample count other than
+  1/2/4/8, mips, 1D/3D: `InvalidDesc` (E_INVALIDARG); a mode that does not allow it:
+  `UnsupportedMode` (E_NOTIMPL).
 - **Mip chain**: each mip padded to whole blocks; one block holds the **mip tail** (the
   smallest mips) at offset 0 of the slice, then mips from smallest to largest, mip 0 last.
   Tail rules (first tail mip, max mips in tail, position of each tail mip) as in addrlib's
@@ -79,9 +93,8 @@ own implementation in `crates/nativ64-gpu/src/texture/` and `xg_xs.rs`.
 | `xg_xs.rs` | The two exports and the texture computer object (our `xobj`, `Iface::XgTextureComputer`, no QI). |
 | `d3d12/resource.rs` | `GetResourceAllocationInfo` and resource layouts use `texture::Layout`. |
 
-Errors are values (`LayoutError`: unsupported mode, MSAA, VAR, too large), turned into
-`E_INVALIDARG`/`E_NOTIMPL` at the API, with one stderr line naming what is missing. MSAA is
-refused until the title needs it.
+Errors are values (`LayoutError`: unsupported mode, VAR, bad description, too large), turned
+into `E_INVALIDARG`/`E_NOTIMPL` at the API, with one stderr line naming what is missing.
 
 ## Tests
 

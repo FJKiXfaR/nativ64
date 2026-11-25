@@ -267,6 +267,14 @@ fn footprint(desc: &ResourceDesc) -> Result<AllocationInfo, String> {
 /// The footprint of resources placed one after another; an unknown one gives the documented
 /// size `u64::MAX`.
 fn placed_together(descs: &[ResourceDesc]) -> AllocationInfo {
+    placed_together_with(descs, |_, _, _| {})
+}
+
+/// `placed_together`, telling `placed(index, offset, info)` where each resource goes.
+fn placed_together_with(
+    descs: &[ResourceDesc],
+    mut placed: impl FnMut(usize, u64, AllocationInfo),
+) -> AllocationInfo {
     let unknown = AllocationInfo {
         size: u64::MAX,
         alignment: 0,
@@ -275,7 +283,7 @@ fn placed_together(descs: &[ResourceDesc]) -> AllocationInfo {
         size: 0,
         alignment: KIB_64,
     };
-    for desc in descs {
+    for (index, desc) in descs.iter().enumerate() {
         let one = match footprint(desc) {
             Ok(one) => one,
             Err(why) => {
@@ -286,6 +294,7 @@ fn placed_together(descs: &[ResourceDesc]) -> AllocationInfo {
         let Some(offset) = total.size.checked_next_multiple_of(one.alignment) else {
             return unknown;
         };
+        placed(index, offset, one);
         total.size = offset.saturating_add(one.size);
         total.alignment = total.alignment.max(one.alignment);
     }
@@ -311,6 +320,62 @@ pub unsafe extern "win64" fn get_resource_allocation_info(
     };
     if !out.is_null() {
         out.write(placed_together(descs));
+    }
+    out
+}
+
+/// One `D3D12_RESOURCE_ALLOCATION_INFO1`: where a resource goes in the group, and its own
+/// alignment and size.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AllocationInfo1 {
+    pub offset: u64,
+    pub alignment: u64,
+    pub size: u64,
+}
+
+/// Stride of `D3D12_RESOURCE_DESC1` (our 56-byte description, then the 12-byte sampler
+/// feedback mip region, padded).
+const RESOURCE_DESC1_SIZE: usize = 0x48;
+
+/// `ID3D12Device::GetResourceAllocationInfo2(visible_mask, count, descs1, infos)` (device slot
+/// 108, `+0x360`): slot 25 for newer descriptions, which also reports each resource's
+/// placement in `infos` when it is not NULL. The hidden result pointer comes first.
+///
+/// # Safety
+/// `out` is NULL or has room for the result; `descs` is NULL or holds `count` descriptions of
+/// 0x48 bytes; `infos` is NULL or has room for `count` entries.
+pub unsafe extern "win64" fn get_resource_allocation_info2(
+    out: *mut AllocationInfo,
+    _this: *mut c_void,
+    _visible_mask: u32,
+    count: u32,
+    descs: *const u8,
+    infos: *mut AllocationInfo1,
+) -> *mut AllocationInfo {
+    let descs: Vec<ResourceDesc> = if descs.is_null() {
+        vec![]
+    } else {
+        (0..count as usize)
+            .map(|i| {
+                descs
+                    .add(i * RESOURCE_DESC1_SIZE)
+                    .cast::<ResourceDesc>()
+                    .read_unaligned()
+            })
+            .collect()
+    };
+    let total = placed_together_with(&descs, |index, offset, one| {
+        if !infos.is_null() {
+            infos.add(index).write_unaligned(AllocationInfo1 {
+                offset,
+                alignment: one.alignment,
+                size: one.size,
+            });
+        }
+    });
+    if !out.is_null() {
+        out.write(total);
     }
     out
 }
@@ -574,10 +639,19 @@ mod tests {
                     alignment: 65536
                 }
             );
-            // MSAA and VAR layouts have no size
+            // MSAA gets the 4 MiB alignment
+            let msaa = ResourceDesc {
+                sample_count: 4,
+                ..rt
+            };
+            get_resource_allocation_info(&mut info, n, 1, 1, &msaa);
+            assert_eq!(info.alignment, 4 << 20);
+            assert_ne!(info.size, u64::MAX);
+            // MSAA with mips and VAR layouts have no size
             for bad in [
                 ResourceDesc {
                     sample_count: 4,
+                    mip_levels: 2,
                     ..rt
                 },
                 ResourceDesc {
@@ -726,6 +800,54 @@ mod tests {
                 ),
                 S_FALSE
             );
+        }
+    }
+
+    #[test]
+    fn allocation_info2_reports_each_placement() {
+        unsafe {
+            let n = std::ptr::null_mut();
+            let rt = ResourceDesc {
+                dimension: 3,
+                width: 64,
+                height: 64,
+                depth_or_array_size: 1,
+                mip_levels: 1,
+                format: 28,
+                sample_count: 1,
+                flags: 0x1,
+                ..Default::default()
+            };
+            let msaa = ResourceDesc {
+                sample_count: 4,
+                ..rt
+            };
+            // two descriptions of 0x48 bytes
+            let mut raw = [0u8; 2 * RESOURCE_DESC1_SIZE];
+            for (i, d) in [rt, msaa].iter().enumerate() {
+                let bytes = std::slice::from_raw_parts(
+                    (d as *const ResourceDesc).cast::<u8>(),
+                    size_of::<ResourceDesc>(),
+                );
+                raw[i * RESOURCE_DESC1_SIZE..][..bytes.len()].copy_from_slice(bytes);
+            }
+            let mut infos = [AllocationInfo1 {
+                offset: 0,
+                alignment: 0,
+                size: 0,
+            }; 2];
+            let mut total = AllocationInfo {
+                size: 0,
+                alignment: 0,
+            };
+            get_resource_allocation_info2(&mut total, n, 1, 2, raw.as_ptr(), infos.as_mut_ptr());
+            let first = Layout::new(&rt).unwrap();
+            assert_eq!(infos[0].offset, 0);
+            assert_eq!((infos[0].size, infos[0].alignment), (first.size, 65536));
+            assert_eq!(infos[1].alignment, 4 << 20);
+            assert_eq!(infos[1].offset, 4 << 20);
+            assert_eq!(total.alignment, 4 << 20);
+            assert_eq!(total.size, infos[1].offset + infos[1].size);
         }
     }
 }

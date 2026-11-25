@@ -23,6 +23,8 @@ pub enum TileError {
     TiledTooSmall,
     /// The linear buffer does not hold the rows, or a pitch is smaller than a row.
     LinearTooSmall,
+    /// Multisampled surfaces have no sample-aware equation here.
+    Multisampled,
     Equation(EquationError),
 }
 
@@ -32,6 +34,7 @@ impl fmt::Display for TileError {
             Self::NoSubresource => write!(f, "no such plane, mip level or slice"),
             Self::TiledTooSmall => write!(f, "tiled memory is smaller than the texture"),
             Self::LinearTooSmall => write!(f, "linear buffer or pitch too small"),
+            Self::Multisampled => write!(f, "multisampled textures cannot be tiled yet"),
             Self::Equation(e) => write!(f, "no address equation: {e:?}"),
         }
     }
@@ -59,6 +62,9 @@ impl<'a> Addresser<'a> {
     /// `base` is the address of the start of the resource; only the XOR modes look at it
     /// (through its low bits), which is zero for any resource placed at its alignment.
     pub fn new(layout: &'a Layout, plane: usize, mip: usize, base: u64) -> Result<Self, TileError> {
+        if layout.samples > 1 {
+            return Err(TileError::Multisampled);
+        }
         let p = layout.planes.get(plane).ok_or(TileError::NoSubresource)?;
         let m = p.mips.get(mip).ok_or(TileError::NoSubresource)?;
         let eq = if layout.mode.is_linear() {
@@ -473,5 +479,22 @@ mod tests {
         let mut t = vec![0u8; l.size as usize];
         tile(&l, 0, 0, 0, &mut t, &[9, 8, 7, 6], (4, 0)).unwrap();
         assert_eq!(t.iter().filter(|&&b| b != 0).count(), 4);
+    }
+
+    #[test]
+    fn multisampled_is_refused() {
+        let mut d = desc(3, (64, 64, 1), 1, 28, 0x100 | 27, 1);
+        d.sample_count = 4;
+        let l = Layout::new(&d).unwrap();
+        assert!(matches!(
+            Addresser::new(&l, 0, 0, 0),
+            Err(TileError::Multisampled)
+        ));
+        let mut lin = vec![0u8; 64 * 64 * 4 * 4];
+        let tiled = vec![0u8; l.size as usize];
+        assert_eq!(
+            detile(&l, 0, 0, 0, &tiled, &mut lin, (256, 0)),
+            Err(TileError::Multisampled)
+        );
     }
 }

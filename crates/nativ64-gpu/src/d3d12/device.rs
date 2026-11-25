@@ -179,6 +179,10 @@ static DEVICE_TABLE: SlotTable<160> = SlotTable::new(Iface::Device)
         crate::d3d12::resource::get_resource_allocation_info as *const (),
     )
     .with(
+        108,
+        crate::d3d12::resource::get_resource_allocation_info2 as *const (),
+    )
+    .with(
         27,
         crate::d3d12::resource::create_committed_resource as *const (),
     )

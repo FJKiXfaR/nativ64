@@ -14,6 +14,7 @@ use crate::xobj::HRESULT;
 use nativ64::com::E_NOTIMPL;
 
 const TEXTURE_1D: u32 = 2;
+const TEXTURE_2D: u32 = 3;
 const TEXTURE_3D: u32 = 4;
 const FLAG_RENDER_TARGET: u32 = 0x1;
 const FLAG_DEPTH_STENCIL: u32 = 0x2;
@@ -25,6 +26,8 @@ const MAX_MIPS: u32 = 15;
 const CMASK_ALIGNMENT: u64 = 0x2000;
 const HTILE_ALIGNMENT: u64 = 0x10000;
 const KIB_64: u64 = 1 << 16;
+/// Minimum alignment of a multisampled resource.
+const MIB_4: u64 = 1 << 22;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LayoutError {
@@ -37,7 +40,6 @@ pub enum LayoutError {
     UnsupportedMode(u32),
     /// The variable-size modes (28-31).
     VarMode(u32),
-    Msaa(u32),
     /// Elements that are not 1, 2, 4, 8 or 16 bytes.
     ElementSize(u32),
     TooLarge,
@@ -61,7 +63,6 @@ impl fmt::Display for LayoutError {
             Self::UnknownFormat(x) => write!(f, "format {x} has no known layout"),
             Self::UnsupportedMode(m) => write!(f, "swizzle mode {m} is not supported here"),
             Self::VarMode(m) => write!(f, "variable-size swizzle mode {m} is not supported"),
-            Self::Msaa(n) => write!(f, "{n} samples (multisampling is not supported)"),
             Self::ElementSize(n) => write!(f, "{n}-byte elements cannot be tiled"),
             Self::TooLarge => write!(f, "texture too large"),
         }
@@ -149,6 +150,8 @@ pub struct Layout {
     /// Depth of a 3D texture, array size otherwise.
     pub depth_or_array: u32,
     pub mip_levels: u32,
+    /// Samples per texel (1, 2, 4 or 8).
+    pub samples: u32,
     /// Thick (3D) blocks.
     pub thick: bool,
     pub planes: Vec<Plane>,
@@ -181,7 +184,9 @@ const BLOCK_1K_3D: [[u32; 3]; 5] = [[16, 8, 8], [8, 8, 8], [8, 8, 4], [8, 4, 4],
 
 /// Block size in elements (x, y, z) of `mode` for elements of `element_bytes` bytes. `thick`
 /// is a 3D texture in a mode that has thick blocks.
-pub fn block_dims(mode: SwizzleMode, thick: bool, element_bytes: u32) -> [u32; 3] {
+/// A multisampled block holds `samples` times fewer elements, split as addrlib's
+/// `ComputeThinBlockDimension` does.
+pub fn block_dims(mode: SwizzleMode, thick: bool, element_bytes: u32, samples: u32) -> [u32; 3] {
     let elem_log2 = log2(element_bytes);
     if mode.is_linear() {
         return [256 / element_bytes, 1, 1];
@@ -197,8 +202,11 @@ pub fn block_dims(mode: SwizzleMode, thick: bool, element_bytes: u32) -> [u32; 3
             b[2] << (avg + u32::from(rest != 0)),
         ]
     } else {
-        let n = blk - elem_log2;
-        let lw = n.div_ceil(2);
+        let samples_log2 = log2(samples);
+        let n = blk - elem_log2 - samples_log2;
+        // 2x and 8x with an even block size give the extra bit to the height
+        let wide = samples_log2 & 1 == 0 || blk & 1 != 0;
+        let lw = (n + u32::from(wide)) / 2;
         [1 << lw, 1 << (n - lw), 1]
     }
 }
@@ -234,8 +242,9 @@ fn surface(
     (w, h): (u32, u32),
     num_slices: u32,
     mips: u32,
+    samples: u32,
 ) -> Result<Surface, LayoutError> {
-    let block = block_dims(mode, thick, elem);
+    let block = block_dims(mode, thick, elem, samples);
     let [bw, bh, bd] = block;
     let e = u64::from(elem);
     let index = log2(elem) as usize;
@@ -383,7 +392,7 @@ fn surface(
         }
     } else {
         let (pitch, rows) = (pow2_align(w, bw), pow2_align(h, bh));
-        slice_size = u64::from(pitch) * u64::from(rows) * e;
+        slice_size = u64::from(pitch) * u64::from(rows) * e * u64::from(samples);
         out.push(plain(w, h, mip0_depth, pitch, rows, 0));
     }
     let size = slice_size
@@ -439,8 +448,9 @@ impl Layout {
         if !(TEXTURE_1D..=TEXTURE_3D).contains(&dimension) {
             return Err(LayoutError::NotATexture(dimension));
         }
-        if desc.sample_count > 1 {
-            return Err(LayoutError::Msaa(desc.sample_count));
+        let samples = desc.sample_count.max(1);
+        if !matches!(samples, 1 | 2 | 4 | 8) {
+            return Err(LayoutError::InvalidDesc("sample count"));
         }
         let info = format_info(desc.format).ok_or(LayoutError::UnknownFormat(desc.format))?;
         let (width, height) = (
@@ -489,6 +499,22 @@ impl Layout {
         if !usable {
             return Err(LayoutError::UnsupportedMode(mode.0));
         }
+        if samples > 1 {
+            // D3D12: 2D, a single mip. addrlib: only the Z modes (depth, at most 32 bits per
+            // element) and the render-optimised modes (colour) take multisampling.
+            if dimension != TEXTURE_2D || mip_levels != 1 {
+                return Err(LayoutError::InvalidDesc("multisampled needs one 2D mip"));
+            }
+            let depth = desc.flags & FLAG_DEPTH_STENCIL != 0;
+            let fits = if depth {
+                mode.is_z() && info.element_bytes <= 4
+            } else {
+                mode.is_render()
+            };
+            if !fits || !mode.is_supported() {
+                return Err(LayoutError::UnsupportedMode(mode.0));
+            }
+        }
         let thick = is_3d && mode.is_std_or_disp();
 
         let elements = (width.div_ceil(info.block.0), height.div_ceil(info.block.1));
@@ -504,7 +530,15 @@ impl Layout {
             plane_specs.push((PlaneKind::Stencil, 1));
         }
         for (kind, elem) in plane_specs {
-            let s = surface(mode, thick, elem, elements, depth_or_array, mip_levels)?;
+            let s = surface(
+                mode,
+                thick,
+                elem,
+                elements,
+                depth_or_array,
+                mip_levels,
+                samples,
+            )?;
             let offset = align_up(end, alignment);
             end = offset.checked_add(s.size).ok_or(LayoutError::TooLarge)?;
             planes.push(Plane {
@@ -538,6 +572,9 @@ impl Layout {
             }
         }
 
+        if samples > 1 {
+            alignment = alignment.max(MIB_4);
+        }
         if desc.alignment.is_power_of_two() {
             alignment = alignment.max(desc.alignment);
         }
@@ -548,6 +585,7 @@ impl Layout {
             height,
             depth_or_array,
             mip_levels,
+            samples,
             thick,
             planes,
             metadata,
@@ -792,7 +830,8 @@ mod tests {
         );
         let mut msaa = ok;
         msaa.sample_count = 4;
-        assert_eq!(Layout::new(&msaa), Err(LayoutError::Msaa(4)));
+        // layout 0 without render flags picks 4KB_S, which cannot be multisampled
+        assert_eq!(Layout::new(&msaa), Err(LayoutError::UnsupportedMode(5)));
         assert_eq!(
             Layout::new(&tex(3, 64, 64, 1, 1, 116)),
             Err(LayoutError::UnknownFormat(116))
@@ -838,7 +877,7 @@ mod tests {
             Layout::new(&tex(3, 40000, 64, 1, 1, 28)),
             Err(LayoutError::TooLarge)
         );
-        assert_eq!(LayoutError::Msaa(2).hresult(), E_NOTIMPL);
+        assert_eq!(LayoutError::UnsupportedMode(5).hresult(), E_NOTIMPL);
         assert_eq!(LayoutError::TooLarge.hresult(), E_INVALIDARG);
     }
 
@@ -874,5 +913,125 @@ mod tests {
                 assert!(u64::from(p.slices) * p.slice_size <= p.size);
             }
         }
+    }
+
+    fn ms(mut d: ResourceDesc, samples: u32) -> ResourceDesc {
+        d.sample_count = samples;
+        d
+    }
+
+    #[test]
+    fn msaa_colour_sizes() {
+        let rt = |w, h, samples| {
+            let d = with(tex(3, w, h, 1, 1, 28), 0, FLAG_RENDER_TARGET);
+            Layout::new(&ms(d, samples)).unwrap()
+        };
+        // 64KB_R_X, 4-byte elements: 16384 elements per block split by the sample count:
+        // 2x 64 x 128, 4x 64 x 64, 8x 32 x 64 (the extra bit goes to x, except for 2x and 8x
+        // with an even block size, which give it to y)
+        let l = rt(100, 70, 2);
+        assert_eq!(l.planes[0].block, [64, 128, 1]);
+        assert_eq!((l.planes[0].size, l.samples), (2 * 65536, 2));
+        let l = rt(100, 70, 4);
+        assert_eq!(l.planes[0].block, [64, 64, 1]);
+        assert_eq!(l.planes[0].size, 2 * 2 * 65536);
+        let l = rt(100, 70, 8);
+        assert_eq!(l.planes[0].block, [32, 64, 1]);
+        assert_eq!(l.planes[0].size, 4 * 2 * 65536);
+        // CMASK as for one sample: 1024 x 1024 / 128 after the colour, at 0x2000
+        assert_eq!(l.metadata[0].offset, 8 * 65536);
+        assert_eq!(l.metadata[0].size, 8192);
+        assert_eq!(l.size, 8 * 65536 + 8192);
+        assert_eq!(l.alignment, 4 << 20);
+        // the stop's 1 x 1 target
+        let l = rt(1, 1, 4);
+        assert_eq!((l.planes[0].size, l.size), (65536, 65536 + 8192));
+        // 1920 x 1080 4x: 30 x 17 blocks of 64 x 64
+        let l = rt(1920, 1080, 4);
+        assert_eq!(l.planes[0].size, 30 * 17 * 65536);
+        // one sample is unchanged and keeps the 64 KiB alignment
+        assert_eq!(rt(100, 70, 1).alignment, 65536);
+        // an explicit alignment above 4 MiB wins
+        let mut d = ms(with(tex(3, 64, 64, 1, 1, 28), 0, FLAG_RENDER_TARGET), 4);
+        d.alignment = 8 << 20;
+        assert_eq!(Layout::new(&d).unwrap().alignment, 8 << 20);
+    }
+
+    #[test]
+    fn msaa_depth_sizes() {
+        // D32_FLOAT, 64KB_Z_X, 4x: 64 x 64 blocks, HTILE 1024 x 1024 / 16 at 64 KiB
+        let d = with(tex(3, 128, 128, 1, 1, 40), 0, FLAG_DEPTH_STENCIL);
+        let l = Layout::new(&ms(d, 4)).unwrap();
+        assert_eq!(l.mode, SwizzleMode::SW_64KB_Z_X);
+        assert_eq!(l.planes[0].block, [64, 64, 1]);
+        assert_eq!(l.planes[0].size, 4 * 65536);
+        assert_eq!(l.metadata[0].offset, 4 * 65536);
+        assert_eq!(l.size, 5 * 65536);
+        assert_eq!(l.alignment, 4 << 20);
+        // D16, 2x: 2^16 / 2 / 2 = 2^14 elements; 2x with an even block size: y gets the extra bit,
+        // which is none here
+        let d = with(tex(3, 64, 128, 1, 1, 55), 0, FLAG_DEPTH_STENCIL);
+        let l = Layout::new(&ms(d, 2)).unwrap();
+        assert_eq!(l.planes[0].block, [128, 128, 1]);
+        assert_eq!(l.planes[0].size, 65536);
+        // D32_S8, 4x: depth 64 x 64 (one block per 128 x 128 -> 4 blocks), stencil 1-byte
+        // elements: 128 x 128 per block, one block
+        let d = with(tex(3, 128, 128, 1, 1, 20), 0, FLAG_DEPTH_STENCIL);
+        let l = Layout::new(&ms(d, 4)).unwrap();
+        assert_eq!(
+            (l.planes[0].size, l.planes[1].offset),
+            (4 * 65536, 4 * 65536)
+        );
+        assert_eq!(l.planes[1].block, [128, 128, 1]);
+        assert_eq!(l.planes[1].size, 65536);
+        assert_eq!(l.metadata[0].offset, 5 * 65536);
+        assert_eq!(l.size, 6 * 65536);
+        assert_eq!(l.alignment, 4 << 20);
+    }
+
+    #[test]
+    fn msaa_errors() {
+        let rt = || with(tex(3, 64, 64, 1, 1, 28), 0, FLAG_RENDER_TARGET);
+        let err = |d: ResourceDesc| Layout::new(&d).unwrap_err();
+        // sample counts: 16 and non powers of two
+        for n in [3, 5, 6, 16, 32] {
+            assert!(
+                matches!(err(ms(rt(), n)), LayoutError::InvalidDesc(_)),
+                "{n}"
+            );
+        }
+        assert!(Layout::new(&ms(rt(), 0)).is_ok());
+        // mips, 1D, 3D, arrays of mips
+        let mut d = ms(rt(), 4);
+        d.mip_levels = 2;
+        assert!(matches!(err(d), LayoutError::InvalidDesc(_)));
+        let mut d = ms(rt(), 4);
+        d.mip_levels = 0;
+        assert!(matches!(err(d), LayoutError::InvalidDesc(_)));
+        let d = ms(with(tex(2, 64, 1, 1, 1, 28), 0x100, FLAG_RENDER_TARGET), 4);
+        assert!(matches!(err(d), LayoutError::InvalidDesc(_)));
+        let d = ms(
+            with(tex(4, 64, 64, 4, 1, 28), 0x100 | 27, FLAG_RENDER_TARGET),
+            4,
+        );
+        assert!(matches!(err(d), LayoutError::InvalidDesc(_)));
+        // modes that do not allow it: linear, standard, display, XOR standard; Z for colour,
+        // render-optimised for depth
+        for mode in [0, 5, 9, 17, 21, 24] {
+            let d = ms(
+                with(tex(3, 64, 64, 1, 1, 28), 0x100 | mode, FLAG_RENDER_TARGET),
+                4,
+            );
+            assert_eq!(err(d), LayoutError::UnsupportedMode(mode), "{mode}");
+        }
+        let d = ms(
+            with(tex(3, 64, 64, 1, 1, 40), 0x100 | 27, FLAG_DEPTH_STENCIL),
+            4,
+        );
+        assert_eq!(err(d), LayoutError::UnsupportedMode(27));
+        // linear through the layout field 1
+        let d = ms(with(tex(3, 64, 64, 1, 1, 28), 1, FLAG_RENDER_TARGET), 4);
+        assert_eq!(err(d), LayoutError::UnsupportedMode(0));
+        assert_eq!(err(ms(rt(), 3)).hresult(), E_INVALIDARG);
     }
 }

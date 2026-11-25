@@ -421,7 +421,7 @@ unsafe extern "win64" fn not_implemented(_this: This) -> HRESULT {
 
 fn tile_hresult(e: TileError) -> HRESULT {
     match e {
-        TileError::Equation(_) => E_NOTIMPL,
+        TileError::Equation(_) | TileError::Multisampled => E_NOTIMPL,
         _ => E_INVALIDARG,
     }
 }

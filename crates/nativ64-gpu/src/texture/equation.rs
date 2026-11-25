@@ -301,7 +301,7 @@ mod tests {
                         let Ok(e) = Equation::new(m, thick, elem, config) else {
                             continue;
                         };
-                        let [w, h, d] = block_dims(m, thick, 1 << elem);
+                        let [w, h, d] = block_dims(m, thick, 1 << elem, 1);
                         assert_eq!(
                             (w * h * d) as u64 * (1 << elem),
                             m.block_bytes(),
