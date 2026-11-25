@@ -95,11 +95,17 @@ pub fn lookup(module: &str, name: &str) -> Option<&'static Export> {
     crate::exports().find(|e| e.module == m && e.name == name)
 }
 
-/// Resolves an import by ordinal (only `ws2_32` has an ordinal table) to the named export.
+/// Resolves an import by ordinal (`ws2_32` and `gameinput` have an ordinal table) to the named export.
 pub fn lookup_ordinal(module: &str, ordinal: u16) -> Option<&'static Export> {
     let m = normalize_module(module);
     let name = match m.as_str() {
         "ws2_32" => crate::ws2_32::ORDINALS.iter().find(|o| o.0 == ordinal)?.1,
+        "gameinput" => {
+            crate::gameinput::ORDINALS
+                .iter()
+                .find(|o| o.0 == ordinal)?
+                .1
+        }
         _ => return None,
     };
     lookup(&m, name)

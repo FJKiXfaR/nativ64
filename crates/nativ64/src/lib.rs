@@ -32,6 +32,8 @@ pub mod api_ms_win_crt_string;
 pub mod api_ms_win_crt_time;
 pub mod api_ms_win_crt_utility;
 
+pub mod com;
+pub mod gameinput;
 mod handles;
 pub mod msvcp140;
 pub mod printf;
@@ -72,6 +74,7 @@ pub static TABLES: &[&[Export]] = &[
     api_ms_win_crt_string::EXPORTS,
     api_ms_win_crt_time::EXPORTS,
     api_ms_win_crt_utility::EXPORTS,
+    gameinput::EXPORTS,
     msvcp140::EXPORTS,
     vcruntime140::EXPORTS,
     ws2_32::EXPORTS,

@@ -35,6 +35,30 @@ Use `Stub` for a function that exists but does nothing useful yet. For a new mod
 the file and add its `EXPORTS` to `TABLES`. Write a unit test that calls through the win64
 function. Then check the new tab of the map.
 
+## COM objects (`src/com.rs`)
+
+Host objects the title calls through vtables (GameInput, the game runtime, D3D12) share one
+toolkit. `Guid` is the Windows layout; `ComObject<V, T>` is `#[repr(C)]`: vtable pointer first,
+then an atomic reference count, the IIDs it answers to and the payload `T`
+(`ComObject::create(&VTBL, &IIDS, data)` returns a raw pointer with count 1). `IUnknownVtbl<V, T>`
+provides `QueryInterface` (IUnknown and the listed IIDs; `E_NOINTERFACE`, `E_POINTER` for NULL
+`out` or IID, `out` always cleared), `AddRef`, and `Release` (frees the object at zero).
+To declare an interface: a `#[repr(C)]` vtable struct whose first field is `IUnknownVtbl<V, T>`
+(initialised with `IUnknownVtbl::new()`), then one `unsafe extern "win64" fn(*mut ComObject<V, T>, ..)`
+per method in published order; fill a `static`. Tests call through the vtable
+(`gameinput.rs` is the model). Interfaces that inherit another's methods repeat them first in
+their own vtable struct.
+
+`GameInput.dll` is imported by ordinal: `src/gameinput.rs` has an `ORDINALS` table like
+`ws2_32`, wired in `lookup_ordinal`. It exposes an `IGameInput` with no devices (readings are
+`GAMEINPUT_E_READING_NOT_FOUND`); callbacks are stored and never fire (TODO: evdev input).
+
+## File paths (rule for the file APIs)
+
+`\` maps to `/`; relative paths resolve against the package root (the exe's directory). The
+package directory is never written: writes go to `$XDG_DATA_HOME/nativ64/<exe stem>` (default
+`~/.local/share`). Not implemented yet.
+
 ## ABI rules
 
 - Every export is `unsafe extern "win64"`: the Windows x64 convention, whatever the host's.
