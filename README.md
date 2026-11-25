@@ -17,6 +17,10 @@ title. Priorities come from the import map, which reads a game's import tables a
 what is done and what is left. The first title measured is a large open-world game; more
 titles can be added to the map, and functions shared by many games come first.
 
+![nativ64 coverage](docs/import-map-nativ64.svg)
+
+For comparison, what the first base already covers natively:
+
 ![Linux-native coverage](docs/import-map-linux.svg)
 
 For that first title (executable and package DLLs), 697 system functions are needed from

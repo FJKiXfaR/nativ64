@@ -150,3 +150,10 @@ percentage. Functions the library registers but the game does not import are ign
     python -I tools/import_map.py game/*.exe game/*.dll --status reports/status-victory-windows.json \
         --status reports/status-victory-linux.json --svg docs/import-map-linux.svg \
         --svg-view "Linux native" --svg-note "VIctory $(git -C ../VIctory-mirror rev-parse --short HEAD)"
+
+The library's own card (`docs/import-map-nativ64.svg`, first in `README.md`) is regenerated
+after each addition, with the three status files of "Library view":
+
+    python -I tools/import_map.py game/*.exe game/*.dll --status reports/status-victory-windows.json \
+        --status reports/status-victory-linux.json --status reports/status-nativ64.json \
+        --svg docs/import-map-nativ64.svg --svg-view nativ64 --svg-note "nativ64 $(git rev-parse --short HEAD)"
