@@ -12,3 +12,15 @@ jobs:
       - run: cargo clippy -- -D warnings
       - run: cargo test
       - run: python -I -m py_compile tools/*.py
+  tsan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - run: cargo test -Zbuild-std --target x86_64-unknown-linux-gnu -p nativ64
+        env:
+          RUSTFLAGS: -Zsanitizer=thread
+          RUSTDOCFLAGS: -Zsanitizer=thread
+          TSAN_OPTIONS: halt_on_error=1
