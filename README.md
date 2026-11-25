@@ -1,5 +1,9 @@
 # nativ64
 
+[![CI](https://github.com/Ybucaille/nativ64/actions/workflows/ci.yml/badge.svg)](https://github.com/Ybucaille/nativ64/actions/workflows/ci.yml)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
+[![Good first issues](https://img.shields.io/github/issues/Ybucaille/nativ64/good%20first%20issue?label=good%20first%20issues&color=7057ff)](https://github.com/Ybucaille/nativ64/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+
 **Xbox Series games on Linux, natively: no Wine, no Proton, function by function.**
 
 Compatibility layers and recompilers already run Xbox Series code on a Windows PC.
