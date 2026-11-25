@@ -8,6 +8,7 @@ compile_error!("nativ64 supports Linux x86_64 only");
 mod registry;
 
 pub mod api_ms_win_core_errorhandling;
+pub mod api_ms_win_core_handle;
 pub mod api_ms_win_core_processthreads;
 pub mod api_ms_win_core_profile;
 pub mod api_ms_win_core_synch;
@@ -16,11 +17,14 @@ pub mod api_ms_win_crt_convert;
 pub mod api_ms_win_crt_math;
 pub mod api_ms_win_crt_string;
 
+mod handles;
+
 pub use registry::{lookup, nativ64_lookup, normalize_module, Export, Status};
 
 /// One table per Windows module file. Add a new module file here.
 pub static TABLES: &[&[Export]] = &[
     api_ms_win_core_errorhandling::EXPORTS,
+    api_ms_win_core_handle::EXPORTS,
     api_ms_win_core_processthreads::EXPORTS,
     api_ms_win_core_profile::EXPORTS,
     api_ms_win_core_synch::EXPORTS,

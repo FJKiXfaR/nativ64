@@ -3,7 +3,8 @@
 //! The game allocates these structures itself, so layouts match Windows x64 exactly and a
 //! zero-initialised `SRWLOCK`, `CONDITION_VARIABLE` or `INIT_ONCE` is valid. Nothing allocates:
 //! all state lives in the caller's memory (atomics over its address) plus one static table.
-//! Kernel objects (events, mutexes, semaphores, `WaitFor*`) are not covered here.
+//! Kernel objects (events, mutexes, semaphores, `WaitFor*`) live in `handles.rs`; their exports
+//! are declared below.
 //!
 //! * `SRWLOCK` (one pointer): bit 0 writer held, bit 1 sleepers present, bit 2 a writer is
 //!   waiting, bits 3.. reader count. Futex on the low 32 bits. Writer policy: once a writer
@@ -25,6 +26,7 @@
 //! Timeouts: `FALSE` with last error `ERROR_TIMEOUT` (1460); `INFINITE` is `0xFFFFFFFF`.
 
 use crate::api_ms_win_core_errorhandling::set_last_error;
+use crate::handles;
 use std::sync::atomic::{AtomicI32, AtomicU32, AtomicUsize, Ordering::*};
 use std::time::Duration;
 
@@ -37,13 +39,13 @@ type Bool = i32;
 type Boolean = u8;
 
 #[derive(PartialEq)]
-enum Wait {
+pub(crate) enum Wait {
     Woken,
     TimedOut,
 }
 
 /// Sleeps while `*addr == expected` (relative timeout). EAGAIN/EINTR count as woken.
-fn futex_wait(addr: &AtomicU32, expected: u32, timeout: Option<Duration>) -> Wait {
+pub(crate) fn futex_wait(addr: &AtomicU32, expected: u32, timeout: Option<Duration>) -> Wait {
     let ts = timeout.map(|d| libc::timespec {
         tv_sec: d.as_secs().min(i64::MAX as u64 / 2) as libc::time_t,
         tv_nsec: d.subsec_nanos() as _,
@@ -67,7 +69,7 @@ fn futex_wait(addr: &AtomicU32, expected: u32, timeout: Option<Duration>) -> Wai
     }
 }
 
-fn futex_wake(addr: &AtomicU32, count: i32) {
+pub(crate) fn futex_wake(addr: &AtomicU32, count: i32) {
     unsafe {
         libc::syscall(
             libc::SYS_futex,
@@ -78,7 +80,7 @@ fn futex_wake(addr: &AtomicU32, count: i32) {
     }
 }
 
-fn timeout_of(ms: u32) -> Option<Duration> {
+pub(crate) fn timeout_of(ms: u32) -> Option<Duration> {
     (ms != INFINITE).then(|| Duration::from_millis(ms as u64))
 }
 
@@ -459,6 +461,49 @@ win32! {
         let b = bucket(address as *const ());
         b.fetch_add(1, SeqCst);
         futex_wake(b, i32::MAX);
+    }
+
+    Native fn CreateEventW(_attrs: *const (), manual: Bool, initial: Bool, name: *const u16) -> usize {
+        handles::create_event(handles::name_w(name), manual != 0, initial != 0)
+    }
+    Native fn CreateEventA(_attrs: *const (), manual: Bool, initial: Bool, name: *const u8) -> usize {
+        handles::create_event(handles::name_a(name), manual != 0, initial != 0)
+    }
+    Native fn CreateEventExW(_attrs: *const (), name: *const u16, flags: u32, _access: u32) -> usize {
+        handles::create_event(handles::name_w(name), flags & 1 != 0, flags & 2 != 0)
+    }
+    Native fn SetEvent(h: usize) -> Bool { handles::set_event(h) }
+    Native fn ResetEvent(h: usize) -> Bool { handles::reset_event(h) }
+
+    Native fn CreateMutexW(_attrs: *const (), owner: Bool, name: *const u16) -> usize {
+        handles::create_mutex(handles::name_w(name), owner != 0)
+    }
+    Native fn CreateMutexA(_attrs: *const (), owner: Bool, name: *const u8) -> usize {
+        handles::create_mutex(handles::name_a(name), owner != 0)
+    }
+    Native fn ReleaseMutex(h: usize) -> Bool { handles::release_mutex(h) }
+
+    Native fn CreateSemaphoreW(_attrs: *const (), initial: i32, max: i32, name: *const u16) -> usize {
+        handles::create_semaphore(handles::name_w(name), initial, max)
+    }
+    Native fn CreateSemaphoreExW(_attrs: *const (), initial: i32, max: i32, name: *const u16, _flags: u32, _access: u32) -> usize {
+        handles::create_semaphore(handles::name_w(name), initial, max)
+    }
+    Native fn ReleaseSemaphore(h: usize, n: i32, previous: *mut i32) -> Bool {
+        let (ok, prev) = handles::release_semaphore(h, n);
+        if let (false, Some(p)) = (previous.is_null(), prev) {
+            *previous = p;
+        }
+        ok
+    }
+
+    Native fn WaitForSingleObject(h: usize, ms: u32) -> u32 { handles::wait(&[h], false, ms) }
+    Native fn WaitForSingleObjectEx(h: usize, ms: u32, _alertable: Bool) -> u32 { handles::wait(&[h], false, ms) }
+    Native fn WaitForMultipleObjects(count: u32, handles: *const usize, all: Bool, ms: u32) -> u32 {
+        handles::wait_multiple(count, handles, all != 0, ms)
+    }
+    Native fn WaitForMultipleObjectsEx(count: u32, handles: *const usize, all: Bool, ms: u32, _alertable: Bool) -> u32 {
+        handles::wait_multiple(count, handles, all != 0, ms)
     }
 }
 

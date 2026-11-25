@@ -9,6 +9,9 @@ the compatibility layer ("base") that loads the game: VIctory today, possibly ot
 - One Rust module per Windows module, named like `tools/import_map.py` normalizes it
   (lowercase, no `.dll`, API-set version suffix dropped, `-` becomes `_`):
   `api-ms-win-core-synch` -> `src/api_ms_win_core_synch.rs`.
+- `src/handles.rs` (not a Windows module): the process-wide handle table and the kernel objects
+  in it (events, mutexes, semaphores), the wait engine and the named-object namespace; the
+  exports that use it are declared in `api_ms_win_core_synch.rs` and `api_ms_win_core_handle.rs`.
 - `src/registry.rs`: `Export { module, name, addr, status }`, `Status::{Native, Stub}`,
   `lookup(module, name)`, `normalize_module`, and the C function `nativ64_lookup`.
 - `src/lib.rs`: `TABLES` lists each module's `EXPORTS`; `exports()` iterates them all.
