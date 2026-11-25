@@ -4,8 +4,24 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let check = args.iter().any(|a| a == "--check");
-    let Some(path) = args.iter().find(|a| !a.starts_with("--")) else {
-        eprintln!("usage: nativ64-run [--check] <exe>");
+    let mut timeout = 20u32;
+    let mut path = None;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--timeout" {
+            match it.next().and_then(|v| v.parse().ok()) {
+                Some(v) => timeout = v,
+                None => {
+                    eprintln!("nativ64-run: --timeout needs a number of seconds");
+                    return ExitCode::from(64);
+                }
+            }
+        } else if !a.starts_with("--") {
+            path = Some(a);
+        }
+    }
+    let Some(path) = path else {
+        eprintln!("usage: nativ64-run [--check] [--timeout SECONDS] <exe>");
         return ExitCode::from(64);
     };
     let data = match std::fs::read(path) {
@@ -24,8 +40,15 @@ fn main() -> ExitCode {
     };
     drop(data);
     if !check {
-        eprintln!("execution not implemented yet");
-        return ExitCode::from(2);
+        nativ64_loader::fault::install(img.base(), img.size());
+        nativ64_loader::fault::set_timeout(timeout);
+        return match img.run_main() {
+            Ok(code) => ExitCode::from(code as u8),
+            Err(e) => {
+                eprintln!("nativ64-run: {path}: {e}");
+                ExitCode::from(1)
+            }
+        };
     }
     let unresolved: Vec<_> = img.unresolved().collect();
     println!(

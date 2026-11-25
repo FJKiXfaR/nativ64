@@ -2,6 +2,7 @@
 
 use crate::pe::*;
 use crate::stubs::{errno, StubPage};
+use crate::tls::{self, ThreadTls, TlsInfo};
 use crate::LoadError;
 
 #[derive(Clone, Debug, Default)]
@@ -33,6 +34,7 @@ pub struct Image {
     pub entry_rva: u32,
     pub section_count: usize,
     pub imports: Vec<ImportEntry>,
+    tls: Option<TlsInfo>,
     _stubs: Option<StubPage>,
 }
 
@@ -48,17 +50,24 @@ impl Image {
             entry_rva: pe.entry_rva,
             section_count: pe.sections.len(),
             imports: Vec::new(),
+            tls: None,
             _stubs: None,
         };
         img.copy_sections(&pe);
         img.relocate(&pe)?;
         img.bind_imports(&pe)?;
+        img.setup_tls(&pe)?;
         img.protect(&pe)?;
         Ok(img)
     }
 
     pub fn base(&self) -> u64 {
         self.base as u64
+    }
+
+    /// Size in bytes of the mapping.
+    pub fn size(&self) -> usize {
+        self.size
     }
 
     pub fn entry_point(&self) -> u64 {
@@ -221,6 +230,50 @@ impl Image {
         Ok(())
     }
 
+    /// Validates the TLS directory and writes TLS index 0 (the image is still writable).
+    fn setup_tls(&mut self, pe: &Pe) -> Result<(), LoadError> {
+        let dir = pe.dirs[DIR_TLS];
+        if dir.rva == 0 || dir.size == 0 {
+            return Ok(());
+        }
+        let (info, index_rva) = TlsInfo::parse(self.mem(), self.base(), dir.rva, dir.size)?;
+        self.mem()[index_rva..index_rva + 4].copy_from_slice(&0u32.to_le_bytes());
+        self.tls = Some(info);
+        Ok(())
+    }
+
+    /// Runs the entry point as an EXE `extern "win64" fn() -> u32` on a new thread with a
+    /// 64 MiB stack, a TEB/PEB and static TLS, after the TLS callbacks; returns its result.
+    /// A guest crash is the caller's business (see [`crate::fault`]).
+    pub fn run_main(&self) -> Result<u32, LoadError> {
+        if self.entry_rva == 0 {
+            return Err(LoadError::NoEntryPoint);
+        }
+        let (base, entry) = (self.base(), self.entry_point());
+        let tls = self.tls.clone();
+        let t = std::thread::Builder::new()
+            .name("nativ64-main".into())
+            .stack_size(64 << 20)
+            .spawn(move || -> Result<u32, LoadError> {
+                crate::fault::setup_thread();
+                let (lo, hi) = current_stack()?;
+                crate::teb::set_image_base(base)?;
+                let teb = crate::teb::install_for_current_thread(hi, lo)?;
+                let mut block = tls.as_ref().map(|i| unsafe { ThreadTls::new(i) });
+                if let Some(b) = block.as_mut() {
+                    teb.set_tls_pointer(b.array());
+                }
+                if let Some(i) = &tls {
+                    unsafe { tls::run_callbacks(i, base) };
+                }
+                // SAFETY: the entry point of a mapped image; an EXE entry takes no argument.
+                let f: extern "win64" fn() -> u32 = unsafe { std::mem::transmute(entry as usize) };
+                Ok(f())
+            })
+            .map_err(|e| LoadError::Os("spawn", e.raw_os_error().unwrap_or(0)))?;
+        t.join().unwrap_or(Err(LoadError::Os("join", 0)))
+    }
+
     fn protect(&mut self, pe: &Pe) -> Result<(), LoadError> {
         let ro = |p: *mut u8, len: usize, prot: i32| -> Result<(), LoadError> {
             if unsafe { libc::mprotect(p.cast(), len, prot) } != 0 {
@@ -278,4 +331,20 @@ fn map_anywhere_or_at(want: u64, size: usize) -> Result<*mut u8, LoadError> {
         return Err(LoadError::Os("mmap(image)", errno()));
     }
     Ok(p.cast())
+}
+
+/// (low, high) bounds of the calling thread's stack.
+fn current_stack() -> Result<(usize, usize), LoadError> {
+    unsafe {
+        let mut attr: libc::pthread_attr_t = std::mem::zeroed();
+        let r = libc::pthread_getattr_np(libc::pthread_self(), &mut attr);
+        if r != 0 {
+            return Err(LoadError::Os("pthread_getattr_np", r));
+        }
+        let mut addr = std::ptr::null_mut();
+        let mut size = 0usize;
+        libc::pthread_attr_getstack(&attr, &mut addr, &mut size);
+        libc::pthread_attr_destroy(&mut attr);
+        Ok((addr as usize, addr as usize + size))
+    }
 }

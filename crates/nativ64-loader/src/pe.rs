@@ -5,6 +5,7 @@ use crate::LoadError;
 pub const MACHINE_AMD64: u16 = 0x8664;
 pub const DIR_IMPORT: usize = 1;
 pub const DIR_BASERELOC: usize = 5;
+pub const DIR_TLS: usize = 9;
 
 pub const SCN_MEM_EXECUTE: u32 = 0x2000_0000;
 pub const SCN_MEM_READ: u32 = 0x4000_0000;

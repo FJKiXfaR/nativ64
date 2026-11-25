@@ -24,6 +24,10 @@ pub enum LoadError {
     UnsupportedReloc(u8),
     /// The image is not at its preferred base and has no relocations.
     NoRelocations,
+    /// The image has no entry point.
+    NoEntryPoint,
+    /// The TLS directory is invalid.
+    BadTls(&'static str),
     /// A system call failed (errno).
     Os(&'static str, i32),
 }
@@ -42,6 +46,8 @@ impl fmt::Display for LoadError {
             Self::RvaOutOfBounds(r) => write!(f, "RVA {r:#x} is outside the image"),
             Self::UnsupportedReloc(t) => write!(f, "unsupported base relocation type {t}"),
             Self::NoRelocations => write!(f, "image moved but it has no relocations"),
+            Self::NoEntryPoint => write!(f, "image has no entry point"),
+            Self::BadTls(w) => write!(f, "bad TLS directory: {w}"),
             Self::Os(w, e) => write!(f, "{w} failed (errno {e})"),
         }
     }
