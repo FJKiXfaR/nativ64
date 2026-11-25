@@ -30,7 +30,9 @@ pub mod api_ms_win_crt_time;
 pub mod api_ms_win_crt_utility;
 
 mod handles;
+pub mod printf;
 pub mod process;
+mod scanf;
 mod slots;
 pub mod vcruntime140;
 

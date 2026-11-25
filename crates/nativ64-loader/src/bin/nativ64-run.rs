@@ -4,6 +4,7 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let check = args.iter().any(|a| a == "--check");
+    let all = args.iter().any(|a| a == "--all");
     let mut timeout = 20u32;
     let mut path = None;
     let mut it = args.iter();
@@ -21,7 +22,7 @@ fn main() -> ExitCode {
         }
     }
     let Some(path) = path else {
-        eprintln!("usage: nativ64-run [--check] [--timeout SECONDS] <exe>");
+        eprintln!("usage: nativ64-run [--check [--all]] [--timeout SECONDS] <exe>");
         return ExitCode::from(64);
     };
     let data = match std::fs::read(path) {
@@ -67,7 +68,7 @@ fn main() -> ExitCode {
         img.imports.len() - unresolved.len(),
         unresolved.len()
     );
-    for i in unresolved.iter().take(20) {
+    for i in unresolved.iter().take(if all { usize::MAX } else { 20 }) {
         println!("  unresolved: {}", i.display());
     }
     ExitCode::SUCCESS
