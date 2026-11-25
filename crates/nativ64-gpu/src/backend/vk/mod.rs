@@ -20,6 +20,7 @@ use std::sync::{Mutex, OnceLock};
 
 pub use device::Gpu;
 pub use memory::{AlignedBuf, HostBuffer};
+pub use present::Window;
 pub use replay::{Readback, ReplayStats, VkBackend};
 pub use swapchain::Swapchain;
 

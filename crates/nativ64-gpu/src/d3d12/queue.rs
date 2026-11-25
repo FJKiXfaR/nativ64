@@ -1,14 +1,15 @@
 //! Command queues (`ID3D12CommandQueue`).
 //!
-//! Model: a queue records its description and counts what is submitted. No backend replays the
-//! recorded command streams yet, so a submission only counts lists and commands, and GPU work
-//! completes at once: `Signal` moves its fence immediately. The slot layout is the "newer" one
+//! Model: a queue records its description, counts what is submitted and hands the recorded
+//! streams to the backend (`backend::with`), which completes them before returning, so GPU work
+//! is done when the call returns: `Signal` moves its fence immediately. The slot layout is the "newer" one
 //! (every slot from 14 on is two later than the older SDK's, see docs/gpu.md). `PresentX` (32) is
 //! in `present.rs`; the page mapping batch (31) is not filled: it traps.
 
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::backend;
 use crate::d3d12::command::Command;
 use crate::d3d12::device::E_INVALIDARG;
 use crate::d3d12::object::{guid, hand_out, with_child_methods, PAGEABLE_IIDS};
@@ -74,7 +75,7 @@ unsafe fn data<'a>(this: *mut c_void) -> &'a QueueData {
 }
 
 /// Slot 10, `ExecuteCommandLists(count, lists)`: counts the lists and their recorded commands
-/// (no backend replays them yet); the work is complete on return.
+/// and hands them to the backend, which has finished them on return.
 unsafe extern "win64" fn execute_command_lists(
     this: *mut c_void,
     count: u32,
@@ -84,6 +85,7 @@ unsafe extern "win64" fn execute_command_lists(
         return;
     }
     let q = data(this);
+    let mut streams: Vec<Vec<Command>> = Vec::new();
     for &l in std::slice::from_raw_parts(lists, count as usize) {
         if l.is_null() {
             continue;
@@ -92,7 +94,9 @@ unsafe extern "win64" fn execute_command_lists(
         q.submitted_lists.fetch_add(1, Ordering::Relaxed);
         q.submitted_commands
             .fetch_add(commands.len() as u64, Ordering::Relaxed);
+        streams.push(commands);
     }
+    backend::with(|b| b.execute(&streams));
 }
 
 /// Slot 35, `ExecuteCommandListsX(count, lists, frame token, flags)`: frames are not paced, so

@@ -3,7 +3,7 @@
 //! Model: all earlier work is complete (null backend), so a flip is immediate. A present never
 //! fails for the title: it counts the frame, keeps the last flips in a ring, and logs what it
 //! saw (raw plane words, the target resource) so the plane layout can be checked against the
-//! title. Later the backend copies plane 0 to the window (docs/gpu.md, G3).
+//! title. The backend shows plane 0's first resource in the window and can dump it (docs/gpu.md, G3).
 
 use std::collections::VecDeque;
 use std::ffi::c_void;
@@ -116,6 +116,9 @@ pub(crate) unsafe fn present_x(
     let res = resources.read_unaligned();
     match desc_of(res) {
         Some(d) => {
+            let rect_ptr = plane.add(0x18).cast::<*const [i32; 4]>().read_unaligned();
+            let rect = (!rect_ptr.is_null()).then(|| rect_ptr.read_unaligned());
+            crate::backend::with(|b| b.present(res as usize, rect));
             if st.frames == 1 || st.frames.is_power_of_two() {
                 eprintln!(
                     "nativ64: PresentX frame {} token {token}: {}x{} format {}, {} lists and \
