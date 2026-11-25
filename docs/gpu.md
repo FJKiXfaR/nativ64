@@ -109,7 +109,7 @@ The executable imports from `d3d12_xs` only `D3D12XboxCreateDevice` and
   (one shifted by 2 slots). We only trust slot numbers that our own run confirms. Confirmed
   on our title: the device follows VIctory's layout (slot 48 = `CreateCommandQueueX`); the
   command list uses the "newer" layout (every slot from 59 on shifted by +2; syncs at +0x418
-  and +0x420); the queue layout is not settled yet.
+  and +0x420); the queue uses the same "newer" layout (every slot from 14 on is two later than the older SDK's; confirmed by slot 18 = `GetTimestampFrequency`, which only fits there).
 - **Methods returning a struct take the hidden return pointer first** (`rcx`), `this` second
   (`rdx`), unlike MSVC on PC: seen with gdb on `GetCustomHeapProperties`. Check every other
   struct-returning method (`GetCPUDescriptorHandleForHeapStart`, `GetDesc`...) at a call site
