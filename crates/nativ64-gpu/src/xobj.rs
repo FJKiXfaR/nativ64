@@ -33,9 +33,11 @@ pub enum Iface {
     RootSignature,
     QueryHeap,
     CommandSignature,
+    /// `xg_xs`'s texture computer (not Direct3D, no `QueryInterface`).
+    XgTextureComputer,
 }
 
-const IFACES: [Iface; 12] = [
+const IFACES: [Iface; 13] = [
     Iface::Device,
     Iface::CommandQueue,
     Iface::CommandList,
@@ -48,6 +50,7 @@ const IFACES: [Iface; 12] = [
     Iface::RootSignature,
     Iface::QueryHeap,
     Iface::CommandSignature,
+    Iface::XgTextureComputer,
 ];
 
 impl Iface {
@@ -65,6 +68,7 @@ impl Iface {
             Iface::RootSignature => "ID3D12RootSignature",
             Iface::QueryHeap => "ID3D12QueryHeap",
             Iface::CommandSignature => "ID3D12CommandSignature",
+            Iface::XgTextureComputer => "XGTextureAddressComputer",
         }
     }
 }
@@ -143,7 +147,7 @@ macro_rules! all_traps {
 
 /// `TRAPS[iface][slot / 16][slot % 16]`: one distinct trap per (interface, slot).
 #[allow(clippy::large_const_arrays)] // only read in const fns, never copied at run time
-const TRAPS: [[Row; 16]; 12] = all_traps!(0 1 2 3 4 5 6 7 8 9 10 11);
+const TRAPS: [[Row; 16]; 13] = all_traps!(0 1 2 3 4 5 6 7 8 9 10 11 12);
 
 /// A vtable: `N` function pointers, every one a trap until overridden.
 #[repr(C)]
@@ -382,7 +386,7 @@ mod tests {
     fn iface_names_cover_registry() {
         for (i, f) in IFACES.iter().enumerate() {
             assert_eq!(*f as usize, i);
-            assert!(f.name().starts_with("ID3D12"));
+            assert!(f.name().starts_with("ID3D12") || f.name().starts_with("XG"));
         }
     }
 

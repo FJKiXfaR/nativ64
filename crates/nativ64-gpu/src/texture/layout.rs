@@ -418,6 +418,20 @@ fn choose_mode(dimension: u32, flags: u32, info: &FormatInfo, w: u32, h: u32) ->
     }
 }
 
+/// The mode the library suggests for `desc` (what `XGSuggestSwizzleMode` writes): the choice
+/// for layout 0, whatever the description's layout field says. Unknown formats count as 32
+/// bits per pixel.
+pub fn suggest_mode(desc: &ResourceDesc) -> SwizzleMode {
+    let info = format_info(desc.format).unwrap_or(FormatInfo {
+        element_bytes: 4,
+        block: (1, 1),
+        planes: Planes::One,
+        depth: false,
+    });
+    let width = u32::try_from(desc.width).unwrap_or(u32::MAX);
+    choose_mode(desc.dimension, desc.flags, &info, width, desc.height)
+}
+
 impl Layout {
     /// The layout of the texture `desc` describes.
     pub fn new(desc: &ResourceDesc) -> Result<Layout, LayoutError> {

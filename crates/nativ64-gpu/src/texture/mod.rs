@@ -4,10 +4,12 @@
 pub mod equation;
 pub mod format;
 pub mod layout;
+pub mod tile;
 #[rustfmt::skip]
 #[allow(clippy::all)]
 pub mod swizzle_tables;
 
 pub use equation::{Config, Equation, EquationError, SwizzleMode, SERIES_S, SERIES_X};
 pub use format::{format_info, FormatInfo, Planes};
-pub use layout::{Layout, LayoutError};
+pub use layout::{suggest_mode, Layout, LayoutError};
+pub use tile::{detile, tile, Addresser, TileError};

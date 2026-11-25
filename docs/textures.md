@@ -100,5 +100,25 @@ refused until the title needs it.
 
 1. T1: `format`, generator + tables, `equation`, `layout` (sizes, tail, planes) with tests;
    `GetResourceAllocationInfo` uses it. The title's run passes the texture-size stop.
-2. T2: `xg_xs` exports and the texture computer (slots above), `tile`/`detile`.
+2. T2 (done): `xg_xs` exports and the texture computer (slots above), `tile`/`detile`.
 3. T3 (with G3): uploads to Vulkan images through `detile`.
+
+### T2 notes (facts settled while implementing)
+
+- Slot 9 `CopyFromSubresource(linear_out, plane, subresource, tiled, row_pitch, slice_pitch)`
+  has the same shape as slot 8 (XCL, checked against the console's library). VIctory's extra
+  `sample` argument is not used. Unconfirmed at a call site of the title.
+- Both copies take the **whole resource** as the tiled pointer (the plane offset is added by
+  the library); `subresource = mip + slice * mips`; a 3D texture has only slice 0.
+- Texel addressing: block `n` of a level is `n * block_bytes` after it, x then y then z; the
+  tail levels sit in block 0 of the slice (of each depth block when thick) at their `Tail`
+  position. The equation is fed full coordinates (its tables mask them). Thin 3D levels keep
+  every depth slice in storage (T1), so a thin 3D level `i` copies `depth >> i` of them.
+- The computer addresses with base 0 (no pipe/bank XOR); `tile`/`detile` take the base address.
+- The layout struct lists the metadata planes after the colour/stencil planes (usage 2 CMASK,
+  4 HTILE). XCL puts HTILE first; unchecked, kept as T1 laid them out.
+- Mip fields at +0x50/+0x58 are 0x8000 outside the tail for modes 24-27 (XCL); a tail level
+  reports the 256-byte mode of its kind (`mode % 4`, Z unchanged), alignment 0x100.
+- `GetResourceTiling` follows XCL: `count` in = room, out = standard subresources among the
+  asked ones, written at their index from `first`; only 64 KiB 2D modes (else `E_FAIL`, volumes
+  `E_NOTIMPL`). Slots 7, 11, 12 return `E_NOTIMPL` (and say so on stderr).

@@ -10,13 +10,19 @@ pub mod d3d12_xs;
 pub mod texture;
 pub mod wsi;
 pub mod xcrdapi;
+pub mod xg_xs;
 pub mod xmem;
 pub mod xobj;
 
 use nativ64::{normalize_module, Export};
 
 /// One table per Windows module file. Add a new module file here.
-pub static TABLES: &[&[Export]] = &[d3d12_xs::EXPORTS, xcrdapi::EXPORTS, xmem::EXPORTS];
+pub static TABLES: &[&[Export]] = &[
+    d3d12_xs::EXPORTS,
+    xcrdapi::EXPORTS,
+    xg_xs::EXPORTS,
+    xmem::EXPORTS,
+];
 
 /// Every registered graphics export.
 pub fn exports() -> impl Iterator<Item = &'static Export> {

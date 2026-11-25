@@ -43,6 +43,10 @@ APIs only (libc as its only dependency).
 - `d3d12/resource.rs`: `RegisterPagePoolX` / `UnregisterPagePoolX` (slots 74, 75): pools kept as
   `(address, pages)` behind a handle (index + 1); unaligned address, zero pages or null out are
   E_INVALIDARG; nothing reads them yet.
+- `xg_xs.rs`, `texture/tile.rs`: `XGSuggestSwizzleMode` and `XGCreateTextureComputer` with the
+  computer object (slots 0-12, no QI; 7, 11, 12 answer E_NOTIMPL), plus `tile`/`detile` of one
+  subresource (round-trip tested over all modes); next stop: device slot 67
+  (`DeserializeComputePipelineStateX`).
 - `d3d12/signature.rs`: `CreateCommandSignature` (slot 41): stride and argument descriptions copied;
   the root signature is not kept.
 - `d3d12/resource.rs`: `CreateCommittedResource` (slot 27) and `CreateCommittedResource3` (slot 127,
