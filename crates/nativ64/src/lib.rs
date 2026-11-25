@@ -42,6 +42,7 @@ pub mod ext_ms_win_rtcore_ntuser_message_ansi;
 pub mod ext_ms_win_rtcore_ntuser_window;
 pub mod ext_ms_win_rtcore_ntuser_window_ansi;
 
+pub mod bcrypt;
 pub mod chad;
 pub mod com;
 pub mod gameinput;
@@ -100,6 +101,7 @@ pub static TABLES: &[&[Export]] = &[
     ext_ms_win_rtcore_ntuser_message_ansi::EXPORTS,
     ext_ms_win_rtcore_ntuser_window::EXPORTS,
     ext_ms_win_rtcore_ntuser_window_ansi::EXPORTS,
+    bcrypt::EXPORTS,
     chad::EXPORTS,
     gameinput::EXPORTS,
     msvcp140::EXPORTS,
