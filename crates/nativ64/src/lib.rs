@@ -13,6 +13,7 @@ pub mod api_ms_win_core_profile;
 pub mod api_ms_win_core_synch;
 pub mod api_ms_win_core_sysinfo;
 pub mod api_ms_win_crt_math;
+pub mod api_ms_win_crt_string;
 
 pub use registry::{lookup, nativ64_lookup, normalize_module, Export, Status};
 
@@ -24,6 +25,7 @@ pub static TABLES: &[&[Export]] = &[
     api_ms_win_core_synch::EXPORTS,
     api_ms_win_core_sysinfo::EXPORTS,
     api_ms_win_crt_math::EXPORTS,
+    api_ms_win_crt_string::EXPORTS,
 ];
 
 /// Every registered export (each function appears once per module name it is known under).
