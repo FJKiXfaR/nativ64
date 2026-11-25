@@ -112,6 +112,8 @@ pub fn register_image_range(base: usize, size: usize) {
     let mut v = IMAGE_RANGES.lock().unwrap_or_else(|e| e.into_inner());
     v.retain(|r| r.0 != base);
     v.push((base, size));
+    drop(v);
+    crate::seh::register_image_table(base, size);
 }
 
 /// Base of the registered image containing `addr`, if any.

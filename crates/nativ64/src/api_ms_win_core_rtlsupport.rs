@@ -1,14 +1,47 @@
-//! `api-ms-win-core-rtlsupport`: `RtlPcToFileHeader`, the image containing an address.
+//! `api-ms-win-core-rtlsupport`: `RtlPcToFileHeader`, the image containing an address, and the
+//! unwinding support (`RtlLookupFunctionEntry`, `RtlVirtualUnwind`, `RtlCaptureContext`,
+//! `RtlRestoreContext`, `RtlAddFunctionTable`, `RtlDeleteFunctionTable`); the logic is in
+//! [`crate::seh`].
 //!
 //! Images are the ranges registered with [`crate::process::register_image_range`] (the main
 //! image and the guest DLLs). An address outside every registered image gives `NULL`, as on
-//! Windows. The unwinding functions of this API set (`RtlLookupFunctionEntry`,
-//! `RtlVirtualUnwind`, ...) are not implemented here.
+//! Windows.
 
 use crate::process::image_base_of;
+use crate::seh;
+use crate::{Export, Status};
+
+/// The two assembly functions, which cannot go through `win32!` (a Rust wrapper would change
+/// the frame they capture). Also known under `kernel32`.
+pub static ASM_EXPORTS: &[Export] = &[
+    Export {
+        module: "api-ms-win-core-rtlsupport",
+        name: "RtlCaptureContext",
+        addr: seh::nativ64_rtl_capture_context as *const (),
+        status: Status::Native,
+    },
+    Export {
+        module: "kernel32",
+        name: "RtlCaptureContext",
+        addr: seh::nativ64_rtl_capture_context as *const (),
+        status: Status::Native,
+    },
+    Export {
+        module: "api-ms-win-core-rtlsupport",
+        name: "RtlRestoreContext",
+        addr: seh::nativ64_rtl_restore_context as *const (),
+        status: Status::Native,
+    },
+    Export {
+        module: "kernel32",
+        name: "RtlRestoreContext",
+        addr: seh::nativ64_rtl_restore_context as *const (),
+        status: Status::Native,
+    },
+];
 
 win32! {
-    module "api-ms-win-core-rtlsupport";
+    module "api-ms-win-core-rtlsupport" => "kernel32";
     // Returns the base of the image holding `pc` (and stores it in `*base` when `base` is not
     // NULL), or NULL (also stored) when `pc` is in no image.
     Native fn RtlPcToFileHeader(pc: usize, base: *mut usize) -> usize {
@@ -17,6 +50,47 @@ win32! {
             *base = b;
         }
         b
+    }
+    // The function table entry covering `pc` (NULL for a leaf function or an unknown address);
+    // `*base` receives the image base. The history table is ignored.
+    Native fn RtlLookupFunctionEntry(pc: usize, base: *mut usize, _history: usize) -> usize {
+        let (b, entry) = seh::lookup_function_entry(pc);
+        if !base.is_null() {
+            *base = b;
+        }
+        entry
+    }
+    // Moves `ctx` to the caller's frame; returns the language handler of the frame when it has
+    // one of `handler_type` (1 = exception, 2 = unwind). A malformed unwind info returns NULL
+    // and leaves `ctx` unchanged.
+    Native fn RtlVirtualUnwind(
+        handler_type: u32,
+        base: usize,
+        pc: usize,
+        entry: *const seh::RuntimeFunction,
+        ctx: *mut u8,
+        handler_data: *mut usize,
+        establisher: *mut usize,
+        ptrs: *mut usize
+    ) -> usize {
+        match seh::virtual_unwind(handler_type, base, pc, entry, ctx, ptrs) {
+            Ok(u) => {
+                if !handler_data.is_null() && u.handler != 0 {
+                    *handler_data = u.handler_data;
+                }
+                if !establisher.is_null() {
+                    *establisher = u.establisher;
+                }
+                u.handler
+            }
+            Err(_) => 0,
+        }
+    }
+    Native fn RtlAddFunctionTable(table: usize, count: u32, base: usize) -> u8 {
+        seh::add_function_table(table, count, base) as u8
+    }
+    Native fn RtlDeleteFunctionTable(table: usize) -> u8 {
+        seh::delete_function_table(table) as u8
     }
 }
 

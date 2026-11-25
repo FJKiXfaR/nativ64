@@ -50,6 +50,7 @@ pub mod paths;
 pub mod printf;
 pub mod process;
 mod scanf;
+pub mod seh;
 mod slots;
 pub mod vcruntime140;
 pub mod windowing;
@@ -74,6 +75,7 @@ pub static TABLES: &[&[Export]] = &[
     api_ms_win_core_memory::EXPORTS,
     api_ms_win_core_registry::EXPORTS,
     api_ms_win_core_rtlsupport::EXPORTS,
+    api_ms_win_core_rtlsupport::ASM_EXPORTS,
     api_ms_win_core_string::EXPORTS,
     api_ms_win_core_processenvironment::EXPORTS,
     api_ms_win_core_processthreads::EXPORTS,
