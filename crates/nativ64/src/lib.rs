@@ -16,6 +16,7 @@ pub mod api_ms_win_core_profile;
 pub mod api_ms_win_core_synch;
 pub mod api_ms_win_core_sysinfo;
 pub mod api_ms_win_crt_convert;
+pub mod api_ms_win_crt_environment;
 pub mod api_ms_win_crt_heap;
 pub mod api_ms_win_crt_math;
 pub mod api_ms_win_crt_runtime;
@@ -25,6 +26,7 @@ pub mod api_ms_win_crt_utility;
 mod handles;
 mod slots;
 
+pub use api_ms_win_crt_runtime::{nativ64_set_command_line, set_command_line};
 pub use registry::{lookup, nativ64_lookup, normalize_module, Export, Status};
 
 /// One table per Windows module file. Add a new module file here.
@@ -39,6 +41,7 @@ pub static TABLES: &[&[Export]] = &[
     api_ms_win_core_synch::EXPORTS,
     api_ms_win_core_sysinfo::EXPORTS,
     api_ms_win_crt_convert::EXPORTS,
+    api_ms_win_crt_environment::EXPORTS,
     api_ms_win_crt_heap::EXPORTS,
     api_ms_win_crt_math::EXPORTS,
     api_ms_win_crt_runtime::EXPORTS,

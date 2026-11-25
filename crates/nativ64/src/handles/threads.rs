@@ -75,10 +75,27 @@ fn finish(o: &Arc<Object>, code: u32) {
     let t = as_thread(o);
     {
         let mut s = lock(&t.state);
+        if s.exited {
+            return;
+        }
         s.exited = true;
         s.exit_code = code;
     }
     t.waiters.wake();
+}
+
+/// Ends the calling thread with `code` (`_endthreadex`): runs the exit bookkeeping (abandons the
+/// mutexes it owns, signals its thread object with `code`), then `pthread_exit`.
+///
+/// `pthread_exit` unwinds the thread's frames (glibc forced unwind), so frames without unwind
+/// information between here and the thread's start would make it abort; the thread object is
+/// already signaled by then, and the code is final (a second `finish` is a no-op).
+pub fn end_current_thread(code: u32) -> ! {
+    abandon_owned();
+    let o = current_thread();
+    finish(&o, code);
+    drop(o);
+    unsafe { libc::pthread_exit(std::ptr::null_mut()) }
 }
 
 /// Signals a thread that was not made by `CreateThread` when it ends.
@@ -125,6 +142,42 @@ fn thread_arg(h: Handle) -> Option<Arc<Object>> {
     }
 }
 
+struct Boot {
+    obj: Arc<Object>,
+    start: ThreadStart,
+    param: usize,
+    tx: std::sync::mpsc::Sender<u32>,
+}
+
+extern "C-unwind" fn trampoline(arg: *mut c_void) -> *mut c_void {
+    let Boot {
+        obj,
+        start,
+        param,
+        tx,
+    } = *unsafe { Box::from_raw(arg as *mut Boot) };
+    let me = tid();
+    {
+        let mut k = kernel();
+        k.threads.insert(me, Arc::downgrade(&obj));
+        lock(&as_thread(&obj).state).tid = me;
+    }
+    let _ = tx.send(me);
+    drop(tx);
+    {
+        let t = as_thread(&obj);
+        let mut s = lock(&t.state);
+        while s.suspend > 0 {
+            s = t.resume.wait(s).unwrap_or_else(|e| e.into_inner());
+        }
+        s.started = true;
+    }
+    let code = unsafe { start(param as *mut c_void) };
+    abandon_owned();
+    finish(&obj, code);
+    std::ptr::null_mut()
+}
+
 /// `CreateThread`. Returns the handle and the thread id, or 0.
 pub fn create_thread(
     stack: usize,
@@ -139,37 +192,33 @@ pub fn create_thread(
     let suspended = flags & CREATE_SUSPENDED != 0;
     let obj = new_thread(0, suspended as u32, false);
     let (tx, rx) = std::sync::mpsc::channel();
-    let body_obj = obj.clone();
-    let param = param as usize;
-    let mut b = std::thread::Builder::new();
-    if stack != 0 {
-        b = b.stack_size(stack.max(MIN_STACK));
-    }
-    let spawned = b.spawn(move || {
-        let me = tid();
-        {
-            let mut k = kernel();
-            k.threads.insert(me, Arc::downgrade(&body_obj));
-            lock(&as_thread(&body_obj).state).tid = me;
+    let boot = Box::into_raw(Box::new(Boot {
+        obj: obj.clone(),
+        start,
+        param: param as usize,
+        tx,
+    }));
+    // A raw detached pthread (not `std::thread`): `_endthreadex` ends it with `pthread_exit`,
+    // whose forced unwind must not cross std's `catch_unwind`, which would abort.
+    let spawned = unsafe {
+        let mut attr: libc::pthread_attr_t = std::mem::zeroed();
+        libc::pthread_attr_init(&mut attr);
+        libc::pthread_attr_setdetachstate(&mut attr, libc::PTHREAD_CREATE_DETACHED);
+        if stack != 0 {
+            libc::pthread_attr_setstacksize(&mut attr, stack.max(MIN_STACK));
         }
-        let _ = tx.send(me);
-        drop(tx);
-        {
-            let t = as_thread(&body_obj);
-            let mut s = lock(&t.state);
-            while s.suspend > 0 {
-                s = t.resume.wait(s).unwrap_or_else(|e| e.into_inner());
-            }
-            s.started = true;
-        }
-        let code = unsafe { start(param as *mut c_void) };
-        abandon_owned();
-        finish(&body_obj, code);
-    });
-    let Ok(_) = spawned else {
+        let mut th: libc::pthread_t = 0;
+        let entry: extern "C" fn(*mut c_void) -> *mut c_void =
+            std::mem::transmute(trampoline as extern "C-unwind" fn(*mut c_void) -> *mut c_void);
+        let r = libc::pthread_create(&mut th, &attr, entry, boot as *mut c_void);
+        libc::pthread_attr_destroy(&mut attr);
+        r == 0
+    };
+    if !spawned {
+        drop(unsafe { Box::from_raw(boot) });
         set_last_error(8); // ERROR_NOT_ENOUGH_MEMORY
         return None;
-    };
+    }
     let Ok(id) = rx.recv() else {
         set_last_error(8);
         return None;
