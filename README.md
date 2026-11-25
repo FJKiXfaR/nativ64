@@ -19,9 +19,12 @@ titles can be added to the map, and functions shared by many games come first.
 
 ![nativ64 coverage](docs/import-map-nativ64.svg)
 
-For comparison, what the first base already covers natively:
+<details>
+<summary>For comparison, what the first base already covers natively</summary>
 
 ![Linux-native coverage](docs/import-map-linux.svg)
+
+</details>
 
 For that first title (executable and package DLLs), 697 system functions are needed from
 Windows (excluding the 265 its own DLLs ship). 46 already have portable code in

@@ -303,7 +303,6 @@ SVG_COLORS = {"native": "#0ca30c", "host": "#a6e3a1", "stub": "#fab219",
 
 def render_svg(report: dict, view_name: str | None = None, note: str = "") -> str:
     """Static SVG card of one view (same layout and dark colors as the HTML map)."""
-    from math import ceil, sqrt
     from xml.sax.saxutils import escape
 
     views = report["views"]
@@ -312,9 +311,7 @@ def render_svg(report: dict, view_name: str | None = None, note: str = "") -> st
         raise SystemExit(f"--svg-view: no view named {view_name!r} (have: "
                          + ", ".join(x['tab'] for x in views) + ")")
     st, totals = v["statuses"], v["totals"]
-    rank = STATUSES.index
-    W, PAD, CELL, GAP, MODGAP = 900, 28, 9, 2, 14
-    PITCH = CELL + GAP
+    W, PAD = 900, 28
     inner = W - 2 * PAD
     fmt = "{:,}".format
     font = 'font-family="ui-sans-serif,system-ui,-apple-system,\'Segoe UI\',Roboto,sans-serif"'
@@ -326,7 +323,6 @@ def render_svg(report: dict, view_name: str | None = None, note: str = "") -> st
     by_area: dict[str, dict[str, list[str]]] = {}
     for key, f in report["functions"].items():
         by_area.setdefault(f["area"], {}).setdefault(f["module"], []).append(key)
-    areas = sorted(by_area.items(), key=lambda a: -sum(len(k) for k in a[1].values()))
 
     out: list[str] = []
     y = PAD + 14
@@ -350,42 +346,44 @@ def render_svg(report: dict, view_name: str | None = None, note: str = "") -> st
             x, y = PAD, y + 20
     y += 30
 
-    for name, mods in areas:
+    # Area tiles: 3 columns, one stacked bar of the non-shipped functions per area
+    TGAP, TH, BPAD = 12, 62, 12
+    tw = (inner - 2 * TGAP) / 3
+    bw = tw - 2 * BPAD
+    tiles = []
+    for name, mods in by_area.items():
         keys = [k for m in mods.values() for k in m]
         c = {s: sum(1 for k in keys if st[k] == s) for s in STATUSES}
         n = len(keys) - c["shipped"]
-        ad = sum(c[s] for s in v["done"])
-        stat = f"{ad} / {n} done" + (f" · {c['shipped']} shipped" if c["shipped"] else "")
-        out.append(f'<line x1="{PAD}" x2="{W - PAD}" y1="{y - 14}" y2="{y - 14}" stroke="#2f2f2d"/>')
-        out.append(f'<text x="{PAD}" y="{y + 4}" fill="#f0efec" font-size="14" font-weight="600" {font}>'
+        tiles.append((name, c, n, sum(c[s] for s in v["done"])))
+    tiles.sort(key=lambda t: (-t[2], t[0]))
+    top = y - 14
+    for i, (name, c, n, ad) in enumerate(tiles):
+        tx = PAD + (i % 3) * (tw + TGAP)
+        ty = top + (i // 3) * (TH + TGAP)
+        bx, by = tx + BPAD, ty + 30
+        out.append(f'<rect x="{tx:.1f}" y="{ty}" width="{tw:.1f}" height="{TH}" rx="8" '
+                   f'fill="#232322" stroke="#2f2f2d"/>')
+        out.append(f'<text x="{bx:.1f}" y="{ty + 20}" fill="#f0efec" font-size="13" font-weight="600" {font}>'
                    f'{escape(name)}</text>')
-        out.append(f'<text x="{W - PAD}" y="{y + 4}" text-anchor="end" fill="#8f8e86" font-size="12" {font}>'
-                   f'{escape(stat)}</text>')
-        y += 22
-        # Modules flow left to right, wrapping at the card width
-        boxes = []
-        for m, ks in sorted(mods.items(), key=lambda kv: -len(kv[1])):
-            short = re.sub(r"^api-ms-win-(core-)?", "", m)
-            mn = len(ks) - sum(1 for k in ks if st[k] == "shipped")
-            md = sum(1 for k in ks if st[k] in v["done"])
-            label = f"{short} {md}/{mn}" if mn else f"{short} shipped"
-            cols = min(len(ks), max(4, ceil(sqrt(len(ks) * 2.2))))
-            bw = max(cols * PITCH - GAP, int(len(label) * 5.7))
-            cols = max(cols, (bw + GAP) // PITCH)
-            ks = sorted(ks, key=lambda k: (rank(st[k]), k))
-            boxes.append((label, ks, cols, bw, ceil(len(ks) / cols) * PITCH - GAP))
-        bx, rowtop, rowh = PAD, y, 0
-        for label, ks, cols, bw, bh in boxes:
-            if bx > PAD and bx + bw > W - PAD:
-                bx, rowtop, rowh = PAD, rowtop + rowh + MODGAP, 0
-            out.append(f'<text x="{bx}" y="{rowtop + 9}" fill="#8f8e86" font-size="10" {font}>{escape(label)}</text>')
-            for i, k in enumerate(ks):
-                cx, cy = bx + (i % cols) * PITCH, rowtop + 16 + (i // cols) * PITCH
-                out.append(f'<rect x="{cx}" y="{cy}" width="{CELL}" height="{CELL}" rx="1.5" '
-                           f'fill="{SVG_COLORS[st[k]]}"/>')
-            bx += bw + MODGAP
-            rowh = max(rowh, 16 + bh)
-        y = rowtop + rowh + 30
+        out.append(f'<text x="{tx + tw - BPAD:.1f}" y="{ty + 20}" text-anchor="end" fill="#8f8e86" '
+                   f'font-size="12" {font}>{ad} / {n}</text>')
+        out.append(f'<clipPath id="b{i}"><rect x="{bx:.1f}" y="{by}" width="{bw:.1f}" height="10" rx="3"/></clipPath>')
+        segs = [(s, c[s]) for s in STATUSES if s != "shipped" and c[s]] if n else [("shipped", 1)]
+        total = sum(k for _, k in segs)
+        sx = bx
+        out.append(f'<g clip-path="url(#b{i})">')
+        for j, (s, k) in enumerate(segs):
+            w = (bx + bw - sx) if j == len(segs) - 1 else max(2.0, bw * k / total)
+            out.append(f'<rect x="{sx:.1f}" y="{by}" width="{w:.1f}" height="10" fill="{SVG_COLORS[s]}"/>')
+            sx += w
+        out.append('</g>')
+        sub = f"{100 * ad / n:.0f}% done" if n else "all shipped"
+        if n and c["shipped"]:
+            sub += f" · {c['shipped']} shipped"
+        out.append(f'<text x="{bx:.1f}" y="{ty + 55}" fill="#8f8e86" font-size="10.5" {font}>{escape(sub)}</text>')
+    rows = -(-len(tiles) // 3)
+    y = top + rows * (TH + TGAP) + 12
 
     y += 2
     foot = "Generated by tools/import_map.py" + (f" · {note}" if note else "")
