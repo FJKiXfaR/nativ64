@@ -25,13 +25,7 @@ everything that is not shipped.
 ## Usage
 
 ```bash
-python -I tools/import_map.py game/*.dll --out reports/import-map.html --json reports/import-map.json
-```
-
-Once the executable is available, add it:
-
-```bash
-python -I tools/import_map.py game/<title>.exe game/*.dll --out reports/import-map.html
+python -I tools/import_map.py game/*.exe game/*.dll --out reports/import-map.html --json reports/import-map.json
 ```
 
 `reports/` is not versioned: it lists the game's imports, which is derived from game files.
@@ -99,22 +93,25 @@ build check.
 # point --victory at your VIctory mirror checkout
 python -I tools/victory_status.py --victory ../VIctory-mirror --view windows --out reports/status-victory-windows.json
 python -I tools/victory_status.py --victory ../VIctory-mirror --view linux   --out reports/status-victory-linux.json
-python -I tools/import_map.py game/*.dll \
+python -I tools/import_map.py game/*.exe game/*.dll \
     --status reports/status-victory-windows.json \
     --status reports/status-victory-linux.json \
     --out reports/import-map.html
 ```
 
-Run it after each mirror sync to follow VIctory's progress. On the package DLLs alone
-(VIctory `9aef3d9`, 2026-11-24), 611 imported functions:
+Run it after each mirror sync to follow VIctory's progress. On the executable and the
+package DLLs (VIctory `42363ab`, 2026-11-25), 962 imported functions (587 from the
+executable, 351 of them imported by it alone):
 
-- Windows view: 66 implemented by VIctory (10.8%, the headline), 543 borrowed from host
-  Windows (host), 2 unresolved (`oleaut32` #4 and #6, they trap), 0 shipped. The percentage
-  counts only VIctory's own code. It is not "the game runs": the borrowed functions
+- Windows view: 115 implemented by VIctory (12.9%, the headline), 773 borrowed from host
+  Windows (host), 72 shipped, 2 unresolved (`oleaut32` #4 and #6, they trap). The
+  percentage counts only VIctory's own code. It is not "the game runs": the borrowed functions
   work only if the host Windows really exports them, and the 2 unresolved ones crash
   if called.
-- Linux view: 28 portable, 38 tied to Windows, 430 host APIs to write, 2 unresolved,
-  113 shipped (28 of 498 = 5.6%).
+- Linux view: 46 portable, 69 tied to Windows, 580 host APIs to write (C/C++ runtime 240,
+  system 155, threads & sync 95, network & crypto 48, files 18, other 24), 2 unresolved,
+  265 shipped (46 of 697 = 6.6%).
+- nativ64 view: 13 native of 697 (1.9%).
 
 ## Library view
 
@@ -124,7 +121,7 @@ tab shows how much of the title's import list the library covers, whatever base 
 
 ```bash
 cargo run -q -p nativ64 --bin nativ64-status > reports/status-nativ64.json
-python -I tools/import_map.py game/*.dll \
+python -I tools/import_map.py game/*.exe game/*.dll \
     --status reports/status-victory-windows.json \
     --status reports/status-victory-linux.json \
     --status reports/status-nativ64.json \
@@ -150,6 +147,6 @@ percentage. Functions the library registers but the game does not import are ign
 `--svg PATH` also writes a static SVG card of one view (`--svg-view NAME`, default the last tab;
 `--svg-note TEXT` goes in the footer, e.g. the VIctory commit). It is embedded in `README.md`:
 
-    python -I tools/import_map.py game/*.dll --status reports/status-victory-windows.json \
+    python -I tools/import_map.py game/*.exe game/*.dll --status reports/status-victory-windows.json \
         --status reports/status-victory-linux.json --svg docs/import-map-linux.svg \
         --svg-view "Linux native" --svg-note "VIctory $(git -C ../VIctory-mirror rev-parse --short HEAD)"

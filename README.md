@@ -19,11 +19,11 @@ titles can be added to the map, and functions shared by many games come first.
 
 ![Linux-native coverage](docs/import-map-linux.svg)
 
-For that first title, 498 system functions are needed from Windows (excluding the 113
-its own DLLs ship). 28 already have portable code in
+For that first title (executable and package DLLs), 697 system functions are needed from
+Windows (excluding the 265 its own DLLs ship). 46 already have portable code in
 [VIctory](https://github.com/Marvisak/VIctory), the compatibility layer used as the first
-base, 38 have VIctory code that still calls Windows, and **430 are host Windows APIs a
-native port must write**. This covers the package DLLs; the executable comes next.
+base, 69 have VIctory code that still calls Windows, and **580 are host Windows APIs a
+native port must write**.
 
 ## How it fits
 
