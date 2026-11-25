@@ -491,6 +491,20 @@ unsafe fn emulate_cpu_gap(uc: *mut libc::ucontext_t) -> bool {
     for (r, i) in regs.gpr.iter_mut().zip(GREG) {
         *r = g[i as usize] as u64;
     }
+    // `monitorx` / `mwaitx` (`0f 01 fa` / `0f 01 fb`): AMD wait hints. Arming nothing and
+    // returning from the wait at once is valid (a wait may wake spuriously); the title re-checks.
+    let code = rip as *const u8;
+    if rip as usize & 0xfff <= 0xffd
+        && *code == 0x0f
+        && *code.add(1) == 0x01
+        && matches!(*code.add(2), 0xfa | 0xfb)
+    {
+        if *code.add(2) == 0xfb {
+            libc::sched_yield();
+        }
+        g[libc::REG_RIP as usize] = (rip + 3) as i64;
+        return true;
+    }
     // Stay inside the page of the faulting instruction: the neighbouring one may be unmapped.
     let off = rip as usize & 0xfff;
     if !emulate_clzero(&mut regs, rip as *const u8, off, 0x1000 - off) {
