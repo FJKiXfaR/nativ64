@@ -7,6 +7,7 @@ compile_error!("nativ64 supports Linux x86_64 only");
 #[macro_use]
 mod registry;
 
+pub mod acphal;
 pub mod api_ms_win_core_com;
 pub mod api_ms_win_core_errorhandling;
 pub mod api_ms_win_core_fibers;
@@ -53,6 +54,7 @@ mod slots;
 pub mod vcruntime140;
 pub mod windowing;
 pub mod ws2_32;
+pub mod xapu;
 pub mod xgameruntime;
 
 pub use api_ms_win_crt_runtime::{nativ64_set_command_line, set_command_line};
@@ -60,6 +62,7 @@ pub use registry::{lookup, lookup_ordinal, nativ64_lookup, normalize_module, Exp
 
 /// One table per Windows module file. Add a new module file here.
 pub static TABLES: &[&[Export]] = &[
+    acphal::EXPORTS,
     api_ms_win_core_com::EXPORTS,
     api_ms_win_core_errorhandling::EXPORTS,
     api_ms_win_core_fibers::EXPORTS,
@@ -98,6 +101,7 @@ pub static TABLES: &[&[Export]] = &[
     msvcp140::EXPORTS,
     vcruntime140::EXPORTS,
     ws2_32::EXPORTS,
+    xapu::EXPORTS,
     xgameruntime::EXPORTS,
 ];
 
