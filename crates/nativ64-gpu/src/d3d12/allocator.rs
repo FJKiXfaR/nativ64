@@ -28,9 +28,10 @@ pub struct AllocatorData {
     pub kind: u32,
 }
 
-static TABLE: SlotTable<9> =
+static TABLE: SlotTable<10> =
     with_child_methods(SlotTable::new(Iface::CommandAllocator).with_iunknown::<AllocatorData>())
-        .with(8, reset as *const ());
+        .with(8, reset as *const ())
+        .with(9, set_callback as *const ());
 
 /// `ID3D12Device::CreateCommandAllocator(type, riid, out)` (device slot 9).
 ///
@@ -61,6 +62,12 @@ unsafe extern "win64" fn reset(_this: *mut c_void) -> HRESULT {
     S_OK
 }
 
+/// Slot 9 (`+0x48`): the console's allocation callback setter; the lists record into our own
+/// memory, so the callback is never needed. Accepted and ignored.
+unsafe extern "win64" fn set_callback(_this: *mut c_void) -> HRESULT {
+    S_OK
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -81,6 +88,9 @@ mod tests {
             let f: unsafe extern "win64" fn(*mut c_void) -> HRESULT =
                 std::mem::transmute(*vtbl.add(8));
             assert_eq!(f(a), S_OK);
+            let g: unsafe extern "win64" fn(*mut c_void, *mut c_void, *mut c_void) -> HRESULT =
+                std::mem::transmute(*vtbl.add(9));
+            assert_eq!(g(a, n, n), S_OK);
             assert_eq!(XObject::<AllocatorData>::release(a), 0);
         }
     }

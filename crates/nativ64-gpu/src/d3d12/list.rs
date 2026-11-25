@@ -94,6 +94,8 @@ pub struct ListData {
     // Ours, after the console layout.
     closed: AtomicBool,
     commands: Mutex<Vec<Command>>,
+    /// Memory handed out by `AllocateUploadMemoryX`, kept until the list is reset.
+    uploads: Mutex<Vec<Box<[u8]>>>,
 }
 const _: () = assert!(std::mem::offset_of!(ListData, kind) == 0x08);
 const _: () = assert!(std::mem::offset_of!(ListData, put) == 0x10);
@@ -144,6 +146,7 @@ unsafe fn new_list(
             newer: [0; 256],
             closed: AtomicBool::new(false),
             commands: Mutex::new(initial(pipeline)),
+            uploads: Mutex::new(Vec::new()),
         },
         iid,
         out,
@@ -229,6 +232,7 @@ pub(crate) unsafe extern "win64" fn reset(
     }
     let d = data(this);
     *d.commands.lock().unwrap_or_else(|e| e.into_inner()) = initial(pipeline);
+    d.uploads.lock().unwrap_or_else(|e| e.into_inner()).clear();
     d.closed.store(false, Ordering::Release);
     S_OK
 }
@@ -245,6 +249,34 @@ pub unsafe fn recorded(this: *mut c_void) -> Vec<Command> {
         .clone()
 }
 
+/// `size` zeroed bytes aligned to `align` (at least 16, a power of two), owned by the list until
+/// it is reset; NULL when the request cannot be met. Shortcut: plain host memory, not placed in
+/// the console's 40-bit GPU address range.
+///
+/// # Safety
+/// `this` is a live list of ours.
+pub(crate) unsafe fn upload_memory(this: *mut c_void, size: u64, align: u64) -> *mut u8 {
+    let align = usize::try_from(align).unwrap_or(0).max(16);
+    let Some(len) = usize::try_from(size)
+        .ok()
+        .and_then(|s| s.checked_add(align))
+    else {
+        return std::ptr::null_mut();
+    };
+    if this.is_null() || !align.is_power_of_two() || len > 1 << 32 {
+        return std::ptr::null_mut();
+    }
+    let block = vec![0u8; len].into_boxed_slice();
+    let start = block.as_ptr();
+    let at = start.add(start.align_offset(align)).cast_mut();
+    data(this)
+        .uploads
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(block);
+    at
+}
+
 /// Appends a command (used by the recording methods).
 ///
 /// # Safety
@@ -255,6 +287,22 @@ pub unsafe fn record(this: *mut c_void, command: Command) {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .push(command);
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+    use crate::d3d12::allocator::{create_command_allocator, ALLOCATOR_IIDS};
+
+    /// An open list of ours (leaked).
+    pub unsafe fn new_test_list() -> *mut c_void {
+        let n = std::ptr::null_mut();
+        let mut a = n;
+        create_command_allocator(n, 0, &ALLOCATOR_IIDS[0], &mut a);
+        let mut l = n;
+        assert_eq!(create_command_list(n, 0, 0, a, n, &LIST_IIDS[0], &mut l), 0);
+        l
+    }
 }
 
 #[cfg(test)]

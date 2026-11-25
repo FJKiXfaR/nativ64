@@ -7,12 +7,14 @@ use std::ffi::c_void;
 
 use crate::d3d12::command::Command;
 use crate::d3d12::list::{record, reset};
+use crate::d3d12::{list_state, list_work};
 use crate::xobj::SlotTable;
 use crate::xobj::HRESULT;
 
 /// Pipeline syncs at the top (slot 131, `+0x418`) and bottom (slot 132, `+0x420`) of the pipe.
 pub const fn with_recording<const N: usize>(t: SlotTable<N>) -> SlotTable<N> {
-    t.with(131, sync_top as *const ())
+    list_work::with_work(list_state::with_state(t))
+        .with(131, sync_top as *const ())
         .with(132, sync_bottom as *const ())
         .with(139, reset_x as *const ())
 }
