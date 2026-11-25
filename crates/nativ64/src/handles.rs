@@ -104,6 +104,7 @@ enum Object {
     Semaphore(Obj<SemState>),
     Thread(threads::ThreadObj),
     File(FileObj),
+    Find(FindObj),
 }
 
 /// An open file: the descriptor and the current position (for calls without an offset). A file
@@ -111,6 +112,13 @@ enum Object {
 pub struct FileObj {
     pub fd: std::os::fd::OwnedFd,
     pub pos: Mutex<u64>,
+    waiters: Waiters,
+}
+
+/// A directory search (`FindFirstFileW`): the `WIN32_FIND_DATAW` records still to return. Never
+/// signaled.
+pub struct FindObj {
+    entries: Mutex<std::collections::VecDeque<Vec<u8>>>,
     waiters: Waiters,
 }
 
@@ -128,6 +136,7 @@ impl Object {
             Object::Semaphore(o) => &o.waiters,
             Object::Thread(o) => &o.waiters,
             Object::File(o) => &o.waiters,
+            Object::Find(o) => &o.waiters,
         }
     }
 
@@ -145,7 +154,7 @@ impl Object {
             }
             Object::Semaphore(o) => lock(&o.state).count > 0,
             Object::Thread(o) => lock(&o.state).exited,
-            Object::File(_) => false,
+            Object::File(_) | Object::Find(_) => false,
         }
     }
 
@@ -179,7 +188,7 @@ impl Object {
                 Taken::Normal
             }
             // A thread stays signaled for good.
-            Object::Thread(_) | Object::File(_) => Taken::Normal,
+            Object::Thread(_) | Object::File(_) | Object::Find(_) => Taken::Normal,
         }
     }
 }
@@ -479,6 +488,39 @@ pub fn with_file<R>(h: Handle, f: impl FnOnce(&FileObj) -> R) -> Option<R> {
             None
         }
     }
+}
+
+/// A new handle for a directory search that will return `entries` in order.
+pub fn create_find_handle(entries: Vec<Vec<u8>>) -> Handle {
+    let o = Arc::new(Object::Find(FindObj {
+        entries: Mutex::new(entries.into()),
+        waiters: Waiters::default(),
+    }));
+    kernel().insert(o)
+}
+
+/// The next record of the search behind `h`: `Some(None)` when exhausted, `None` (and
+/// `ERROR_INVALID_HANDLE`) if `h` is not a search handle.
+pub fn find_next(h: Handle) -> Option<Option<Vec<u8>>> {
+    let o = kernel().get(h);
+    match o.as_deref() {
+        Some(Object::Find(f)) => Some(lock(&f.entries).pop_front()),
+        _ => {
+            set_last_error(ERROR_INVALID_HANDLE);
+            None
+        }
+    }
+}
+
+/// Closes a search handle (`FindClose`); other kinds of handle are refused.
+pub fn close_find(h: Handle) -> i32 {
+    let mut k = kernel();
+    if matches!(k.table.get(&h).map(|o| &**o), Some(Object::Find(_))) {
+        k.table.remove(&h);
+        return 1;
+    }
+    set_last_error(ERROR_INVALID_HANDLE);
+    0
 }
 
 pub const DUPLICATE_CLOSE_SOURCE: u32 = 1;

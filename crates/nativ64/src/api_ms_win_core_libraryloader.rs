@@ -409,6 +409,9 @@ mod tests {
 
     #[test]
     fn main_module() {
+        let _g = crate::paths::MAIN_MODULE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         crate::process::set_main_module(0x1_4000_0000, "/games/prog.exe");
         unsafe {
             assert_eq!(GetModuleHandleW(std::ptr::null()), 0x1_4000_0000);

@@ -143,6 +143,10 @@ pub fn map_write_path(win: &str) -> Option<PathBuf> {
     any.then_some(out)
 }
 
+/// Tests that change the main module (so the write directory) or depend on it take this.
+#[cfg(test)]
+pub(crate) static MAIN_MODULE_LOCK: Mutex<()> = Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
