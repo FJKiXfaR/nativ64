@@ -345,11 +345,72 @@ unsafe extern "win64" fn get_gpu_virtual_address(this: *mut c_void) -> u64 {
     crate::xobj::XObject::<ResourceData>::data(this).address
 }
 
+/// Page pools the title registered, as `(address, pages)`; a handle is the index plus one, a
+/// removed pool leaves `None`. Nothing reads them yet.
+static PAGE_POOLS: std::sync::Mutex<Vec<Option<(u64, u32)>>> = std::sync::Mutex::new(Vec::new());
+
+fn page_pools() -> std::sync::MutexGuard<'static, Vec<Option<(u64, u32)>>> {
+    PAGE_POOLS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The console's `RegisterPagePoolX(address, page count, handle out)` (device slot 74, `+0x250`).
+///
+/// # Safety
+/// `out` is NULL or writable for a handle.
+pub unsafe extern "win64" fn register_page_pool(
+    _this: *mut c_void,
+    address: u64,
+    pages: u32,
+    out: *mut usize,
+) -> HRESULT {
+    if out.is_null() || pages == 0 || !address.is_multiple_of(KIB_64) {
+        return E_INVALIDARG;
+    }
+    let mut pools = page_pools();
+    pools.push(Some((address, pages)));
+    *out = pools.len();
+    S_OK
+}
+
+/// The console's `UnregisterPagePoolX(handle)` (device slot 75, `+0x258`).
+pub extern "win64" fn unregister_page_pool(_this: *mut c_void, handle: usize) -> HRESULT {
+    match page_pools().get_mut(handle.wrapping_sub(1)) {
+        Some(pool @ Some(_)) => {
+            *pool = None;
+            S_OK
+        }
+        _ => E_INVALIDARG,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::d3d12::object::S_FALSE;
     use crate::xobj::{XObject, E_NOINTERFACE};
+
+    #[test]
+    fn page_pools_register_and_unregister() {
+        unsafe {
+            let n = std::ptr::null_mut();
+            let (mut a, mut b) = (0usize, 0usize);
+            assert_eq!(register_page_pool(n, 0x10_0000, 4, &mut a), S_OK);
+            assert_eq!(register_page_pool(n, 0x20_0000, 1, &mut b), S_OK);
+            assert_ne!((a, b), (0, 0));
+            assert_ne!(a, b);
+            assert_eq!(register_page_pool(n, 0x10_0000, 0, &mut a), E_INVALIDARG);
+            assert_eq!(register_page_pool(n, 0x10_0800, 1, &mut a), E_INVALIDARG);
+            assert_eq!(
+                register_page_pool(n, 0x10_0000, 1, std::ptr::null_mut()),
+                E_INVALIDARG
+            );
+        }
+        let mut h = 0usize;
+        unsafe { register_page_pool(std::ptr::null_mut(), 0x30_0000, 2, &mut h) };
+        assert_eq!(unregister_page_pool(std::ptr::null_mut(), h), S_OK);
+        assert_eq!(unregister_page_pool(std::ptr::null_mut(), h), E_INVALIDARG);
+        assert_eq!(unregister_page_pool(std::ptr::null_mut(), 0), E_INVALIDARG);
+    }
 
     fn buffer(width: u64) -> ResourceDesc {
         ResourceDesc {

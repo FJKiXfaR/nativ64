@@ -30,6 +30,21 @@ APIs only (libc as its only dependency).
   (DXBC with an `RTS0` chunk, other chunks skipped); the model is kept in the object (`+0x10`) for
   later `Set*RootSignature`. Null or empty blob and non-DXBC garbage are E_INVALIDARG; no methods
   of its own beyond `ID3D12DeviceChild`'s.
+- `d3d12/pipeline.rs`: `CreateGraphicsPipelineState` (10), `CreateComputePipelineState` (11),
+  `CreateComputePipelineStateX` (62, extensions ignored) and `CreatePipelineState` from a stream (86;
+  console numbering, mesh 24 and amplification 23). The object keeps copies of each stage's
+  bytecode, a clone of the root signature model, and for graphics the target/depth formats,
+  topology type, sample description, deep-copied input layout and the raw description or stream.
+  Nothing is compiled (G4). Null description, compute without code, unknown or overrunning stream
+  subobject (logged) are E_INVALIDARG; null `out` is S_FALSE.
+- `d3d12/query.rs`: `CreateQueryHeap` (slot 39): keeps the description only; no results yet.
+- `d3d12/descriptor.rs`: `CreateSamplerX` (slot 61, `+0x1e8`) records the console's 27-word sampler as
+  `View::ConsoleSampler`.
+- `d3d12/resource.rs`: `RegisterPagePoolX` / `UnregisterPagePoolX` (slots 74, 75): pools kept as
+  `(address, pages)` behind a handle (index + 1); unaligned address, zero pages or null out are
+  E_INVALIDARG; nothing reads them yet.
+- `d3d12/signature.rs`: `CreateCommandSignature` (slot 41): stride and argument descriptions copied;
+  the root signature is not kept.
 - `d3d12/resource.rs`: `CreateCommittedResource` (slot 27) and `CreateCommittedResource3` (slot 127,
   `+0x3f8`): zeroed memory sized and aligned by the console layout, taken from the host
   reservation table (2^32..2^40) so its address is the GPU address; freed with the resource.

@@ -126,6 +126,15 @@ static DEVICE_TABLE: SlotTable<160> = SlotTable::new(Iface::Device)
         crate::d3d12::rootobj::create_root_signature as *const (),
     )
     .with(
+        41,
+        crate::d3d12::signature::create_command_signature as *const (),
+    )
+    .with(39, crate::d3d12::query::create_query_heap as *const ())
+    .with(10, crate::d3d12::pipeline::create_graphics as *const ())
+    .with(11, crate::d3d12::pipeline::create_compute as *const ())
+    .with(62, crate::d3d12::pipeline::create_compute_x as *const ())
+    .with(86, crate::d3d12::pipeline::create_stream as *const ())
+    .with(
         17,
         crate::d3d12::descriptor::create_constant_buffer_view as *const (),
     )
@@ -146,6 +155,7 @@ static DEVICE_TABLE: SlotTable<160> = SlotTable::new(Iface::Device)
         crate::d3d12::descriptor::create_depth_stencil_view as *const (),
     )
     .with(22, crate::d3d12::descriptor::create_sampler as *const ())
+    .with(61, crate::d3d12::descriptor::create_sampler_x as *const ())
     .with(23, crate::d3d12::descriptor::copy_descriptors as *const ())
     .with(
         24,
@@ -170,6 +180,11 @@ static DEVICE_TABLE: SlotTable<160> = SlotTable::new(Iface::Device)
     .with(
         127,
         crate::d3d12::resource::create_committed_resource3 as *const (),
+    )
+    .with(74, crate::d3d12::resource::register_page_pool as *const ())
+    .with(
+        75,
+        crate::d3d12::resource::unregister_page_pool as *const (),
     )
     .with(133, crate::d3d12::resource::create_at_address as *const ())
     .with(

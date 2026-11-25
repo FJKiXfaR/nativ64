@@ -166,6 +166,9 @@ pub enum View {
     /// Unordered access: resource, counter resource, description.
     Unordered(usize, usize, Option<[u32; 10]>),
     Sampler([u32; 13]),
+    /// The console's sampler description: filter, addressing, LOD, anisotropy and border words,
+    /// then console-only tuning words (27 in all).
+    ConsoleSampler([u32; 27]),
     /// A view of memory without a resource object (device slots 70 and 71): whether it is
     /// unordered access, the resource description (as words), then the view's (the plain one
     /// followed by the memory address and console fields).
@@ -280,6 +283,20 @@ pub unsafe extern "win64" fn create_sampler(
 ) {
     if let Some(d) = words(desc) {
         record(handle, View::Sampler(d));
+    }
+}
+
+/// Slot 61 (`+0x1e8`), the console's `CreateSamplerX(desc, handle)`.
+///
+/// # Safety
+/// Descriptions, handles and ranges are NULL or valid, as the title passes them.
+pub unsafe extern "win64" fn create_sampler_x(
+    _this: *mut c_void,
+    desc: *const [u32; 27],
+    handle: u64,
+) {
+    if let Some(d) = words(desc) {
+        record(handle, View::ConsoleSampler(d));
     }
 }
 
@@ -576,6 +593,11 @@ mod tests {
             assert_eq!(view(s2), Some(View::Unordered(0x78, 0, Some(d))));
             create_sampler(n, &[7; 13], s3);
             assert_eq!(view(s3), Some(View::Sampler([7; 13])));
+            create_sampler_x(n, &[9; 27], s3);
+            assert_eq!(view(s3), Some(View::ConsoleSampler([9; 27])));
+            create_sampler_x(n, std::ptr::null(), s3);
+            assert_eq!(view(s3), Some(View::ConsoleSampler([9; 27])));
+            create_sampler(n, &[7; 13], s3);
             // placed views keep both descriptions
             create_placed_shader_resource_view(n, &[3; 14], &[4; 16], s1);
             assert_eq!(view(s1), Some(View::Placed(false, [3; 14], [4; 16])));
