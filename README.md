@@ -72,18 +72,19 @@ control.
 
 ## Status
 
-Early. The import map is done, and the library implements 230 of the 697 functions the
-first title needs (33.0%), each with tests: the C runtime math, string and conversion
+Early. The import map is done, and the library implements 262 of the 697 functions the
+first title needs (37.6%), each with tests: the C runtime math, string and conversion
 functions, the lightweight thread synchronization (SRW locks, critical sections,
 condition variables, wait on address), a handle table with events, mutexes and
 semaphores, threads, thread-local storage, lock-free lists, the CRT heap, sorting,
-random numbers, errno and invalid-parameter handler, plus a first set of system calls.
+random numbers, startup and exit, errno and invalid-parameter handler, plus a first set
+of system calls.
 Left to write:
 
 | Area | To write |
 |---|---|
 | System | 160 |
-| C/C++ runtime (`api-ms-win-crt-*`) | 111 |
+| C/C++ runtime (`api-ms-win-crt-*`) | 79 |
 | Network & crypto | 52 |
 | Threads & sync | 32 |
 | Files | 30 |
