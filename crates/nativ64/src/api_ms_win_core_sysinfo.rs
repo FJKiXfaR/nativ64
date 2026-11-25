@@ -22,6 +22,7 @@ unsafe fn store_filetime(out: *mut u32, t: u64) {
 }
 
 const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
+const ERROR_INVALID_PARAMETER: u32 = 87;
 /// `SYSTEM_LOGICAL_PROCESSOR_INFORMATION`: mask, relationship, 16 bytes of union.
 const LPI_SIZE: usize = 32;
 const RELATION_PROCESSOR_CORE: u32 = 0;
@@ -89,6 +90,26 @@ win32! {
     Native fn GetSystemTimePreciseAsFileTime(out: *mut u32) {
         store_filetime(out, filetime_now());
     }
+    // MEMORYSTATUSEX (64 bytes): the host's RAM and swap; virtual space is the user half (128 TiB).
+    Native fn GlobalMemoryStatusEx(out: *mut u8) -> i32 {
+        if out.is_null() || (out as *const u32).read_unaligned() != 64 {
+            set_last_error(ERROR_INVALID_PARAMETER);
+            return 0;
+        }
+        let mut si: libc::sysinfo = std::mem::zeroed();
+        libc::sysinfo(&mut si);
+        let unit = si.mem_unit.max(1) as u64;
+        let (total, avail) = (si.totalram as u64 * unit, si.freeram as u64 * unit);
+        let (swap, swap_free) = (si.totalswap as u64 * unit, si.freeswap as u64 * unit);
+        let virt = 0x7FFF_FFFE_FFFFu64;
+        let load = (100 - (avail * 100).checked_div(total).unwrap_or(100)) as u32;
+        let f = [total, avail, total + swap, avail + swap_free, virt, virt, 0];
+        out.add(4).cast::<u32>().write_unaligned(load);
+        for (i, v) in f.iter().enumerate() {
+            out.add(8 + 8 * i).cast::<u64>().write_unaligned(*v);
+        }
+        1
+    }
     Native fn GetTickCount() -> u32 {
         (monotonic_ns() / 1_000_000) as u32
     }
@@ -100,6 +121,21 @@ win32! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn global_memory_status() {
+        let mut b = [0u8; 64];
+        unsafe {
+            assert_eq!(GlobalMemoryStatusEx(b.as_mut_ptr()), 0);
+            assert_eq!(GlobalMemoryStatusEx(std::ptr::null_mut()), 0);
+            b[0] = 64;
+            assert_eq!(GlobalMemoryStatusEx(b.as_mut_ptr()), 1);
+        }
+        let total = u64::from_le_bytes(b[8..16].try_into().unwrap());
+        let avail = u64::from_le_bytes(b[16..24].try_into().unwrap());
+        assert!(total > 0 && avail <= total);
+        assert!(b[4] <= 100);
+    }
 
     #[test]
     fn filetime_is_current_utc() {

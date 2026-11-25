@@ -8,12 +8,14 @@
 //! slots are reused. At most `MAX_PHYSICAL_PAGES` pages are outstanding. The attributes are
 //! recorded by no one: all pages are the same ordinary host memory.
 
+use nativ64::api_ms_win_core_memory::Placement;
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Mutex, OnceLock};
 
 const MEM_COMMIT: u32 = 0x1000;
 const MEM_RESERVE: u32 = 0x2000;
+const MEM_REPLACE_PLACEHOLDER: u32 = 0x4000;
 /// 2 MiB pages (alignment); with `PAGES_64K_BIT`, 64 KiB pages.
 const PAGES_2M: u32 = 0x2000_0000;
 const PAGES_64K_BIT: u32 = 0x40_0000;
@@ -22,7 +24,6 @@ const ADDRESS_32BIT: u64 = 4;
 /// `XMemAlloc` attributes: alignment as log2 (5 bits at 24), bit 33 asks for a 32-bit address.
 const ALIGNMENT_SHIFT: u64 = 24;
 const ALLOC_32BIT: u64 = 1 << 33;
-const PAGE: usize = 4096;
 const MIB: usize = 1 << 20;
 /// Host protection constants (the console adds GPU bits above 0x1ff, dropped here).
 const HOST_PROTECTION: u32 = 0x1ff;
@@ -41,66 +42,6 @@ fn address_range(flags: u64) -> (usize, usize) {
     (1 << 32, (1 << bits) - 1)
 }
 
-fn host_prot(protect: u32) -> libc::c_int {
-    match protect & HOST_PROTECTION & !0x100 {
-        0x01 | 0 => libc::PROT_NONE,
-        0x02 => libc::PROT_READ,
-        0x04 | 0x08 => libc::PROT_READ | libc::PROT_WRITE,
-        0x10 => libc::PROT_EXEC,
-        0x20 => libc::PROT_READ | libc::PROT_EXEC,
-        _ => libc::PROT_READ | libc::PROT_WRITE | libc::PROT_EXEC,
-    }
-}
-
-fn align_up(v: usize, a: usize) -> usize {
-    (v + a - 1) & !(a - 1)
-}
-
-/// Where the next search in each range class starts (0: 32-bit, 1: the rest).
-static CURSOR: [AtomicUsize; 2] = [AtomicUsize::new(0), AtomicUsize::new(0)];
-
-/// Maps `size` bytes inside `lo..=hi` at the first free aligned spot after the class cursor.
-fn place(lo: usize, hi: usize, size: usize, align: usize, prot: libc::c_int) -> *mut c_void {
-    let cursor = &CURSOR[usize::from(lo >= 1 << 32)];
-    let step = align.max(64 << 10);
-    let mut at = align_up(cursor.load(Ordering::Relaxed).max(lo), align);
-    while at.checked_add(size).is_some_and(|e| e - 1 <= hi) {
-        // SAFETY: a fresh anonymous mapping that never replaces an existing one.
-        let p = unsafe {
-            libc::mmap(
-                at as *mut c_void,
-                size,
-                prot,
-                libc::MAP_PRIVATE
-                    | libc::MAP_ANONYMOUS
-                    | libc::MAP_NORESERVE
-                    | libc::MAP_FIXED_NOREPLACE,
-                -1,
-                0,
-            )
-        };
-        if p as usize == at {
-            cursor.store(at + size, Ordering::Relaxed);
-            reservations().lock().unwrap().insert(at, size);
-            return p;
-        }
-        if p != libc::MAP_FAILED {
-            // SAFETY: undoes the mapping a kernel without MAP_FIXED_NOREPLACE put elsewhere.
-            unsafe { libc::munmap(p, size) };
-        } else if std::io::Error::last_os_error().raw_os_error() != Some(libc::EEXIST) {
-            break;
-        }
-        at = align_up(at + step, align);
-    }
-    std::ptr::null_mut()
-}
-
-/// Start and size of what `place` mapped, to release it later.
-fn reservations() -> &'static Mutex<std::collections::HashMap<usize, usize>> {
-    static R: OnceLock<Mutex<std::collections::HashMap<usize, usize>>> = OnceLock::new();
-    R.get_or_init(Default::default)
-}
-
 fn virtual_alloc(
     base: *mut c_void,
     size: usize,
@@ -108,63 +49,63 @@ fn virtual_alloc(
     flags: u64,
     protect: u32,
 ) -> *mut c_void {
-    if size == 0 {
-        return std::ptr::null_mut();
-    }
-    let prot = host_prot(protect);
-    let size = align_up(size, PAGE);
-    if !base.is_null() {
-        // Part of an earlier reservation: commit it, or reserve exactly there.
-        if kind & MEM_RESERVE != 0 {
-            let at = base as usize;
-            // SAFETY: never replaces an existing mapping.
-            let p = unsafe {
-                libc::mmap(
-                    base,
-                    size,
-                    if kind & MEM_COMMIT != 0 {
-                        prot
-                    } else {
-                        libc::PROT_NONE
-                    },
-                    libc::MAP_PRIVATE
-                        | libc::MAP_ANONYMOUS
-                        | libc::MAP_NORESERVE
-                        | libc::MAP_FIXED_NOREPLACE,
-                    -1,
-                    0,
-                )
-            };
-            if p as usize != at {
-                if p != libc::MAP_FAILED {
-                    // SAFETY: undoes a stray mapping.
-                    unsafe { libc::munmap(p, size) };
-                }
-                return std::ptr::null_mut();
-            }
-            reservations().lock().unwrap().insert(at, size);
-            return base;
-        }
-        let start = base as usize & !(PAGE - 1);
-        let len = align_up(base as usize + size - start, PAGE);
-        // SAFETY: fails with ENOMEM on unmapped pages.
-        let r = unsafe { libc::mprotect(start as *mut c_void, len, prot) };
-        return if r == 0 { base } else { std::ptr::null_mut() };
-    }
     let (lo, hi) = address_range(flags);
     let align = if kind & (PAGES_2M | PAGES_64K_BIT) == PAGES_2M {
         2 * MIB
     } else {
         64 << 10
     };
-    // A reservation without MEM_COMMIT stays inaccessible until committed.
-    let prot = if kind & MEM_COMMIT != 0 {
-        prot
-    } else {
-        libc::PROT_NONE
+    // The allocation table lives in `nativ64` so `VirtualFree`/`VirtualQuery` see these blocks.
+    let protect = match protect & HOST_PROTECTION {
+        0 => 0x01,
+        p => p,
     };
-    place(lo, hi, size, align, prot)
+    let result = if kind & MEM_REPLACE_PLACEHOLDER != 0 {
+        // Replaces a placeholder `VirtualFree(.., MEM_PRESERVE_PLACEHOLDER)` made (the memory is
+        // mapped later by physical page, so the range stays reserved).
+        nativ64::api_ms_win_core_memory::replace_placeholder(base as usize, size, protect)
+    } else {
+        nativ64::api_ms_win_core_memory::alloc(
+            base as usize,
+            size,
+            kind & (MEM_COMMIT | MEM_RESERVE),
+            protect,
+            Some(Placement { lo, hi, align }),
+        )
+    };
+    match result {
+        Ok(a) => a as *mut c_void,
+        Err(e) => {
+            nativ64::api_ms_win_core_errorhandling::set_last_error(e);
+            std::ptr::null_mut()
+        }
+    }
 }
+
+/// `XMEM_WORKING_SET_STATISTICS`, the layout the title reads its leading fields from.
+#[repr(C)]
+#[derive(Default)]
+pub struct WorkingSet {
+    title_limit: usize,
+    title_used: usize,
+    tools_limit: usize,
+    tools_used: usize,
+    stack_used: u32,
+    physical_pages: u32,
+    gpu_optimal_limit: usize,
+    gpu_optimal_used: usize,
+    tools_gpu_optimal_limit: usize,
+    tools_gpu_optimal_used: usize,
+    kernel_pool_used: u32,
+    kernel_pool_limit: u32,
+}
+
+/// The title's memory on a retail console (13.5 GiB, 10 GiB of it GPU-optimal).
+const TITLE_MEMORY: usize = 13 << 30 | 1 << 29;
+const GPU_OPTIMAL_MEMORY: usize = 10 << 30;
+const PAGE_SIZE: usize = 4096;
+/// Bytes handed back to the system by `XMemTransferMemory`.
+static TRANSFERRED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Size of a physical page of the console's allocator.
 const PHYSICAL_PAGE: usize = 64 << 10;
@@ -179,11 +120,98 @@ struct PhysicalPool {
     spanned: usize,
     free: Vec<usize>,
     in_use: usize,
+    /// Slots handed out and not freed.
+    live: std::collections::HashSet<usize>,
 }
 
 fn pool() -> &'static Mutex<PhysicalPool> {
     static P: OnceLock<Mutex<PhysicalPool>> = OnceLock::new();
     P.get_or_init(Default::default)
+}
+
+/// The page number the title sees for a pool slot: a count of 4 KiB frames, so a multiple of 16
+/// (titles keep it shifted right by 4), and never 0 (0 means "unmap" to the scatter call).
+fn page_number(slot: usize) -> usize {
+    (slot + 1) * (PHYSICAL_PAGE >> 12)
+}
+
+/// The pool slot of a page number, if that page is allocated.
+fn live_slot(p: &PhysicalPool, number: usize) -> Option<usize> {
+    let frames = PHYSICAL_PAGE >> 12;
+    (number.is_multiple_of(frames) && number >= frames)
+        .then(|| number / frames - 1)
+        .filter(|s| p.live.contains(s))
+}
+
+/// Maps `pages` (numbers) consecutively from `address` over what is there; no pages unmaps `n`
+/// pages. `address` must lie in one VirtualAlloc/XMem reservation.
+fn map_physical(address: *mut c_void, n: usize, pages: *const usize) -> bool {
+    let base = address as usize;
+    let Some(len) = n.checked_mul(PHYSICAL_PAGE) else {
+        return false;
+    };
+    if n == 0 || !base.is_multiple_of(PHYSICAL_PAGE) {
+        return false;
+    }
+    let api = nativ64::api_ms_win_core_memory::free;
+    if pages.is_null() {
+        return api(base, len, 0x4000).is_ok();
+    }
+    // SAFETY: the title passes `n` page numbers.
+    let numbers = unsafe { std::slice::from_raw_parts(pages, n) };
+    let p = pool().lock().unwrap_or_else(|e| e.into_inner());
+    let mut slots = Vec::with_capacity(n);
+    for &number in numbers {
+        match live_slot(&p, number) {
+            Some(s) => slots.push(s),
+            None => return false,
+        }
+    }
+    let Some(fd) = p.fd else { return false };
+    // Inside one reservation, and reported committed from now on.
+    let protect = match nativ64::api_ms_win_core_memory::query(base) {
+        Ok(i) if i.allocation_protect != 0x01 && i.allocation_protect != 0 => i.allocation_protect,
+        _ => 0x04,
+    };
+    if nativ64::api_ms_win_core_memory::mark_mapped(base, len, protect).is_err() {
+        return false;
+    }
+    let mut i = 0;
+    while i < n {
+        let run = 1 + slots[i + 1..]
+            .iter()
+            .zip(1..)
+            .take_while(|&(s, k)| *s == slots[i] + k)
+            .count();
+        // SAFETY: replaces pages of a reservation the table owns with a view of the pool file.
+        let m = unsafe {
+            libc::mmap(
+                (base + i * PHYSICAL_PAGE) as *mut c_void,
+                run * PHYSICAL_PAGE,
+                host_prot(protect),
+                libc::MAP_SHARED | libc::MAP_FIXED,
+                fd,
+                (slots[i] * PHYSICAL_PAGE) as libc::off_t,
+            )
+        };
+        if m == libc::MAP_FAILED {
+            return false;
+        }
+        i += run;
+    }
+    true
+}
+
+/// Windows protection to host protection bits (the console's extra bits dropped).
+fn host_prot(protect: u32) -> libc::c_int {
+    match protect & 0xff {
+        0x02 => libc::PROT_READ,
+        0x04 | 0x08 => libc::PROT_READ | libc::PROT_WRITE,
+        0x10 => libc::PROT_EXEC,
+        0x20 => libc::PROT_READ | libc::PROT_EXEC,
+        0x40 | 0x80 => libc::PROT_READ | libc::PROT_WRITE | libc::PROT_EXEC,
+        _ => libc::PROT_NONE,
+    }
 }
 
 /// Takes `n` page frame numbers from the pool (all or none); `None` when there is no room or the
@@ -220,6 +248,7 @@ fn take_physical_pages(n: usize) -> Option<Vec<usize>> {
         });
     }
     p.in_use += n;
+    p.live.extend(pages.iter().copied());
     Some(pages)
 }
 
@@ -234,7 +263,9 @@ nativ64::win32! {
         }
         match take_physical_pages(*count) {
             Some(v) => {
-                std::ptr::copy_nonoverlapping(v.as_ptr(), pages, v.len());
+                for (i, slot) in v.iter().enumerate() {
+                    pages.add(i).write(page_number(*slot));
+                }
                 1
             }
             None => {
@@ -243,6 +274,98 @@ nativ64::win32! {
                 0
             }
         }
+    }
+
+    // Frees pages by number; views still mapped stay readable (they now see zeros).
+    Native fn XMemFreePhysicalPages(n: usize, pages: *const usize) -> i32 {
+        if pages.is_null() {
+            return 0;
+        }
+        let mut p = pool().lock().unwrap_or_else(|e| e.into_inner());
+        for &number in std::slice::from_raw_parts(pages, n) {
+            let Some(slot) = live_slot(&p, number) else { continue };
+            p.live.remove(&slot);
+            p.free.push(slot);
+            p.in_use -= 1;
+            if let Some(fd) = p.fd {
+                // Reused slots start zeroed.
+                libc::fallocate(
+                    fd,
+                    libc::FALLOC_FL_PUNCH_HOLE | libc::FALLOC_FL_KEEP_SIZE,
+                    (slot * PHYSICAL_PAGE) as libc::off_t,
+                    PHYSICAL_PAGE as libc::off_t,
+                );
+            }
+        }
+        1
+    }
+
+    // Maps `n` consecutive pages at `address`, in place of what is there; null `pages` unmaps.
+    // Returns `address`, or null (unknown page, address outside a reservation).
+    Native fn XMemMapPhysicalPages(address: *mut c_void, n: usize, pages: *const usize) -> *mut c_void {
+        if map_physical(address, n, pages) {
+            address
+        } else {
+            nativ64::api_ms_win_core_errorhandling::set_last_error(87); // ERROR_INVALID_PARAMETER
+            std::ptr::null_mut()
+        }
+    }
+
+    // One page at each address; null `pages` or a page number 0 unmaps that address.
+    Native fn XMemMapPhysicalPagesScatter(addresses: *const *mut c_void, n: usize, pages: *const usize) -> i32 {
+        if addresses.is_null() {
+            return 0;
+        }
+        for i in 0..n {
+            let address = addresses.add(i).read();
+            let page = if pages.is_null() || pages.add(i).read() == 0 {
+                std::ptr::null()
+            } else {
+                pages.add(i)
+            };
+            if !map_physical(address, 1, page) {
+                return 0;
+            }
+        }
+        1
+    }
+
+    // shortcut: every field is filled whatever `which` asks for; use is not split by bandwidth
+    // class (GPU-optimal use reads 0).
+    Native fn XMemGetWorkingSetStatistics(_which: u32, out: *mut WorkingSet) -> i32 {
+        if out.is_null() {
+            return 0;
+        }
+        let resident = std::fs::read_to_string("/proc/self/statm")
+            .ok()
+            .and_then(|s| s.split_whitespace().nth(1)?.parse::<usize>().ok())
+            .unwrap_or(0)
+            * PAGE_SIZE;
+        out.write(WorkingSet {
+            title_limit: TITLE_MEMORY - TRANSFERRED.load(Ordering::Relaxed),
+            title_used: resident,
+            gpu_optimal_limit: GPU_OPTIMAL_MEMORY,
+            ..Default::default()
+        });
+        1
+    }
+
+    // Hands title memory (standard, in 2 MiB pages) to the system; kind 0 is the only transfer a
+    // retail console has (the others involve tools memory).
+    Native fn XMemTransferMemory(kind: u32, size: usize) -> i32 {
+        if size == 0 {
+            return 1;
+        }
+        let Some(size) = size.checked_next_multiple_of(2 * MIB) else {
+            return 0;
+        };
+        let standard = TITLE_MEMORY - GPU_OPTIMAL_MEMORY;
+        (kind == 0
+            && TRANSFERRED
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |t| {
+                    t.checked_add(size).filter(|&t| t <= standard)
+                })
+                .is_ok()) as i32
     }
 
     Native fn XMemVirtualAlloc(base: *mut c_void, size: usize, kind: u32, flags: u64, protect: u32) -> *mut c_void {
@@ -282,10 +405,7 @@ nativ64::win32! {
             return;
         }
         if attributes & ALLOC_32BIT != 0 {
-            if let Some(size) = reservations().lock().unwrap().remove(&(address as usize)) {
-                // SAFETY: the whole mapping `place` made.
-                unsafe { libc::munmap(address, size) };
-            }
+            let _ = nativ64::api_ms_win_core_memory::release(address as usize);
             return;
         }
         // SAFETY: the address came from `XMemAllocDefault`, which wrote the header.
@@ -412,6 +532,85 @@ mod tests {
             0
         );
         assert_eq!(huge, 0);
+    }
+
+    #[test]
+    fn placeholders_split_then_map_physical_pages() {
+        unsafe {
+            let base =
+                XMemVirtualAlloc(std::ptr::null_mut(), 4 * PHYSICAL_PAGE, MEM_RESERVE, 3, RW);
+            assert!(!base.is_null());
+            let b = base as usize;
+            // split into placeholders, then replace the first one as the title does
+            let kind = MEM_RESERVE | MEM_REPLACE_PLACEHOLDER | PAGES_2M | 0x40_0000;
+            assert_eq!(
+                nativ64::api_ms_win_core_memory::free(b, PHYSICAL_PAGE, 0x8002),
+                Ok(())
+            );
+            assert_eq!(XMemVirtualAlloc(base, PHYSICAL_PAGE, kind, 3, RW), base);
+            // a range that is not exactly one placeholder cannot be replaced
+            assert!(XMemVirtualAlloc(base, 2 * PHYSICAL_PAGE, kind, 3, RW).is_null());
+            let mut n = 2usize;
+            let mut pages = [0usize; 2];
+            assert_eq!(XMemAllocatePhysicalPages(0, &mut n, pages.as_mut_ptr()), 1);
+            assert!(pages.iter().all(|p| p % 16 == 0 && *p != 0));
+            assert_eq!(XMemMapPhysicalPages(base, 1, pages.as_ptr()), base);
+            let next = (b + PHYSICAL_PAGE) as *mut c_void;
+            assert_eq!(XMemMapPhysicalPages(next, 1, pages.as_ptr().add(1)), next);
+            // a run spanning two allocations is refused
+            assert!(XMemMapPhysicalPages(base, 2, pages.as_ptr()).is_null());
+            (b as *mut u8).write(5);
+            ((b + PHYSICAL_PAGE) as *mut u8).write(6);
+            // the same pages seen at a second address alias
+            let second = XMemVirtualAlloc(std::ptr::null_mut(), PHYSICAL_PAGE, MEM_RESERVE, 3, RW);
+            assert_eq!(
+                XMemMapPhysicalPages(second, 1, pages.as_ptr().add(1)),
+                second
+            );
+            assert_eq!((second as *const u8).read(), 6);
+            // errors: unknown page, address outside any reservation, unmapped address
+            assert!(XMemMapPhysicalPages(base, 1, [0x1230usize].as_ptr()).is_null());
+            assert!(
+                XMemMapPhysicalPages(0x7000_0000_0000 as *mut c_void, 1, pages.as_ptr()).is_null()
+            );
+            assert!(XMemMapPhysicalPages(null_mut_misaligned(), 1, pages.as_ptr()).is_null());
+            // scatter, with a 0 page unmapping
+            let at = [base, (b + PHYSICAL_PAGE) as *mut c_void];
+            assert_eq!(
+                XMemMapPhysicalPagesScatter(at.as_ptr(), 2, [pages[1], 0].as_ptr()),
+                1
+            );
+            assert_eq!((b as *const u8).read(), 6);
+            assert_eq!(
+                XMemMapPhysicalPagesScatter(std::ptr::null(), 1, pages.as_ptr()),
+                0
+            );
+            assert_eq!(XMemMapPhysicalPages(base, 1, std::ptr::null()), base);
+            // free: twice is harmless, null fails
+            assert_eq!(XMemFreePhysicalPages(2, pages.as_ptr()), 1);
+            assert_eq!(XMemFreePhysicalPages(2, pages.as_ptr()), 1);
+            assert_eq!(XMemFreePhysicalPages(1, std::ptr::null()), 0);
+            assert!(XMemMapPhysicalPages(base, 1, pages.as_ptr()).is_null());
+        }
+    }
+
+    fn null_mut_misaligned() -> *mut c_void {
+        0x1234 as *mut c_void
+    }
+
+    #[test]
+    fn working_set_and_transfer() {
+        unsafe {
+            assert_eq!(XMemGetWorkingSetStatistics(0, std::ptr::null_mut()), 0);
+            let mut w = WorkingSet::default();
+            assert_eq!(XMemGetWorkingSetStatistics(0, &mut w), 1);
+            assert!(w.title_limit > w.gpu_optimal_limit && w.title_used > 0);
+            assert_eq!(XMemTransferMemory(0, 0), 1);
+            assert_eq!(XMemTransferMemory(1, 4096), 0);
+            assert_eq!(XMemTransferMemory(0, usize::MAX), 0);
+            assert_eq!(XMemTransferMemory(0, 4096), 1);
+            assert_eq!(XMemTransferMemory(0, 16 << 30), 0);
+        }
     }
 
     #[test]
