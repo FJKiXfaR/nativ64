@@ -9,8 +9,10 @@
 //! `iswdigit`/`iswxdigit`, which are ASCII-only. Comparison functions return -1, 0 or 1.
 //!
 //! The secure (`_s`) functions return `errno_t` (`EINVAL`, `ERANGE`, `STRUNCATE`) and clear
-//! `dst[0]` where the UCRT does. TODO: they should also call the invalid parameter handler;
-//! that is a no-op for now. There is no CRT `errno` yet, so it is never set. The UCRT's debug
+//! `dst[0]` where the UCRT does. On `EINVAL`/`ERANGE` they set the CRT `errno` to the same
+//! value and call the invalid parameter handler (`api_ms_win_crt_runtime`); `STRUNCATE` touches
+//! neither. The case-insensitive comparisons that return `_NLSCMPERROR` do likewise
+//! (`EINVAL`). `strtok_s`/`wcstok_s` on bad arguments do not yet. The UCRT's debug
 //! `0xFE` fill of the rest of the destination is not reproduced.
 //!
 //! `_wcsdup` allocates with libc `malloc` (to be freed with the CRT `free`).
@@ -18,6 +20,7 @@
 //!
 //! Functions are registered under their API set and under `ucrtbase`, which forwards to them.
 
+use crate::api_ms_win_crt_runtime::invalid_parameter_err;
 use std::cell::Cell;
 use std::ffi::{c_char, c_int};
 
@@ -120,16 +123,16 @@ unsafe fn pbrk<T: Unit>(s: *const T, set: *const T) -> *mut T {
 
 unsafe fn copy_s<T: Unit>(dst: *mut T, size: usize, src: *const T) -> i32 {
     if dst.is_null() || size == 0 {
-        return EINVAL;
+        return invalid_parameter_err(EINVAL);
     }
     if src.is_null() {
         *dst = T::default();
-        return EINVAL;
+        return invalid_parameter_err(EINVAL);
     }
     let n = len(src);
     if n + 1 > size {
         *dst = T::default();
-        return ERANGE;
+        return invalid_parameter_err(ERANGE);
     }
     std::ptr::copy(src, dst, n + 1);
     0
@@ -137,21 +140,21 @@ unsafe fn copy_s<T: Unit>(dst: *mut T, size: usize, src: *const T) -> i32 {
 
 unsafe fn cat_s<T: Unit>(dst: *mut T, size: usize, src: *const T) -> i32 {
     if dst.is_null() || size == 0 {
-        return EINVAL;
+        return invalid_parameter_err(EINVAL);
     }
     if src.is_null() {
         *dst = T::default();
-        return EINVAL;
+        return invalid_parameter_err(EINVAL);
     }
     let d = nlen(dst, size);
     if d == size {
         *dst = T::default();
-        return EINVAL;
+        return invalid_parameter_err(EINVAL);
     }
     let n = len(src);
     if n + 1 > size - d {
         *dst = T::default();
-        return ERANGE;
+        return invalid_parameter_err(ERANGE);
     }
     std::ptr::copy(src, dst.add(d), n + 1);
     0
@@ -163,7 +166,7 @@ unsafe fn ncpy_s<T: Unit>(dst: *mut T, size: usize, src: *const T, count: usize)
         return 0;
     }
     if dst.is_null() || size == 0 {
-        return EINVAL;
+        return invalid_parameter_err(EINVAL);
     }
     if count == 0 {
         *dst = T::default();
@@ -171,7 +174,7 @@ unsafe fn ncpy_s<T: Unit>(dst: *mut T, size: usize, src: *const T, count: usize)
     }
     if src.is_null() {
         *dst = T::default();
-        return EINVAL;
+        return invalid_parameter_err(EINVAL);
     }
     if count == TRUNCATE {
         let n = len(src);
@@ -183,7 +186,7 @@ unsafe fn ncpy_s<T: Unit>(dst: *mut T, size: usize, src: *const T, count: usize)
     let n = nlen(src, count);
     if n + 1 > size {
         *dst = T::default();
-        return ERANGE;
+        return invalid_parameter_err(ERANGE);
     }
     std::ptr::copy(src, dst, n);
     *dst.add(n) = T::default();
@@ -192,19 +195,19 @@ unsafe fn ncpy_s<T: Unit>(dst: *mut T, size: usize, src: *const T, count: usize)
 
 unsafe fn ncat_s<T: Unit>(dst: *mut T, size: usize, src: *const T, count: usize) -> i32 {
     if dst.is_null() || size == 0 {
-        return EINVAL;
+        return invalid_parameter_err(EINVAL);
     }
     let d = nlen(dst, size);
     if d == size {
         *dst = T::default();
-        return EINVAL;
+        return invalid_parameter_err(EINVAL);
     }
     if count == 0 {
         return 0;
     }
     if src.is_null() {
         *dst = T::default();
-        return EINVAL;
+        return invalid_parameter_err(EINVAL);
     }
     let avail = size - d;
     let n = if count == TRUNCATE {
@@ -219,7 +222,7 @@ unsafe fn ncat_s<T: Unit>(dst: *mut T, size: usize, src: *const T, count: usize)
             return STRUNCATE;
         }
         *dst = T::default();
-        return ERANGE;
+        return invalid_parameter_err(ERANGE);
     }
     std::ptr::copy(src, dst.add(d), n);
     *dst.add(d + n) = T::default();
@@ -311,6 +314,7 @@ win32! {
         // Behaviour per Wine's dlls/ucrtbase/tests/string.c (run on Windows): a NULL operand or
         // a count above INT_MAX is a parameter error reported as `_NLSCMPERROR`.
         if a.is_null() || b.is_null() || n > i32::MAX as usize {
+            invalid_parameter_err(EINVAL);
             return NLSCMPERROR;
         }
         cmp(a as *const u8, b as *const u8, n, true)
@@ -815,6 +819,44 @@ mod tests {
             let e = _wcsdup(w("").as_ptr());
             assert_eq!(*e, 0);
             libc::free(e as *mut libc::c_void);
+        }
+    }
+
+    #[test]
+    fn errno_and_handler_on_errors() {
+        use crate::api_ms_win_crt_runtime::{errno, set_errno, test_support::*};
+        let _g = install_counting_handler();
+        unsafe {
+            set_errno(0xdead);
+            let mut d = [0u8; 2];
+            let src = c"abcd";
+            assert_eq!(
+                strcpy_s(d.as_mut_ptr() as *mut c_char, 2, src.as_ptr()),
+                ERANGE
+            );
+            assert_eq!(errno(), ERANGE);
+            assert_eq!(calls(), 1);
+            set_errno(0xdead);
+            assert_eq!(strcpy_s(std::ptr::null_mut(), 2, src.as_ptr()), EINVAL);
+            assert_eq!(errno(), EINVAL);
+            assert_eq!(calls(), 2);
+            set_errno(0xdead);
+            assert_eq!(_strnicmp(src.as_ptr(), std::ptr::null(), 2), NLSCMPERROR);
+            assert_eq!(errno(), EINVAL);
+            assert_eq!(calls(), 3);
+            // Success and truncation leave errno and the handler alone.
+            set_errno(0xdead);
+            let mut e = [0u8; 3];
+            assert_eq!(
+                strcpy_s(e.as_mut_ptr() as *mut c_char, 3, c"ab".as_ptr()),
+                0
+            );
+            assert_eq!(
+                strncpy_s(d.as_mut_ptr() as *mut c_char, 2, src.as_ptr(), TRUNCATE),
+                STRUNCATE
+            );
+            assert_eq!(errno(), 0xdead);
+            assert_eq!(calls(), 3);
         }
     }
 }

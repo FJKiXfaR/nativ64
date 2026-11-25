@@ -12,12 +12,15 @@
 //! (`0x1.8p1`), `inf`/`infinity` and `nan` like the UCRT.
 //!
 //! Locale: "C" only; in it `btowc`/`wcstombs*` map code units 0..=255 one to one and reject
-//! larger wide characters. Known gaps: the CRT `errno` does not exist yet, so `ERANGE`/`EILSEQ`
-//! are never stored (the `_s` functions return them); the invalid parameter handler is a no-op
-//! (TODO). `_itoa` with a bad radix writes an empty string.
+//! larger wide characters. `errno` (see `api_ms_win_crt_runtime`): `ERANGE` on `strto*` overflow
+//! (and `strtod`/`strtof` overflow or underflow to zero), `EILSEQ` on an unconvertible wide
+//! character, `EINVAL` plus the invalid parameter handler for a bad `strto*` base, a bad `_itoa`
+//! radix or a bad `_s` argument. `_itoa` with a bad radix writes an empty string. Known gap:
+//! `atof`/`wcstod`-style paths do not set `errno`, and a NULL string is not diagnosed.
 //!
 //! Functions are registered under their API set and under `ucrtbase`, which forwards to them.
 
+use crate::api_ms_win_crt_runtime::{invalid_parameter_err, set_errno};
 use crate::api_ms_win_crt_string::is_space_unit;
 use std::ffi::{c_char, c_int};
 
@@ -57,6 +60,7 @@ unsafe fn scan<T: Unit>(s: *const T, base: i32) -> Scan<T> {
         end: s,
     };
     if base == 1 || !(0..=36).contains(&base) {
+        invalid_parameter_err(EINVAL);
         return none;
     }
     let at = |p: *const T, i: usize| -> u32 { (*p.add(i)).into() };
@@ -117,11 +121,13 @@ unsafe fn strto_i<T: Unit>(s: *const T, end: *mut *mut T, base: i32, min: i64, m
     set_end(end, sc.end);
     if sc.neg {
         if sc.overflow || sc.mag > min.unsigned_abs() {
+            set_errno(ERANGE);
             min
         } else {
             (sc.mag as i64).wrapping_neg()
         }
     } else if sc.overflow || sc.mag > max as u64 {
+        set_errno(ERANGE);
         max
     } else {
         sc.mag as i64
@@ -133,6 +139,7 @@ unsafe fn strto_u<T: Unit>(s: *const T, end: *mut *mut T, base: i32, max: u64) -
     let sc = scan(s, base);
     set_end(end, sc.end);
     let mag = if sc.overflow || sc.mag > max {
+        set_errno(ERANGE);
         max
     } else {
         sc.mag
@@ -169,6 +176,18 @@ fn format_radix(value: i32, radix: i32) -> Option<Vec<u8>> {
     Some(out)
 }
 
+unsafe fn clear_host_errno() {
+    *libc::__errno_location() = 0;
+}
+
+/// After a glibc `strtod`/`strtof`: the UCRT sets `ERANGE` on overflow and on underflow to
+/// zero, but not for a denormal result (glibc also flags those).
+unsafe fn host_range_error(infinite: bool, zero: bool) {
+    if *libc::__errno_location() == ERANGE && (infinite || zero) {
+        set_errno(ERANGE);
+    }
+}
+
 unsafe fn wc_to_byte(c: u16) -> Option<u8> {
     u8::try_from(c).ok()
 }
@@ -178,6 +197,7 @@ win32! {
     // Returns `buf`; the caller guarantees the buffer is large enough (as in C).
     Native fn _itoa(value: i32, buf: *mut c_char, radix: i32) -> *mut c_char {
         if buf.is_null() {
+            invalid_parameter_err(EINVAL);
             return buf;
         }
         match format_radix(value, radix) {
@@ -185,21 +205,24 @@ win32! {
                 std::ptr::copy_nonoverlapping(d.as_ptr() as *const c_char, buf, d.len());
                 *buf.add(d.len()) = 0;
             }
-            None => *buf = 0,
+            None => {
+                *buf = 0;
+                invalid_parameter_err(EINVAL);
+            }
         }
         buf
     }
     Native fn _itow_s(value: i32, buf: *mut u16, size: usize, radix: i32) -> i32 {
         if buf.is_null() || size == 0 {
-            return EINVAL;
+            return invalid_parameter_err(EINVAL);
         }
         let Some(d) = format_radix(value, radix) else {
             *buf = 0;
-            return EINVAL;
+            return invalid_parameter_err(EINVAL);
         };
         if d.len() + 1 > size {
             *buf = 0;
-            return ERANGE;
+            return invalid_parameter_err(ERANGE);
         }
         for (i, b) in d.iter().enumerate() {
             *buf.add(i) = *b as u16;
@@ -229,8 +252,18 @@ win32! {
     Native fn btowc(c: c_int) -> u16 {
         if (0..=255).contains(&c) { c as u16 } else { WEOF }
     }
-    Native fn strtod(s: *const c_char, end: *mut *mut c_char) -> f64 { libc::strtod(s, end) }
-    Native fn strtof(s: *const c_char, end: *mut *mut c_char) -> f32 { libc::strtof(s, end) }
+    Native fn strtod(s: *const c_char, end: *mut *mut c_char) -> f64 {
+        clear_host_errno();
+        let r = libc::strtod(s, end);
+        host_range_error(r.is_infinite(), r == 0.0);
+        r
+    }
+    Native fn strtof(s: *const c_char, end: *mut *mut c_char) -> f32 {
+        clear_host_errno();
+        let r = libc::strtof(s, end);
+        host_range_error(r.is_infinite(), r == 0.0);
+        r
+    }
     Native fn strtol(s: *const c_char, end: *mut *mut c_char, base: i32) -> i32 {
         strto_i(s as *const u8, end as *mut *mut u8, base, i32::MIN as i64, i32::MAX as i64) as i32
     }
@@ -259,7 +292,10 @@ win32! {
                     }
                     return i;
                 }
-                let Some(b) = wc_to_byte(c) else { return usize::MAX };
+                let Some(b) = wc_to_byte(c) else {
+                    set_errno(EILSEQ);
+                    return usize::MAX;
+                };
                 if !dst.is_null() {
                     *dst.add(i) = b as c_char;
                 }
@@ -279,7 +315,7 @@ win32! {
             if !dst.is_null() && size > 0 {
                 *dst = 0;
             }
-            return EINVAL;
+            return invalid_parameter_err(EINVAL);
         }
         if dst.is_null() {
             // Size query: bytes needed including the NUL. As in the UCRT's "C" locale, the
@@ -298,6 +334,7 @@ win32! {
         while n < limit && *src.add(n) != 0 {
             let Some(b) = wc_to_byte(*src.add(n)) else {
                 *dst = 0;
+                set_errno(EILSEQ);
                 return EILSEQ;
             };
             *dst.add(n) = b as c_char;
@@ -307,7 +344,7 @@ win32! {
         let more = *src.add(n) != 0 && n < count;
         if more && count != TRUNCATE {
             *dst = 0;
-            return ERANGE;
+            return invalid_parameter_err(ERANGE);
         }
         *dst.add(n) = 0;
         if !ret.is_null() {
@@ -687,6 +724,73 @@ mod tests {
                 wcstombs_s(std::ptr::null_mut(), dp, 8, w("x").as_ptr(), TRUNCATE),
                 0
             );
+        }
+    }
+
+    #[test]
+    fn errno_on_conversion_errors() {
+        use crate::api_ms_win_crt_runtime::{errno, set_errno, test_support::*};
+        let _g = install_counting_handler();
+        unsafe {
+            set_errno(0xdead);
+            assert_eq!(
+                strtol(c"99999999999".as_ptr(), std::ptr::null_mut(), 10),
+                i32::MAX
+            );
+            assert_eq!(errno(), ERANGE);
+            set_errno(0xdead);
+            assert_eq!(strtoul(c"42".as_ptr(), std::ptr::null_mut(), 10), 42);
+            assert_eq!(errno(), 0xdead);
+            assert_eq!(
+                strtoull(c"18446744073709551616".as_ptr(), std::ptr::null_mut(), 10),
+                u64::MAX
+            );
+            assert_eq!(errno(), ERANGE);
+            // Bad base: EINVAL and handler.
+            set_errno(0);
+            assert_eq!(strtol(c"1".as_ptr(), std::ptr::null_mut(), 1), 0);
+            assert_eq!(errno(), EINVAL);
+            assert_eq!(calls(), 1);
+            // strtod: overflow and underflow to zero, but not a denormal result.
+            set_errno(0xdead);
+            assert_eq!(
+                strtod(c"1e999".as_ptr(), std::ptr::null_mut()),
+                f64::INFINITY
+            );
+            assert_eq!(errno(), ERANGE);
+            set_errno(0xdead);
+            assert_eq!(strtod(c"2.47e-324".as_ptr(), std::ptr::null_mut()), 0.0);
+            assert_eq!(errno(), ERANGE);
+            set_errno(0xdead);
+            assert_eq!(strtod(c"inf".as_ptr(), std::ptr::null_mut()), f64::INFINITY);
+            assert_eq!(strtod(c"2.48e-324".as_ptr(), std::ptr::null_mut()), 5e-324);
+            assert_eq!(errno(), 0xdead);
+            set_errno(0xdead);
+            assert_eq!(
+                strtof(c"1.e40".as_ptr(), std::ptr::null_mut()),
+                f32::INFINITY
+            );
+            assert_eq!(errno(), ERANGE);
+            // wcstombs_s: EILSEQ sets errno without calling the handler.
+            let mut d = [0 as c_char; 4];
+            let mut n = 0usize;
+            set_errno(0);
+            let src = [0x20ACu16, 0];
+            assert_eq!(
+                wcstombs_s(&mut n, d.as_mut_ptr(), 4, src.as_ptr(), 4),
+                EILSEQ
+            );
+            assert_eq!(errno(), EILSEQ);
+            set_errno(0);
+            assert_eq!(wcstombs(d.as_mut_ptr(), src.as_ptr(), 4), usize::MAX);
+            assert_eq!(errno(), EILSEQ);
+            assert_eq!(calls(), 1);
+            // _itow_s range error.
+            let mut w = [0u16; 2];
+            set_errno(0);
+            assert_eq!(_itow_s(12345, w.as_mut_ptr(), 2, 10), ERANGE);
+            assert_eq!(errno(), ERANGE);
+            assert_eq!(calls(), 2);
         }
     }
 }

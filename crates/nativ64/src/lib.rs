@@ -15,6 +15,7 @@ pub mod api_ms_win_core_synch;
 pub mod api_ms_win_core_sysinfo;
 pub mod api_ms_win_crt_convert;
 pub mod api_ms_win_crt_math;
+pub mod api_ms_win_crt_runtime;
 pub mod api_ms_win_crt_string;
 
 mod handles;
@@ -31,6 +32,7 @@ pub static TABLES: &[&[Export]] = &[
     api_ms_win_core_sysinfo::EXPORTS,
     api_ms_win_crt_convert::EXPORTS,
     api_ms_win_crt_math::EXPORTS,
+    api_ms_win_crt_runtime::EXPORTS,
     api_ms_win_crt_string::EXPORTS,
 ];
 

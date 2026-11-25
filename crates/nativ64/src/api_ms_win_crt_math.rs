@@ -4,12 +4,15 @@
 //! same as `double`; `int*` is `i32*`. Floats and doubles travel in XMM registers, which
 //! `extern "win64"` handles for us.
 //!
-//! Known gaps: UCRT sets `errno` (EDOM/ERANGE) and may call the handler registered with
-//! `__setusermatherr` on domain errors; there is no CRT `errno` here yet, so we only return the
-//! IEEE result (NaN, infinity) the UCRT also returns. The handler is stored but never called.
+//! `errno` (see `api_ms_win_crt_runtime`): `sqrt`, `log`, `log2`, `log10`, `acos`, `asin` and `fmod` (and
+//! their `f` variants) set `EDOM` on a domain error (finite or infinite operand, NaN
+//! result); `log*(0)` sets `ERANGE`; `exp`/`expf` set `ERANGE` on overflow. Unsure against
+//! Windows: the exact set of functions that report. Known gaps: the other functions (`pow`,
+//! `sinh`, `exp2`, ...) do not set `errno`, and the handler registered with `__setusermatherr` is stored but never called.
 //!
 //! Functions are registered under their API set and under `ucrtbase`, which forwards to them.
 
+use crate::api_ms_win_crt_runtime::set_errno;
 use std::ffi::c_int;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -30,6 +33,25 @@ static USER_MATH_HANDLER: AtomicUsize = AtomicUsize::new(0);
 /// Currently registered `__setusermatherr` handler (0 when none).
 pub fn user_math_handler() -> usize {
     USER_MATH_HANDLER.load(Ordering::Relaxed)
+}
+
+const EDOM: i32 = 33;
+const ERANGE: i32 = 34;
+
+/// Logarithm with the UCRT's errno: `EDOM` below zero, `ERANGE` at zero.
+fn log_errno(x: f64) {
+    if x < 0.0 {
+        set_errno(EDOM);
+    } else if x == 0.0 {
+        set_errno(ERANGE);
+    }
+}
+
+/// `EDOM` when a non-NaN operand produced a NaN.
+fn dom_errno(nan_result: bool, operands_nan: bool) {
+    if nan_result && !operands_nan {
+        set_errno(EDOM);
+    }
 }
 
 const FP_INFINITE: i16 = 1;
@@ -85,44 +107,60 @@ win32! {
         class_of((*x).classify())
     }
     Native fn _isnan(x: f64) -> c_int { x.is_nan() as c_int }
-    Native fn acos(x: f64) -> f64 { x.acos() }
-    Native fn asin(x: f64) -> f64 { x.asin() }
+    Native fn acos(x: f64) -> f64 { let r = x.acos(); dom_errno(r.is_nan(), x.is_nan()); r }
+    Native fn asin(x: f64) -> f64 { let r = x.asin(); dom_errno(r.is_nan(), x.is_nan()); r }
     Native fn atan(x: f64) -> f64 { x.atan() }
     Native fn ceil(x: f64) -> f64 { x.ceil() }
     Native fn cos(x: f64) -> f64 { x.cos() }
     Native fn cosh(x: f64) -> f64 { x.cosh() }
-    Native fn exp(x: f64) -> f64 { x.exp() }
+    Native fn exp(x: f64) -> f64 {
+        let r = x.exp();
+        if r.is_infinite() && x.is_finite() { set_errno(ERANGE); }
+        r
+    }
     Native fn exp2(x: f64) -> f64 { x.exp2() }
     Native fn expm1(x: f64) -> f64 { x.exp_m1() }
     Native fn floor(x: f64) -> f64 { x.floor() }
-    Native fn log(x: f64) -> f64 { x.ln() }
-    Native fn log10(x: f64) -> f64 { x.log10() }
+    Native fn log(x: f64) -> f64 { log_errno(x); x.ln() }
+    Native fn log10(x: f64) -> f64 { log_errno(x); x.log10() }
     Native fn log1p(x: f64) -> f64 { x.ln_1p() }
-    Native fn log2(x: f64) -> f64 { x.log2() }
+    Native fn log2(x: f64) -> f64 { log_errno(x); x.log2() }
     Native fn sin(x: f64) -> f64 { x.sin() }
     Native fn sinh(x: f64) -> f64 { x.sinh() }
-    Native fn sqrt(x: f64) -> f64 { x.sqrt() }
+    Native fn sqrt(x: f64) -> f64 { let r = x.sqrt(); dom_errno(r.is_nan(), x.is_nan()); r }
     Native fn tan(x: f64) -> f64 { x.tan() }
-    Native fn acosf(x: f32) -> f32 { x.acos() }
-    Native fn asinf(x: f32) -> f32 { x.asin() }
+    Native fn acosf(x: f32) -> f32 { let r = x.acos(); dom_errno(r.is_nan(), x.is_nan()); r }
+    Native fn asinf(x: f32) -> f32 { let r = x.asin(); dom_errno(r.is_nan(), x.is_nan()); r }
     Native fn atanf(x: f32) -> f32 { x.atan() }
     Native fn cbrtf(x: f32) -> f32 { x.cbrt() }
     Native fn ceilf(x: f32) -> f32 { x.ceil() }
     Native fn cosf(x: f32) -> f32 { x.cos() }
     Native fn erff(x: f32) -> f32 { libm::erff(x) }
     Native fn exp2f(x: f32) -> f32 { x.exp2() }
-    Native fn expf(x: f32) -> f32 { x.exp() }
-    Native fn log10f(x: f32) -> f32 { x.log10() }
-    Native fn log2f(x: f32) -> f32 { x.log2() }
-    Native fn logf(x: f32) -> f32 { x.ln() }
+    Native fn expf(x: f32) -> f32 {
+        let r = x.exp();
+        if r.is_infinite() && x.is_finite() { set_errno(ERANGE); }
+        r
+    }
+    Native fn log10f(x: f32) -> f32 { log_errno(x as f64); x.log10() }
+    Native fn log2f(x: f32) -> f32 { log_errno(x as f64); x.log2() }
+    Native fn logf(x: f32) -> f32 { log_errno(x as f64); x.ln() }
     Native fn sinf(x: f32) -> f32 { x.sin() }
     Native fn sinhf(x: f32) -> f32 { x.sinh() }
-    Native fn sqrtf(x: f32) -> f32 { x.sqrt() }
+    Native fn sqrtf(x: f32) -> f32 { let r = x.sqrt(); dom_errno(r.is_nan(), x.is_nan()); r }
     Native fn tanf(x: f32) -> f32 { x.tan() }
     Native fn atan2(y: f64, x: f64) -> f64 { y.atan2(x) }
     Native fn atan2f(y: f32, x: f32) -> f32 { y.atan2(x) }
-    Native fn fmod(x: f64, y: f64) -> f64 { x % y }
-    Native fn fmodf(x: f32, y: f32) -> f32 { x % y }
+    Native fn fmod(x: f64, y: f64) -> f64 {
+        let r = x % y;
+        dom_errno(r.is_nan(), x.is_nan() || y.is_nan());
+        r
+    }
+    Native fn fmodf(x: f32, y: f32) -> f32 {
+        let r = x % y;
+        dom_errno(r.is_nan(), x.is_nan() || y.is_nan());
+        r
+    }
     Native fn pow(x: f64, y: f64) -> f64 { x.powf(y) }
     Native fn powf(x: f32, y: f32) -> f32 { x.powf(y) }
     Native fn remainderf(x: f32, y: f32) -> f32 { libm::remainderf(x, y) }
@@ -310,5 +348,37 @@ mod tests {
         unsafe { __setusermatherr(0x1234) };
         assert_eq!(user_math_handler(), 0x1234);
         unsafe { __setusermatherr(0) };
+    }
+
+    #[test]
+    fn errno_on_domain_and_range_errors() {
+        use crate::api_ms_win_crt_runtime::{errno, set_errno};
+        unsafe {
+            set_errno(0xdead);
+            assert!(sqrt(-1.0).is_nan());
+            assert_eq!(errno(), EDOM);
+            set_errno(0xdead);
+            assert_eq!(log(0.0), f64::NEG_INFINITY);
+            assert_eq!(errno(), ERANGE);
+            set_errno(0xdead);
+            assert!(logf(-1.0).is_nan());
+            assert_eq!(errno(), EDOM);
+            set_errno(0xdead);
+            assert!(acos(2.0).is_nan());
+            assert_eq!(errno(), EDOM);
+            set_errno(0xdead);
+            assert!(fmod(1.0, 0.0).is_nan());
+            assert_eq!(errno(), EDOM);
+            set_errno(0xdead);
+            assert_eq!(exp(1000.0), f64::INFINITY);
+            assert_eq!(errno(), ERANGE);
+            // No error: errno is left alone, also for NaN in, NaN out and infinite operands.
+            set_errno(0xdead);
+            assert_eq!(sqrt(4.0), 2.0);
+            assert!(sqrt(f64::NAN).is_nan());
+            assert_eq!(exp(f64::INFINITY), f64::INFINITY);
+            assert_eq!(log(1.0), 0.0);
+            assert_eq!(errno(), 0xdead);
+        }
     }
 }
