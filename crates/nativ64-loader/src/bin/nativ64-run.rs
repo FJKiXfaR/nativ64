@@ -82,6 +82,9 @@ fn main() -> ExitCode {
             .map_or_else(|_| path.clone(), |p| p.to_string_lossy().into_owned());
         nativ64::process::set_main_module(img.base() as usize, &full);
         nativ64_loader::fault::install(img.base(), img.size());
+        for d in img.dlls() {
+            nativ64_loader::fault::register_dll(d.name(), d.base(), d.size());
+        }
         nativ64_loader::fault::set_timeout(timeout);
         return match img.run_main() {
             Ok(code) => ExitCode::from(code as u8),

@@ -102,3 +102,24 @@ pub fn registered_module_at(base: usize) -> Option<RegisteredModule> {
         .find(|m| m.base == base)
         .cloned()
 }
+
+static IMAGE_RANGES: Mutex<Vec<(usize, usize)>> = Mutex::new(Vec::new());
+
+/// Records that the image mapped at `base` spans `size` bytes (the main image and every guest
+/// DLL), so that an address can be mapped back to its image ([`image_base_of`]). A range
+/// registered again at the same base replaces the earlier one.
+pub fn register_image_range(base: usize, size: usize) {
+    let mut v = IMAGE_RANGES.lock().unwrap_or_else(|e| e.into_inner());
+    v.retain(|r| r.0 != base);
+    v.push((base, size));
+}
+
+/// Base of the registered image containing `addr`, if any.
+pub fn image_base_of(addr: usize) -> Option<usize> {
+    IMAGE_RANGES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .find(|&&(b, s)| addr >= b && addr - b < s)
+        .map(|r| r.0)
+}

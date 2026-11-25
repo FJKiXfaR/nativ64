@@ -315,7 +315,14 @@ impl Image {
         if !pending.is_empty() {
             let names: Vec<String> = pending
                 .iter()
-                .map(|&(_, i)| self.imports[i].display())
+                .map(|&(_, i)| {
+                    let who = if self.name.is_empty() {
+                        "exe"
+                    } else {
+                        &self.name
+                    };
+                    format!("{} (called from {who})", self.imports[i].display())
+                })
                 .collect();
             let stubs = StubPage::new(&names)?;
             for (k, &(slot, _)) in pending.iter().enumerate() {
@@ -384,7 +391,9 @@ impl Image {
 
     /// Registers the package DLLs with nativ64 (`GetModuleHandle`, `GetProcAddress`).
     fn register_dlls(&self) {
+        nativ64::process::register_image_range(self.base as usize, self.size);
         for d in &self.dlls {
+            nativ64::process::register_image_range(d.base as usize, d.size);
             let ex = d.exports.clone();
             nativ64::process::register_module(
                 &d.name,

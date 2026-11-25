@@ -1,9 +1,16 @@
 //! Crash and timeout reporting for guest code.
 
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering};
 
 static IMAGE_BASE: AtomicU64 = AtomicU64::new(0);
 static IMAGE_SIZE: AtomicUsize = AtomicUsize::new(0);
+const MAX_DLLS: usize = 32;
+const NAME_LEN: usize = 32;
+static DLL_COUNT: AtomicUsize = AtomicUsize::new(0);
+static DLL_BASE: [AtomicU64; MAX_DLLS] = [const { AtomicU64::new(0) }; MAX_DLLS];
+static DLL_END: [AtomicU64; MAX_DLLS] = [const { AtomicU64::new(0) }; MAX_DLLS];
+static DLL_NAME: [[AtomicU8; NAME_LEN]; MAX_DLLS] =
+    [const { [const { AtomicU8::new(0) }; NAME_LEN] }; MAX_DLLS];
 const ALT_STACK: usize = 64 * 1024;
 
 struct Buf {
@@ -51,6 +58,21 @@ extern "C" fn on_fault(sig: i32, info: *mut libc::siginfo_t, uc: *mut libc::c_vo
     if base != 0 && rip >= base && rip < base + size {
         say(format_args!(" (image+{:#x})", rip - base));
     }
+    for i in 0..DLL_COUNT.load(Ordering::Acquire).min(MAX_DLLS) {
+        let b = DLL_BASE[i].load(Ordering::Relaxed);
+        if rip >= b && rip < DLL_END[i].load(Ordering::Relaxed) {
+            let mut n = [0u8; NAME_LEN];
+            for (d, s) in n.iter_mut().zip(&DLL_NAME[i]) {
+                *d = s.load(Ordering::Relaxed);
+            }
+            let len = n.iter().position(|&c| c == 0).unwrap_or(NAME_LEN);
+            say(format_args!(
+                " ({}+{:#x})",
+                String::from_utf8_lossy(&n[..len]),
+                rip - b
+            ));
+        }
+    }
     say(format_args!("\n"));
     unsafe { libc::_exit(139) }
 }
@@ -88,6 +110,21 @@ pub fn install(base: u64, size: usize) {
             )
         };
     }
+}
+
+/// Registers a package DLL so that a fault inside it prints `name+0xOFF` (at most 32 DLLs; names
+/// are cut to 31 bytes). Call before the guest runs.
+pub fn register_dll(name: &str, base: u64, size: usize) {
+    let i = DLL_COUNT.load(Ordering::Relaxed);
+    if i >= MAX_DLLS {
+        return;
+    }
+    for (k, c) in name.bytes().take(NAME_LEN - 1).enumerate() {
+        DLL_NAME[i][k].store(c, Ordering::Relaxed);
+    }
+    DLL_BASE[i].store(base, Ordering::Relaxed);
+    DLL_END[i].store(base + size as u64, Ordering::Relaxed);
+    DLL_COUNT.store(i + 1, Ordering::Release);
 }
 
 /// Gives the calling thread an alternate signal stack (leaked: it lives as long as the thread).

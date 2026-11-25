@@ -19,9 +19,11 @@ pub mod api_ms_win_core_processthreads;
 pub mod api_ms_win_core_profile;
 pub mod api_ms_win_core_psm_appnotify;
 pub mod api_ms_win_core_registry;
+pub mod api_ms_win_core_rtlsupport;
 pub mod api_ms_win_core_string;
 pub mod api_ms_win_core_synch;
 pub mod api_ms_win_core_sysinfo;
+pub mod api_ms_win_core_util;
 pub mod api_ms_win_crt_convert;
 pub mod api_ms_win_crt_environment;
 pub mod api_ms_win_crt_heap;
@@ -59,6 +61,7 @@ pub static TABLES: &[&[Export]] = &[
     api_ms_win_core_libraryloader::EXPORTS,
     api_ms_win_core_localization::EXPORTS,
     api_ms_win_core_registry::EXPORTS,
+    api_ms_win_core_rtlsupport::EXPORTS,
     api_ms_win_core_string::EXPORTS,
     api_ms_win_core_processenvironment::EXPORTS,
     api_ms_win_core_processthreads::EXPORTS,
@@ -67,6 +70,7 @@ pub static TABLES: &[&[Export]] = &[
     api_ms_win_core_psm_appnotify::EXPORTS,
     api_ms_win_core_synch::EXPORTS,
     api_ms_win_core_sysinfo::EXPORTS,
+    api_ms_win_core_util::EXPORTS,
     api_ms_win_crt_convert::EXPORTS,
     api_ms_win_crt_environment::EXPORTS,
     api_ms_win_crt_heap::EXPORTS,

@@ -284,6 +284,11 @@ win32! {
         }
         known as i32
     }
+    // Thread attach/detach notifications are never sent to guest DLLs, so there is nothing to
+    // disable: success for a known module, ERROR_INVALID_HANDLE otherwise.
+    Native fn DisableThreadLibraryCalls(h: usize) -> i32 {
+        FreeLibrary(h)
+    }
 }
 
 #[cfg(test)]
@@ -293,6 +298,17 @@ mod tests {
 
     fn w(s: &str) -> Vec<u16> {
         s.encode_utf16().chain([0]).collect()
+    }
+
+    #[test]
+    fn disable_thread_library_calls() {
+        unsafe {
+            let h = LoadLibraryW(w("kernel32.dll").as_ptr());
+            assert_ne!(h, 0);
+            assert_eq!(DisableThreadLibraryCalls(h), 1);
+            assert_eq!(DisableThreadLibraryCalls(0x1234), 0);
+            assert_eq!(GetLastError(), ERROR_INVALID_HANDLE);
+        }
     }
 
     #[test]
