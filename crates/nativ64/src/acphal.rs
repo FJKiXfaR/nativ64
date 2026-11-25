@@ -431,6 +431,12 @@ mod tests {
     use crate::lookup;
     use std::ptr::{null, null_mut};
 
+    /// The APU heap is process-global: tests that touch it run one at a time.
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: Mutex<()> = Mutex::new(());
+        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     unsafe fn alloc(size: u32, align: u32) -> (*mut c_void, u32) {
         let (mut va, mut apu) = (null_mut(), 0);
         assert_eq!(ApuAlloc(&mut va, &mut apu, size, align, 0), S_OK);
@@ -439,6 +445,7 @@ mod tests {
 
     #[test]
     fn exports_resolve_by_file_name() {
+        let _guard = serial();
         for n in [
             "AcpHalAllocateShapeContexts",
             "AcpHalCreate",
@@ -456,6 +463,7 @@ mod tests {
 
     #[test]
     fn create_heap_needs_a_size_and_repeats() {
+        let _guard = serial();
         unsafe {
             assert_eq!(ApuCreateHeap(0, 0x100), E_INVALIDARG);
             assert_eq!(ApuCreateHeap(0x1000, 0), S_OK);
@@ -465,6 +473,7 @@ mod tests {
 
     #[test]
     fn alloc_aligns_zeroes_and_maps_both_ways() {
+        let _guard = serial();
         unsafe {
             let (va, apu) = alloc(0x5780, 0x800);
             assert_eq!(apu % 0x800, 0);
@@ -491,6 +500,7 @@ mod tests {
 
     #[test]
     fn alloc_rejects_bad_arguments() {
+        let _guard = serial();
         unsafe {
             let (mut va, mut apu): (*mut c_void, u32) = (null_mut(), 0);
             assert_eq!(ApuAlloc(null_mut(), &mut apu, 16, 16, 0), E_INVALIDARG);
@@ -510,6 +520,7 @@ mod tests {
 
     #[test]
     fn blocks_do_not_overlap_and_addresses_are_reused() {
+        let _guard = serial();
         unsafe {
             let (a, apu_a) = alloc(0x1000, 0x1000);
             let (b, apu_b) = alloc(0x1000, 0x1000);
@@ -524,6 +535,7 @@ mod tests {
 
     #[test]
     fn title_memory_maps_to_a_device_address_and_back() {
+        let _guard = serial();
         unsafe {
             let mut mine = vec![0u8; 0x3000];
             let va = mine.as_mut_ptr().add(0x123).cast::<c_void>();
@@ -554,6 +566,7 @@ mod tests {
 
     #[test]
     fn shape_contexts_are_allocated_replaced_and_released() {
+        let _guard = serial();
         unsafe {
             assert_eq!(AcpHalAllocateShapeContexts(null_mut()), E_INVALIDARG);
             let mut req = [0u8; 96];
@@ -601,6 +614,7 @@ mod tests {
 
     #[test]
     fn hal_acknowledges_commands_and_ticks_frames() {
+        let _guard = serial();
         unsafe {
             assert_eq!(AcpHalCreate(null_mut()), E_INVALIDARG);
             let mut h = null_mut();
@@ -634,6 +648,7 @@ mod tests {
 
     #[test]
     fn channel_frames_follow_the_clock() {
+        let _guard = serial();
         let t0 = Instant::now();
         let mut ch = Channel::default();
         ch.connect(t0, 4);
@@ -652,6 +667,7 @@ mod tests {
 
     #[test]
     fn channel_queue_is_bounded_and_counts_drops() {
+        let _guard = serial();
         let t0 = Instant::now();
         let mut ch = Channel::default();
         ch.connect(t0, 2);
@@ -671,6 +687,7 @@ mod tests {
 
     #[test]
     fn notification_word_is_set_when_it_is_a_device_address() {
+        let _guard = serial();
         unsafe {
             let (va, apu) = alloc(0x100, 0x100);
             let mut h = null_mut();
