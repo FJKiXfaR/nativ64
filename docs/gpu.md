@@ -59,7 +59,14 @@ The executable imports from `d3d12_xs` only `D3D12XboxCreateDevice` and
   placed views from a GPU address, page pools, frame pacing (`SetFrameIntervalX`,
   `ScheduleFrameEventX`, `WaitFrameEventX`, statistics).
 - **Slot layouts depend on the title's SDK.** VIctory carries two queue and two list layouts
-  (one shifted by 2 slots). We only trust slot numbers that our own run confirms.
+  (one shifted by 2 slots). We only trust slot numbers that our own run confirms. Confirmed
+  on our title: the device follows VIctory's layout (slot 48 = `CreateCommandQueueX`); the
+  command list uses the "newer" layout (every slot from 59 on shifted by +2; syncs at +0x418
+  and +0x420); the queue layout is not settled yet.
+- **Methods returning a struct take the hidden return pointer first** (`rcx`), `this` second
+  (`rdx`), unlike MSVC on PC: seen with gdb on `GetCustomHeapProperties`. Check every other
+  struct-returning method (`GetCPUDescriptorHandleForHeapStart`, `GetDesc`...) at a call site
+  before writing it.
 - **`D3D12XboxCreateDevice(adapter, params, iid, out)`**: `params[0]` is the interface version
   (0x00020004 for the title VIctory follows), the rest (ring sizes, opt-outs) can be ignored at
   first; `iid` is one of ID3D12Device, Device1..Device8, Device11.

@@ -97,7 +97,29 @@ pub struct DeviceData {
 const _: () = assert!(size_of::<DeviceData>() == 0x50);
 const _: () = assert!(std::mem::offset_of!(DeviceData, out_of_line) == 0x10);
 
-static DEVICE_TABLE: SlotTable<160> = SlotTable::new(Iface::Device).with_iunknown::<DeviceData>();
+static DEVICE_TABLE: SlotTable<160> = SlotTable::new(Iface::Device)
+    .with_iunknown::<DeviceData>()
+    .with(36, crate::d3d12::fence::create_fence as *const ())
+    .with(48, crate::d3d12::queue::create_command_queue_x as *const ())
+    .with(
+        9,
+        crate::d3d12::allocator::create_command_allocator as *const (),
+    )
+    .with(73, crate::d3d12::list::create_command_list_x as *const ())
+    .with(12, crate::d3d12::list::create_command_list as *const ())
+    .with(78, crate::d3d12::frame::set_frame_interval as *const ())
+    .with(79, crate::d3d12::frame::schedule_frame_event as *const ())
+    .with(80, crate::d3d12::frame::wait_frame_event as *const ())
+    .with(81, crate::d3d12::frame::get_frame_statistics as *const ())
+    .with(
+        15,
+        crate::d3d12::info::get_descriptor_increment_size as *const (),
+    )
+    .with(8, crate::d3d12::queue::create_command_queue as *const ())
+    .with(
+        26,
+        crate::d3d12::info::get_custom_heap_properties as *const (),
+    );
 
 /// The process's device, as an address (the pointer is not `Send`).
 static DEVICE: Mutex<usize> = Mutex::new(0);
@@ -115,6 +137,11 @@ fn new_device() -> *mut c_void {
             _rest: [0; 0x3f],
         },
     )
+}
+
+/// The process's device, NULL before creation. No reference is added.
+pub fn current() -> *mut c_void {
+    *DEVICE.lock().unwrap_or_else(|e| e.into_inner()) as *mut c_void
 }
 
 /// `D3D12XboxCreateDevice(adapter, params, iid, out)`.
