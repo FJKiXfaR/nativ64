@@ -46,6 +46,8 @@ pub struct Pe<'a> {
     pub size_of_image: u32,
     pub size_of_headers: u32,
     pub entry_rva: u32,
+    /// `SizeOfStackReserve`.
+    pub stack_reserve: u64,
     pub sections: Vec<Section>,
     pub dirs: [DataDir; 16],
 }
@@ -105,6 +107,7 @@ impl<'a> Pe<'a> {
         let image_base = rd_u64(data, opt + 24, "optional header")?;
         let size_of_image = rd_u32(data, opt + 56, "optional header")?;
         let size_of_headers = rd_u32(data, opt + 60, "optional header")?;
+        let stack_reserve = rd_u64(data, opt + 72, "optional header")?;
         let ndirs = (rd_u32(data, opt + 108, "optional header")? as usize).min(16);
         if (112 + ndirs * 8) > opt_size {
             return Err(LoadError::BadHeader(
@@ -154,6 +157,7 @@ impl<'a> Pe<'a> {
             size_of_image,
             size_of_headers,
             entry_rva,
+            stack_reserve,
             sections,
             dirs,
         })

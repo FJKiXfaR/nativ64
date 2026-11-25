@@ -123,3 +123,108 @@ pub fn image_base_of(addr: usize) -> Option<usize> {
         .find(|&&(b, s)| addr >= b && addr - b < s)
         .map(|r| r.0)
 }
+
+/// Hooks the base installs so that threads made by `CreateThread` / `_beginthreadex` get what
+/// guest code needs on any thread (a TEB, static TLS, thread attach notifications).
+#[derive(Clone, Copy)]
+pub struct ThreadHooks {
+    /// Runs on the new thread before the start routine; returns an opaque guard.
+    pub attach: fn() -> *mut std::ffi::c_void,
+    /// Runs on the same thread after the start routine returned or the thread ended itself
+    /// (`_endthreadex`), with the guard `attach` returned.
+    pub detach: fn(*mut std::ffi::c_void),
+}
+
+static THREAD_HOOKS: Mutex<Option<ThreadHooks>> = Mutex::new(None);
+
+/// Installs the thread hooks (once, by the base, before guest threads are created). None set
+/// means threads run the start routine as is. A later call replaces the earlier one.
+pub fn set_thread_hooks(attach: fn() -> *mut std::ffi::c_void, detach: fn(*mut std::ffi::c_void)) {
+    *THREAD_HOOKS.lock().unwrap_or_else(|e| e.into_inner()) = Some(ThreadHooks { attach, detach });
+}
+
+/// Removes the thread hooks (tests).
+pub fn clear_thread_hooks() {
+    *THREAD_HOOKS.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+/// The installed thread hooks, if any.
+pub fn thread_hooks() -> Option<ThreadHooks> {
+    *THREAD_HOOKS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Smallest stack a guest thread gets.
+pub const MIN_THREAD_STACK: usize = 1 << 20;
+/// `CreateThread` flag: the stack size is the reserve, not the initial commit.
+pub const STACK_SIZE_PARAM_IS_A_RESERVATION: u32 = 0x10000;
+
+static DEFAULT_STACK_RESERVE: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// Registers the main image's `SizeOfStackReserve`, the default stack of new threads.
+pub fn set_default_stack_reserve(size: usize) {
+    DEFAULT_STACK_RESERVE.store(size, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The stack reserve a new thread gets when `CreateThread` is given `stack` and `flags`: the
+/// requested size when it is a reservation, otherwise (initial commit) the larger of the request
+/// and the exe's default; never below [`MIN_THREAD_STACK`] and capped at 1 GiB.
+pub fn thread_stack_size(stack: usize, flags: u32) -> usize {
+    let default = DEFAULT_STACK_RESERVE.load(std::sync::atomic::Ordering::Relaxed);
+    let size = if stack != 0 && flags & STACK_SIZE_PARAM_IS_A_RESERVATION != 0 {
+        stack
+    } else {
+        stack.max(default)
+    };
+    size.clamp(MIN_THREAD_STACK, 1 << 30)
+}
+
+static NO_THREAD_CALLS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+
+/// Records that the module at `base` called `DisableThreadLibraryCalls`.
+pub fn disable_thread_calls(base: usize) {
+    let mut v = NO_THREAD_CALLS.lock().unwrap_or_else(|e| e.into_inner());
+    if !v.contains(&base) {
+        v.push(base);
+    }
+}
+
+/// Whether the module at `base` asked not to get `DLL_THREAD_ATTACH/DETACH` notifications.
+pub fn thread_calls_disabled(base: usize) -> bool {
+    NO_THREAD_CALLS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains(&base)
+}
+
+#[cfg(test)]
+mod thread_tests {
+    use super::*;
+
+    #[test]
+    fn stack_size_rules() {
+        set_default_stack_reserve(4 << 20);
+        assert_eq!(thread_stack_size(0, 0), 4 << 20);
+        assert_eq!(thread_stack_size(64 << 10, 0), 4 << 20);
+        assert_eq!(thread_stack_size(8 << 20, 0), 8 << 20);
+        assert_eq!(
+            thread_stack_size(2 << 20, STACK_SIZE_PARAM_IS_A_RESERVATION),
+            2 << 20
+        );
+        assert_eq!(
+            thread_stack_size(4096, STACK_SIZE_PARAM_IS_A_RESERVATION),
+            MIN_THREAD_STACK
+        );
+        assert_eq!(thread_stack_size(usize::MAX, 0), 1 << 30);
+        set_default_stack_reserve(0);
+        assert_eq!(thread_stack_size(0, 0), MIN_THREAD_STACK);
+    }
+
+    #[test]
+    fn disable_thread_calls_is_recorded() {
+        assert!(!thread_calls_disabled(0xdead_0000));
+        disable_thread_calls(0xdead_0000);
+        disable_thread_calls(0xdead_0000);
+        assert!(thread_calls_disabled(0xdead_0000));
+    }
+}

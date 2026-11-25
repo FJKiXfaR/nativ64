@@ -9,6 +9,7 @@ mod image;
 mod pe;
 mod stubs;
 pub mod teb;
+mod threads;
 mod tls;
 
 pub use error::LoadError;

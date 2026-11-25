@@ -45,6 +45,8 @@ pub struct Image {
     size: usize,
     pub preferred_base: u64,
     pub entry_rva: u32,
+    /// `SizeOfStackReserve` of the PE header.
+    pub stack_reserve: u64,
     pub section_count: usize,
     pub imports: Vec<ImportEntry>,
     /// Module name (lowercase file name) of a DLL; empty for the main image.
@@ -84,6 +86,7 @@ impl Image {
             size,
             preferred_base: pe.image_base,
             entry_rva: pe.entry_rva,
+            stack_reserve: pe.stack_reserve,
             section_count: pe.sections.len(),
             imports: Vec::new(),
             name: name.unwrap_or_default(),
@@ -433,6 +436,24 @@ impl Image {
             self.dlls.iter().filter_map(|d| d.tls.clone()).collect();
         let tls = self.tls.clone();
         images.extend(tls.clone());
+        nativ64::process::set_default_stack_reserve(self.stack_reserve as usize);
+        crate::threads::install(crate::threads::ThreadImages {
+            tls_images: images.clone(),
+            modules: self
+                .dlls
+                .iter()
+                .map(|d| crate::threads::Module {
+                    base: d.base(),
+                    dll_main: (d.entry_rva != 0).then(|| d.entry_point()),
+                    tls: d.tls.as_ref().map(|t| t.1.clone()),
+                })
+                .chain([crate::threads::Module {
+                    base,
+                    dll_main: None,
+                    tls: tls.as_ref().map(|t| t.1.clone()),
+                }])
+                .collect(),
+        });
         let t = std::thread::Builder::new()
             .name("nativ64-main".into())
             .stack_size(64 << 20)
@@ -529,7 +550,7 @@ fn map_anywhere_or_at(want: u64, size: usize) -> Result<*mut u8, LoadError> {
 }
 
 /// (low, high) bounds of the calling thread's stack.
-fn current_stack() -> Result<(usize, usize), LoadError> {
+pub(crate) fn current_stack() -> Result<(usize, usize), LoadError> {
     unsafe {
         let mut attr: libc::pthread_attr_t = std::mem::zeroed();
         let r = libc::pthread_getattr_np(libc::pthread_self(), &mut attr);

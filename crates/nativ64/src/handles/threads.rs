@@ -28,7 +28,6 @@ pub const THREAD_PRIORITY_ERROR_RETURN: i32 = i32::MAX;
 const SUSPEND_ERROR: u32 = u32::MAX;
 const PRIORITY_IDLE: i32 = -15;
 const PRIORITY_TIME_CRITICAL: i32 = 15;
-const MIN_STACK: usize = 64 * 1024;
 
 pub type ThreadStart = unsafe extern "win64" fn(*mut c_void) -> u32;
 
@@ -244,9 +243,15 @@ extern "C" fn trampoline(arg: *mut c_void) -> *mut c_void {
         }
         s.started = true;
     }
+    let hooks = crate::process::thread_hooks();
+    let guard = hooks.map_or(std::ptr::null_mut(), |h| (h.attach)());
     let slot = RESUME_SP.with(|c| c.as_ptr());
     let code = unsafe { nativ64_run_start(start, param as *mut c_void, slot) };
     RESUME_SP.with(|c| c.set(0));
+    // Also reached after `_endthreadex`, whose jump lands back here.
+    if let Some(h) = hooks {
+        (h.detach)(guard);
+    }
     abandon_owned();
     finish(&obj, code);
     std::ptr::null_mut()
@@ -277,9 +282,7 @@ pub fn create_thread(
         let mut attr: libc::pthread_attr_t = std::mem::zeroed();
         libc::pthread_attr_init(&mut attr);
         libc::pthread_attr_setdetachstate(&mut attr, libc::PTHREAD_CREATE_DETACHED);
-        if stack != 0 {
-            libc::pthread_attr_setstacksize(&mut attr, stack.max(MIN_STACK));
-        }
+        libc::pthread_attr_setstacksize(&mut attr, crate::process::thread_stack_size(stack, flags));
         let mut th: libc::pthread_t = 0;
         let r = libc::pthread_create(&mut th, &attr, trampoline, boot as *mut c_void);
         libc::pthread_attr_destroy(&mut attr);

@@ -19,7 +19,10 @@ dependency yet.
 - `xmem`: `XMemVirtualAlloc` (placement by XMem flags: 32-bit below 4 GiB, else 4 GiB up to
   2^40..2^46; 2 MiB alignment; reserve then commit), `XMemAllocDefault`, `XMemFreeDefault`,
   `XMemAlloc`, `XMemFree` (shortcut: the title's allocation hooks are not consulted),
-  `XMemIsToolsMemAvailable`.
+  `XMemIsToolsMemAvailable`, `XMemAllocatePhysicalPages` (`(attributes, SIZE_T *count, ULONG_PTR
+  *pages) -> BOOL`, 64 KiB pages: page numbers are slots of a sparse memfd pool, all or none,
+  `count` reset to 0 on failure; mapping them into an address is not done yet). Model in the
+  module header.
 - `xcrdapi`: DirectStorage (`DStorageGetFactory`; factory, file, queue, status array as COM
   objects). Uncompressed memory/file to memory requests, run synchronously at `Submit`; errors
   in the queue's error record and event. TODO: zlib/BCPack, page and GPU destinations, fence

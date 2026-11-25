@@ -49,6 +49,19 @@ executable without any compatibility layer, and runs its entry point.
    each DLL in dependency order its TLS callbacks and `DllMain(base, DLL_PROCESS_ATTACH, 0)`; a
    FALSE return is `LoadError::DllInitFailed`. `--trace-imports` also covers the DLLs' imports.
 
+8. Guest threads (`threads.rs`): `run_main` registers thread hooks with nativ64
+   (`nativ64::process::set_thread_hooks`) and the exe's `SizeOfStackReserve`. A thread made by
+   `CreateThread` / `_beginthreadex` runs `attach` before its start routine: signal stack, TEB
+   (`install_for_current_thread` with the real stack bounds), a `ThreadTls` for every image, then
+   for each image in load order (DLLs, then the exe) its TLS callbacks and, for a DLL,
+   `DllMain(base, DLL_THREAD_ATTACH, 0)` (skipped when the DLL called `DisableThreadLibraryCalls`,
+   recorded in `nativ64::process`; TLS callbacks still run). After the routine returns, or the
+   thread ended with `_endthreadex` (it jumps back to the same spot), `detach` runs
+   `DLL_THREAD_DETACH` in reverse order, then frees the TLS blocks and the TEB. Without hooks
+   (nativ64 alone) threads run as before. Stack size (`process::thread_stack_size`): the
+   `stack` argument when `STACK_SIZE_PARAM_IS_A_RESERVATION` is set, otherwise the larger of it
+   and the exe's `SizeOfStackReserve` (so 0 gives the default); at least 1 MiB, at most 1 GiB.
+
 `nativ64-run <exe>` maps, binds and runs the image; the entry's return value is the exit code.
 `--timeout SECONDS` (default 20, 0 = none) prints `nativ64: timeout` and exits 124. A
 SIGSEGV/SIGILL/SIGBUS/SIGFPE/SIGTRAP (an `int3`) in guest code (handled on a sigaltstack, see `fault.rs`) prints the
@@ -70,8 +83,8 @@ resolve through `nativ64::lookup_ordinal` (only `ws2_32` has a table).
 - `LoadLibrary*` of a package DLL that was not an import: only the DLLs mapped at start are
   found (run-time loading would need `DllMain`, TLS slots on every live thread and a loader
   hook).
-- Package DLLs: `DLL_THREAD_ATTACH/DETACH`, `DLL_PROCESS_DETACH`, `FreeLibrary` reference
+- Package DLLs: `DLL_PROCESS_DETACH`, `FreeLibrary` reference
   counts, forwarder cycles between DLLs (the module still loading binds to nativ64), the
   `image+0xOFF` fault report for DLL addresses.
-- Threads created by nativ64 (`CreateThread`) do not get a TEB or TLS yet: they must call
-  `teb::install_for_current_thread` and allocate a `ThreadTls` on the new thread.
+- `ExitThread` is not implemented (only `_endthreadex`); each guest thread leaks its 64 KiB
+  signal stack.

@@ -136,8 +136,16 @@ impl Drop for ThreadTls {
 /// # Safety
 /// The callbacks are guest code: the TEB must be installed on this thread.
 pub unsafe fn run_callbacks(info: &TlsInfo, image_base: u64) {
+    run_callbacks_reason(info, image_base, DLL_PROCESS_ATTACH);
+}
+
+/// Calls every TLS callback with `reason` (`DLL_THREAD_ATTACH` 2, `DLL_THREAD_DETACH` 3).
+///
+/// # Safety
+/// Same as [`run_callbacks`].
+pub unsafe fn run_callbacks_reason(info: &TlsInfo, image_base: u64, reason: u32) {
     for &cb in &info.callbacks {
         let f: extern "win64" fn(u64, u32, usize) = std::mem::transmute(cb as usize);
-        f(image_base, DLL_PROCESS_ATTACH, 0);
+        f(image_base, reason, 0);
     }
 }

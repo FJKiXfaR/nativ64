@@ -284,10 +284,14 @@ win32! {
         }
         known as i32
     }
-    // Thread attach/detach notifications are never sent to guest DLLs, so there is nothing to
-    // disable: success for a known module, ERROR_INVALID_HANDLE otherwise.
+    // Records that the module wants no DLL_THREAD_ATTACH/DETACH call (the base reads it);
+    // ERROR_INVALID_HANDLE for an unknown module.
     Native fn DisableThreadLibraryCalls(h: usize) -> i32 {
-        FreeLibrary(h)
+        let known = FreeLibrary(h);
+        if known != 0 {
+            crate::process::disable_thread_calls(h);
+        }
+        known
     }
 }
 

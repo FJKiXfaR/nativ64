@@ -1,5 +1,12 @@
 //! `xmem.dll`: the console's memory manager. Graphics memory is ordinary host memory here (GPU
 //! addresses are CPU addresses), so XMem flags only steer where an allocation lands.
+//!
+//! Physical pages (`XMemAllocatePhysicalPages`, as the title calls it: `(attributes, SIZE_T
+//! *count, ULONG_PTR *pages) -> BOOL`, `count` in and out, 64 KiB pages) are slots of one
+//! `memfd` pool: the page "frame number" handed out is the slot index in the file, which later
+//! mapping calls can `mmap` over any address. The file is sparse and grows on demand; freed
+//! slots are reused. At most `MAX_PHYSICAL_PAGES` pages are outstanding. The attributes are
+//! recorded by no one: all pages are the same ordinary host memory.
 
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -159,8 +166,84 @@ fn virtual_alloc(
     place(lo, hi, size, align, prot)
 }
 
+/// Size of a physical page of the console's allocator.
+const PHYSICAL_PAGE: usize = 64 << 10;
+/// Most pages outstanding at once (16 GiB of address space in the pool file, sparse).
+const MAX_PHYSICAL_PAGES: usize = 1 << 18;
+
+#[derive(Default)]
+struct PhysicalPool {
+    /// The memfd, created on first use.
+    fd: Option<libc::c_int>,
+    /// Pages the file spans (slots ever handed out).
+    spanned: usize,
+    free: Vec<usize>,
+    in_use: usize,
+}
+
+fn pool() -> &'static Mutex<PhysicalPool> {
+    static P: OnceLock<Mutex<PhysicalPool>> = OnceLock::new();
+    P.get_or_init(Default::default)
+}
+
+/// Takes `n` page frame numbers from the pool (all or none); `None` when there is no room or the
+/// file cannot grow.
+fn take_physical_pages(n: usize) -> Option<Vec<usize>> {
+    let mut p = pool().lock().unwrap_or_else(|e| e.into_inner());
+    if n == 0 || n > MAX_PHYSICAL_PAGES - p.in_use {
+        return None;
+    }
+    if p.fd.is_none() {
+        // SAFETY: plain syscall with a NUL-terminated name.
+        let fd = unsafe { libc::memfd_create(c"nativ64-xmem".as_ptr(), libc::MFD_CLOEXEC) };
+        if fd < 0 {
+            return None;
+        }
+        p.fd = Some(fd);
+    }
+    let fresh = n.saturating_sub(p.free.len());
+    if fresh > 0 {
+        let end = (p.spanned + fresh) * PHYSICAL_PAGE;
+        // SAFETY: grows the pool file; the new tail reads as zeros.
+        if unsafe { libc::ftruncate(p.fd.unwrap(), end as libc::off_t) } != 0 {
+            return None;
+        }
+    }
+    let mut pages = Vec::with_capacity(n);
+    for _ in 0..n {
+        pages.push(match p.free.pop() {
+            Some(f) => f,
+            None => {
+                p.spanned += 1;
+                p.spanned - 1
+            }
+        });
+    }
+    p.in_use += n;
+    Some(pages)
+}
+
 nativ64::win32! {
     module "xmem";
+
+    // `*count` pages are allocated into `pages` (all or none); on failure `*count` is 0.
+    Native fn XMemAllocatePhysicalPages(_attributes: u64, count: *mut usize, pages: *mut usize) -> i32 {
+        if count.is_null() || pages.is_null() || *count == 0 {
+            nativ64::api_ms_win_core_errorhandling::set_last_error(87); // ERROR_INVALID_PARAMETER
+            return 0;
+        }
+        match take_physical_pages(*count) {
+            Some(v) => {
+                std::ptr::copy_nonoverlapping(v.as_ptr(), pages, v.len());
+                1
+            }
+            None => {
+                *count = 0;
+                nativ64::api_ms_win_core_errorhandling::set_last_error(8); // ERROR_NOT_ENOUGH_MEMORY
+                0
+            }
+        }
+    }
 
     Native fn XMemVirtualAlloc(base: *mut c_void, size: usize, kind: u32, flags: u64, protect: u32) -> *mut c_void {
         virtual_alloc(base, size, kind, flags, protect)
@@ -281,6 +364,54 @@ mod tests {
         assert!(!p.is_null() && (p as usize) < 1 << 32);
         unsafe { (p as *mut u8).write(1) };
         unsafe { XMemFreeDefault(p, ALLOC_32BIT) };
+    }
+
+    #[test]
+    fn physical_pages_are_distinct_slots() {
+        let mut n = 5usize;
+        let mut pages = [0usize; 5];
+        assert_eq!(
+            unsafe { XMemAllocatePhysicalPages(0x380, &mut n, pages.as_mut_ptr()) },
+            1
+        );
+        assert_eq!(n, 5);
+        let mut sorted = pages.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), 5);
+        let mut m = 2usize;
+        let mut more = [0usize; 2];
+        assert_eq!(
+            unsafe { XMemAllocatePhysicalPages(0, &mut m, more.as_mut_ptr()) },
+            1
+        );
+        assert!(more.iter().all(|p| !pages.contains(p)));
+    }
+
+    #[test]
+    fn physical_pages_errors() {
+        let mut pages = [0usize; 1];
+        let mut n = 1usize;
+        assert_eq!(
+            unsafe { XMemAllocatePhysicalPages(0, std::ptr::null_mut(), pages.as_mut_ptr()) },
+            0
+        );
+        assert_eq!(
+            unsafe { XMemAllocatePhysicalPages(0, &mut n, std::ptr::null_mut()) },
+            0
+        );
+        let mut zero = 0usize;
+        assert_eq!(
+            unsafe { XMemAllocatePhysicalPages(0, &mut zero, pages.as_mut_ptr()) },
+            0
+        );
+        // more than the pool allows: refused, count reset, nothing taken
+        let mut huge = MAX_PHYSICAL_PAGES + 1;
+        assert_eq!(
+            unsafe { XMemAllocatePhysicalPages(0, &mut huge, pages.as_mut_ptr()) },
+            0
+        );
+        assert_eq!(huge, 0);
     }
 
     #[test]
