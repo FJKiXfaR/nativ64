@@ -79,7 +79,8 @@ condition variables, wait on address), a handle table with events, mutexes and
 semaphores, threads, thread-local storage, lock-free lists, the CRT heap, sorting,
 random numbers, time and C locale, startup and exit, errno and invalid-parameter handler, module loading, an empty registry, plus a
 first set of system calls. A native PE loader (`nativ64-run`) runs the first title's
-executable through its C runtime startup up to its first Direct3D 12 call.
+executable through its C runtime startup, its package DLLs and its window, and creates
+its Direct3D 12 device.
 Left to write:
 
 | Area | To write |
@@ -130,6 +131,22 @@ calls, synchronization primitives on futexes.
 | `docs/` | Documentation |
 | `game/` | Your local game files (not versioned) |
 | `reports/` | Generated pages (not versioned: derived from game files) |
+
+## Related projects
+
+Other projects run Xbox Series (GDK) titles on a PC. They target Windows and translate
+the console's graphics to the host's Direct3D 12; nativ64 targets Linux, with its own
+host APIs and a Vulkan path, and is meant to sit under any of them.
+
+| Project | Host | Approach | License |
+|---|---|---|---|
+| [VIctory](https://github.com/Marvisak/VIctory) | Windows | Compatibility layer: the title's x64 code runs natively, console libraries reimplemented, RDNA2 shaders recompiled to DXIL | GPL-3.0 |
+| [DexNom Runtime](https://github.com/DexNom/VIctory) | Windows | Fork of VIctory focused on Radeon rendering and GPU memory | GPL-3.0 |
+| [XCL](https://github.com/xcl-dev/xcl) | Windows | Compatibility layer in the spirit of Wine/Proton: own console libraries, RDNA2 shaders recompiled through HLSL to DXIL | GPL-2.0 |
+| **nativ64** | **Linux** | Windows host APIs rewritten natively, a PE loader, Xbox Direct3D 12 on Vulkan (in progress) | MIT OR Apache-2.0 |
+
+nativ64 contains no code from these projects; they are read as references for how the
+console's interfaces behave.
 
 ## Legal
 
