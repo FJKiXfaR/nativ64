@@ -26,6 +26,8 @@ const ERANGE: i32 = 34;
 const STRUNCATE: i32 = 80;
 /// `_TRUNCATE`: `(size_t)-1`.
 const TRUNCATE: usize = usize::MAX;
+/// `_NLSCMPERROR`: returned by the case-insensitive comparisons on invalid arguments.
+const NLSCMPERROR: c_int = i32::MAX;
 
 /// A character unit: `u8` (narrow) or `u16` (wide).
 trait Unit: Copy + PartialEq + Default + Into<u32> {}
@@ -156,6 +158,10 @@ unsafe fn cat_s<T: Unit>(dst: *mut T, size: usize, src: *const T) -> i32 {
 }
 
 unsafe fn ncpy_s<T: Unit>(dst: *mut T, size: usize, src: *const T, count: usize) -> i32 {
+    // Nothing to copy into nothing: accepted without complaint.
+    if dst.is_null() && size == 0 && count == 0 {
+        return 0;
+    }
     if dst.is_null() || size == 0 {
         return EINVAL;
     }
@@ -302,6 +308,11 @@ win32! {
         cmp(a as *const u8, b as *const u8, usize::MAX, true)
     }
     Native fn _strnicmp(a: *const c_char, b: *const c_char, n: usize) -> c_int {
+        // Behaviour per Wine's dlls/ucrtbase/tests/string.c (run on Windows): a NULL operand or
+        // a count above INT_MAX is a parameter error reported as `_NLSCMPERROR`.
+        if a.is_null() || b.is_null() || n > i32::MAX as usize {
+            return NLSCMPERROR;
+        }
         cmp(a as *const u8, b as *const u8, n, true)
     }
     Native fn _wcsdup(s: *const u16) -> *mut u16 {
@@ -500,6 +511,18 @@ mod tests {
             assert_eq!(_stricmp(p(&c("a")), p(&c("B"))), -1);
             assert_eq!(_strnicmp(p(&c("ABCx")), p(&c("abcy")), 3), 0);
             assert_eq!(_strnicmp(p(&c("ABCx")), p(&c("abcy")), 4), -1);
+            // Invalid arguments give _NLSCMPERROR; a count of 0 or INT_MAX is fine.
+            assert_eq!(_strnicmp(p(&c("A")), std::ptr::null(), 2), i32::MAX);
+            assert_eq!(
+                _strnicmp(p(&c("TEST")), p(&c("test")), usize::MAX),
+                i32::MAX
+            );
+            assert_eq!(
+                _strnicmp(p(&c("TEST")), p(&c("test")), 0x8000_0000),
+                i32::MAX
+            );
+            assert_eq!(_strnicmp(p(&c("TEST")), p(&c("test")), 0), 0);
+            assert_eq!(_strnicmp(p(&c("TEST")), p(&c("test")), 0x7fff_ffff), 0);
             assert_eq!(wcscmp(w("é").as_ptr(), w("e").as_ptr()), 1);
             assert_eq!(wcscmp(w("\u{ff21}").as_ptr(), w("\u{ff41}").as_ptr()), -1);
             assert_eq!(wcscoll(w("a").as_ptr(), w("b").as_ptr()), -1);
@@ -635,6 +658,12 @@ mod tests {
     fn ncpy_s_cases() {
         unsafe {
             let mut d = [0x55u8; 5];
+            // Behaviour per Wine's msvcrt/tests/string.c (run on Windows): a NULL destination
+            // of size 0 with nothing to copy succeeds, the source is not even read.
+            let bogus = 0xdead_beef_usize as *const c_char;
+            assert_eq!(strncpy_s(std::ptr::null_mut(), 0, bogus, 0), 0);
+            assert_eq!(strncpy_s(std::ptr::null_mut(), 0, bogus, 1), EINVAL);
+            assert_eq!(strncpy_s(std::ptr::null_mut(), 5, bogus, 0), EINVAL);
             assert_eq!(strncpy_s(mp(&mut d), 5, p(&c("abcdef")), 3), 0);
             assert_eq!(s(p(&d)), "abc");
             assert_eq!(strncpy_s(mp(&mut d), 5, p(&c("ab")), 10), 0);
