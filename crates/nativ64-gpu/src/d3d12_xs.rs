@@ -39,6 +39,16 @@ nativ64::win32! {
         // SAFETY: the title passes its own parameters; each pointer is checked inside.
         unsafe { crate::d3d12::device::create_device(adapter, params, iid, out) }
     }
+
+    Native fn D3D12SerializeVersionedRootSignature(desc: *const c_void, blob: *mut *mut c_void, error: *mut *mut c_void) -> i32 {
+        // SAFETY: the title passes a description and output pointers; each is checked inside.
+        unsafe { crate::d3d12::rootsig::serialize_versioned(desc, blob, error) }
+    }
+
+    Native fn D3D12SerializeRootSignature(desc: *const c_void, version: u32, blob: *mut *mut c_void, error: *mut *mut c_void) -> i32 {
+        // SAFETY: as above.
+        unsafe { crate::d3d12::rootsig::serialize(desc, version, blob, error) }
+    }
 }
 
 #[cfg(test)]

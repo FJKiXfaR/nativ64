@@ -20,6 +20,12 @@ APIs only (libc as its only dependency).
   (else DXGI_ERROR_UNSUPPORTED), IID of ID3D12Device or any level, E_NOINTERFACE otherwise. One
   device per process (later calls AddRef the same one). Object 0x58 bytes with the out-of-line
   flag at +0x18 = 1; table of 160 slots, only IUnknown filled, every other slot a trap.
+- `d3d12/rootsig.rs`, `d3d12/blob.rs`: `D3D12SerializeVersionedRootSignature` (1.0, 1.1, 1.2) and
+  `D3D12SerializeRootSignature` (1.0 desc, serialized as 1.0 or 1.1) return an `ID3DBlob`
+  (plain COM object) holding a DXBC container with one `RTS0` chunk; `deserialize` reads it back
+  to a `RootSignature` model for `CreateRootSignature`. The DXBC checksum is written (modified
+  MD5), not verified on read. Null desc is E_INVALIDARG, null blob out E_POINTER, bad version or
+  parameter type E_INVALIDARG plus a text error blob.
 - `d3d12/resource.rs`: `CreateCommittedResource` (slot 27) and `CreateCommittedResource3` (slot 127,
   `+0x3f8`): zeroed memory sized and aligned by the console layout, taken from the host
   reservation table (2^32..2^40) so its address is the GPU address; freed with the resource.
