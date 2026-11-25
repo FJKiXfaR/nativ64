@@ -7,6 +7,7 @@ compile_error!("nativ64-gpu supports Linux x86_64 only");
 pub mod d3d12_xs;
 pub mod xcrdapi;
 pub mod xmem;
+pub mod xobj;
 
 use nativ64::{normalize_module, Export};
 
