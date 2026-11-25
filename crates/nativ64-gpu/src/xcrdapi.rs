@@ -15,8 +15,14 @@
 //! command sets the event. A failed read also goes in the queue's error record and signals the
 //! queue's error event.
 //!
-//! Not done (TODO, all fail the request with `E_NOTIMPL`): zlib and BCPack decompression
-//! (options bits 0..4), the further transforms (bits 5..20), page destinations (bit 21), physical
+//! Options bit 0 (zlib): the source is read into a scratch buffer and inflated with `miniz_oxide`
+//! into the destination, which `destination_size` bounds (the request has no separate
+//! uncompressed size). A zlib-wrapped stream (valid header) and a raw deflate stream are both
+//! accepted, and the first of each kind seen is logged. Output larger than the destination fails
+//! with `ERROR_INSUFFICIENT_BUFFER`, corrupt or truncated data with `ERROR_INVALID_DATA`.
+//!
+//! Not done (TODO, all fail the request with `E_NOTIMPL`): BCPack decompression (options bits
+//! 1..4), the further transforms (bits 5..20), page destinations (bit 21), physical
 //! page sources (bit 23), and GPU buffer/texture destinations. Fences: `EnqueueSignal` records
 //! the fence and value ([`signals`]) but signals nothing, as no `ID3D12Fence` exists yet. The
 //! error record is written as failure count, first failure HRESULT, command type, then the
@@ -41,6 +47,7 @@ const ERROR_GEN_FAILURE: HRESULT = 0x8007_001Fu32 as i32;
 const ERROR_HANDLE_EOF: HRESULT = 0x8007_0026u32 as i32;
 const ERROR_INSUFFICIENT_BUFFER: HRESULT = 0x8007_007Au32 as i32;
 const ERROR_INVALID_HANDLE: HRESULT = 0x8007_0006u32 as i32;
+const ERROR_INVALID_DATA: HRESULT = 0x8007_000Du32 as i32;
 
 /// `{62959d11-d45f-4884-a0a3-f7862ea243ae}`: the console's factory interface.
 pub const IID_FACTORY_X: Guid = Guid::new(
@@ -59,7 +66,8 @@ pub const IID_FACTORY: Guid = Guid::new(
 static FACTORY_IIDS: [Guid; 2] = [IID_FACTORY_X, IID_FACTORY];
 
 // Request options (the console's layout).
-const OPT_COMPRESSION: u64 = 0x1f; // zlib (bit 0), BCPack format (bits 1..4)
+const OPT_ZLIB: u64 = 1;
+const OPT_BCPACK: u64 = 0x1e; // BCPack format (bits 1..4)
 const OPT_TRANSFORMS: u64 = 0xffff << 5;
 const OPT_PAGE_DESTINATION: u64 = 1 << 21;
 const OPT_MEMORY_SOURCE: u64 = 1 << 22;
@@ -308,24 +316,11 @@ unsafe extern "win64" fn q_enqueue_set_event(q: Q, event: Handle) {
     push(q, Command::Event(event));
 }
 
-/// Runs one read: memory or file source into the destination address.
-unsafe fn execute(r: &Request) -> Result<(), HRESULT> {
-    if r.options & (OPT_COMPRESSION | OPT_TRANSFORMS | OPT_PAGE_DESTINATION | OPT_PHYSICAL_SOURCE)
-        != 0
-    {
-        // TODO: zlib/BCPack, transforms, page and GPU destinations.
-        return Err(E_NOTIMPL);
-    }
-    if r.destination.is_null() || r.source.is_null() {
-        return Err(E_INVALIDARG);
-    }
-    let len = r.source_size as usize;
-    if len > r.destination_size as usize {
-        return Err(ERROR_INSUFFICIENT_BUFFER);
-    }
-    let dst = r.destination as *mut u8;
+/// Fills `dst` from the request's source: a memory address, or the file at `r.offset`.
+unsafe fn read_source(r: &Request, dst: &mut [u8]) -> Result<(), HRESULT> {
+    let len = dst.len();
     if r.options & OPT_MEMORY_SOURCE != 0 {
-        std::ptr::copy(r.source as *const u8, dst, len);
+        std::ptr::copy(r.source as *const u8, dst.as_mut_ptr(), len);
         return Ok(());
     }
     let fd = (*(r.source as *const FileObj))
@@ -339,7 +334,7 @@ unsafe fn execute(r: &Request) -> Result<(), HRESULT> {
     while done < len {
         let n = libc::pread(
             fd,
-            dst.add(done) as *mut c_void,
+            dst.as_mut_ptr().add(done) as *mut c_void,
             len - done,
             (r.offset + done as u64) as libc::off_t,
         );
@@ -355,6 +350,86 @@ unsafe fn execute(r: &Request) -> Result<(), HRESULT> {
         done += n as usize;
     }
     Ok(())
+}
+
+/// True when `data` starts with a valid zlib header (deflate method, 32 KiB window at most,
+/// header check divisible by 31, no preset dictionary).
+fn has_zlib_header(data: &[u8]) -> bool {
+    match data {
+        [cmf, flg, ..] => {
+            cmf & 0x0f == 8 && cmf >> 4 <= 7 && flg & 0x20 == 0 && {
+                (u32::from(*cmf) << 8 | u32::from(*flg)) % 31 == 0
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Inflates `src` into `dst` and returns the output size. A zlib-wrapped stream is detected by its
+/// header; anything else is raw deflate (a raw stream that happens to look like a zlib header and
+/// fails as such is retried raw). Output beyond `dst` is `ERROR_INSUFFICIENT_BUFFER`; corrupt or
+/// truncated data is `ERROR_INVALID_DATA`.
+fn inflate(src: &[u8], dst: &mut [u8]) -> Result<usize, HRESULT> {
+    use miniz_oxide::inflate::{decompress_slice_iter_to_slice, TINFLStatus};
+    static LOGGED: [std::sync::Once; 2] = [std::sync::Once::new(), std::sync::Once::new()];
+    let zlib = has_zlib_header(src);
+    let run = |dst: &mut [u8], wrapped: bool| {
+        decompress_slice_iter_to_slice(dst, std::iter::once(src), wrapped, false)
+    };
+    let mut res = run(dst, zlib);
+    let mut wrapped = zlib;
+    if zlib && res.is_err() {
+        if let Ok(n) = run(dst, false) {
+            res = Ok(n);
+            wrapped = false;
+        }
+    }
+    match res {
+        Ok(n) => {
+            LOGGED[usize::from(wrapped)].call_once(|| {
+                eprintln!(
+                    "nativ64: DirectStorage compressed data is {}",
+                    if wrapped {
+                        "zlib-wrapped"
+                    } else {
+                        "raw deflate"
+                    }
+                );
+            });
+            Ok(n)
+        }
+        Err(TINFLStatus::HasMoreOutput) => Err(ERROR_INSUFFICIENT_BUFFER),
+        Err(_) => Err(ERROR_INVALID_DATA),
+    }
+}
+
+/// Runs one read: memory or file source into the destination address, inflated when the zlib
+/// option is set. The request carries no uncompressed size, so `destination_size` is the limit
+/// and the inflated size may be smaller.
+unsafe fn execute(r: &Request) -> Result<(), HRESULT> {
+    if r.options & (OPT_BCPACK | OPT_TRANSFORMS | OPT_PAGE_DESTINATION | OPT_PHYSICAL_SOURCE) != 0 {
+        // TODO: BCPack, transforms, page and GPU destinations.
+        return Err(E_NOTIMPL);
+    }
+    if r.destination.is_null() || r.source.is_null() {
+        return Err(E_INVALIDARG);
+    }
+    let len = r.source_size as usize;
+    if r.options & OPT_ZLIB != 0 {
+        let mut scratch = vec![0u8; len];
+        read_source(r, &mut scratch)?;
+        let dst =
+            std::slice::from_raw_parts_mut(r.destination as *mut u8, r.destination_size as usize);
+        inflate(&scratch, dst)?;
+        return Ok(());
+    }
+    if len > r.destination_size as usize {
+        return Err(ERROR_INSUFFICIENT_BUFFER);
+    }
+    read_source(
+        r,
+        std::slice::from_raw_parts_mut(r.destination as *mut u8, len),
+    )
 }
 
 unsafe fn record_failure(q: &QueueState, f: Failure) {
@@ -863,7 +938,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_file_and_unsupported_compression() {
+    fn missing_file_and_unsupported_bcpack() {
         unsafe {
             let e = env();
             let fv = vt::<FactoryVtbl>(e.factory as *mut c_void);
@@ -884,7 +959,7 @@ mod tests {
             let r = request(
                 &mut d,
                 src.as_ptr() as *const c_void,
-                OPT_MEMORY_SOURCE | 1,
+                OPT_MEMORY_SOURCE | 2,
                 0,
                 8,
             );
@@ -913,6 +988,98 @@ mod tests {
             (qv.enqueue_status)(e.queue, e.status, 1);
             (qv.submit)(e.queue);
             assert_eq!((sv.get_hresult)(e.status, 1), ERROR_INSUFFICIENT_BUFFER);
+        }
+    }
+
+    /// Submits one request followed by a status entry and returns that entry's HRESULT.
+    unsafe fn run_one(r: &Request) -> HRESULT {
+        let e = env();
+        let qv = vt::<QueueVtbl>(e.queue as *mut c_void);
+        let sv = vt::<StatusVtbl>(e.status as *mut c_void);
+        (qv.enqueue_request)(e.queue, r);
+        (qv.enqueue_status)(e.queue, e.status, 0);
+        (qv.submit)(e.queue);
+        (sv.get_hresult)(e.status, 0)
+    }
+
+    #[test]
+    fn zlib_requests_inflate() {
+        use miniz_oxide::deflate::{compress_to_vec, compress_to_vec_zlib};
+        unsafe {
+            let data: Vec<u8> = (0..30000u32).map(|i| (i / 7 % 251) as u8).collect();
+            let wrapped = compress_to_vec_zlib(&data, 6);
+            let raw = compress_to_vec(&data, 6);
+            assert!(has_zlib_header(&wrapped));
+            assert!(!has_zlib_header(&raw));
+
+            // Memory sources, wrapped and raw; a larger destination is fine.
+            for packed in [&wrapped, &raw] {
+                let mut out = vec![0u8; data.len() + 100];
+                let r = request(
+                    &mut out,
+                    packed.as_ptr() as *const c_void,
+                    OPT_MEMORY_SOURCE | OPT_ZLIB,
+                    0,
+                    packed.len() as u32,
+                );
+                assert_eq!(run_one(&r), S_OK);
+                assert_eq!(&out[..data.len()], &data[..]);
+            }
+
+            // File source at an offset, wrapped and raw.
+            let path =
+                std::env::temp_dir().join(format!("nativ64-ds-z-{}.bin", std::process::id()));
+            let mut blob = vec![0xAAu8; 64];
+            blob.extend_from_slice(&wrapped);
+            let raw_at = blob.len() as u64;
+            blob.extend_from_slice(&raw);
+            std::fs::write(&path, &blob).unwrap();
+            let e = env();
+            let fv = vt::<FactoryVtbl>(e.factory as *mut c_void);
+            let mut file = std::ptr::null_mut();
+            let w = wide(path.to_str().unwrap());
+            assert_eq!(
+                (fv.open_file)(e.factory, w.as_ptr(), std::ptr::null(), &mut file),
+                S_OK
+            );
+            for (off, len) in [(64u64, wrapped.len()), (raw_at, raw.len())] {
+                let mut out = vec![0u8; data.len()];
+                let r = request(&mut out, file as *const c_void, OPT_ZLIB, off, len as u32);
+                assert_eq!(run_one(&r), S_OK);
+                assert_eq!(out, data);
+            }
+            std::fs::remove_file(path).unwrap();
+
+            // Destination too small, in both forms.
+            for packed in [&wrapped, &raw] {
+                let mut out = vec![0u8; data.len() - 1];
+                let r = request(
+                    &mut out,
+                    packed.as_ptr() as *const c_void,
+                    OPT_MEMORY_SOURCE | OPT_ZLIB,
+                    0,
+                    packed.len() as u32,
+                );
+                assert_eq!(run_one(&r), ERROR_INSUFFICIENT_BUFFER);
+            }
+
+            // Corrupt and truncated input.
+            let mut bad = wrapped.clone();
+            let mid = bad.len() / 2;
+            bad[mid..mid + 8].fill(0xFF);
+            let cut = &wrapped[..wrapped.len() / 2];
+            let junk = [0xFFu8; 32];
+            for packed in [&bad[..], cut, &junk[..]] {
+                let mut out = vec![0u8; data.len()];
+                let r = request(
+                    &mut out,
+                    packed.as_ptr() as *const c_void,
+                    OPT_MEMORY_SOURCE | OPT_ZLIB,
+                    0,
+                    packed.len() as u32,
+                );
+                assert_eq!(run_one(&r), ERROR_INVALID_DATA);
+            }
         }
     }
 
