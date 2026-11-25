@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 pub const WSAVERNOTSUPPORTED: i32 = 10092;
 pub const WSANOTINITIALISED: i32 = 10093;
 pub const WSAEINVAL: i32 = 10022;
+pub const WSAEFAULT: i32 = 10014;
 const SOCKET_ERROR: i32 = -1;
 const WSADATA_SIZE: usize = 408;
 
@@ -49,6 +50,7 @@ pub static ORDINALS: &[(u16, &str)] = &[
     (21, "setsockopt"),
     (22, "shutdown"),
     (23, "socket"),
+    (57, "gethostname"),
     (111, "WSAGetLastError"),
     (112, "WSASetLastError"),
     (115, "WSAStartup"),
@@ -88,6 +90,26 @@ win32! {
             SOCKET_ERROR
         }
     }
+    // The host name, NUL-terminated, in `name[..len]`; WSAEFAULT when it does not fit.
+    Native fn gethostname(name: *mut u8, len: i32) -> i32 {
+        if name.is_null() || len < 0 {
+            set_error(WSAEFAULT);
+            return SOCKET_ERROR;
+        }
+        let mut buf = [0u8; 256];
+        if libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) != 0 {
+            set_error(WSAEFAULT);
+            return SOCKET_ERROR;
+        }
+        buf[255] = 0;
+        let n = buf.iter().position(|&b| b == 0).unwrap_or(255);
+        if n + 1 > len as usize {
+            set_error(WSAEFAULT);
+            return SOCKET_ERROR;
+        }
+        std::ptr::copy_nonoverlapping(buf.as_ptr(), name, n + 1);
+        0
+    }
     Native fn WSAGetLastError() -> i32 {
         LAST_ERROR.with(|c| c.get())
     }
@@ -100,6 +122,7 @@ win32! {
 mod tests {
     use super::*;
     use crate::{lookup, lookup_ordinal};
+    use std::ptr::null_mut;
 
     #[test]
     fn ordinals_resolve_to_the_named_exports() {
@@ -127,6 +150,29 @@ mod tests {
             assert_eq!(WSACleanup(), 0);
             assert_eq!(WSACleanup(), 0);
         }
+    }
+
+    #[test]
+    fn gethostname_fills_the_buffer_or_reports_wsaefault() {
+        unsafe {
+            let mut buf = [0xAAu8; 300];
+            assert_eq!(gethostname(buf.as_mut_ptr(), 300), 0);
+            let n = buf.iter().position(|&b| b == 0).unwrap();
+            assert!(n > 0);
+            // exactly large enough, then one byte too small
+            let mut tight = vec![0xAAu8; n + 1];
+            assert_eq!(gethostname(tight.as_mut_ptr(), (n + 1) as i32), 0);
+            assert_eq!(&tight[..], &buf[..n + 1]);
+            WSASetLastError(0);
+            assert_eq!(gethostname(tight.as_mut_ptr(), n as i32), SOCKET_ERROR);
+            assert_eq!(WSAGetLastError(), WSAEFAULT);
+            WSASetLastError(0);
+            assert_eq!(gethostname(null_mut(), 16), SOCKET_ERROR);
+            assert_eq!(WSAGetLastError(), WSAEFAULT);
+            assert_eq!(gethostname(buf.as_mut_ptr(), -1), SOCKET_ERROR);
+            assert_eq!(gethostname(buf.as_mut_ptr(), 0), SOCKET_ERROR);
+        }
+        assert_eq!(lookup_ordinal("ws2_32.dll", 57).unwrap().name, "gethostname");
     }
 
     #[test]
