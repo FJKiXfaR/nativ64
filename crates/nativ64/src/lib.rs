@@ -34,6 +34,10 @@ pub mod api_ms_win_crt_stdio;
 pub mod api_ms_win_crt_string;
 pub mod api_ms_win_crt_time;
 pub mod api_ms_win_crt_utility;
+pub mod ext_ms_win_rtcore_ntuser_message;
+pub mod ext_ms_win_rtcore_ntuser_message_ansi;
+pub mod ext_ms_win_rtcore_ntuser_window;
+pub mod ext_ms_win_rtcore_ntuser_window_ansi;
 
 pub mod com;
 pub mod gameinput;
@@ -45,6 +49,7 @@ pub mod process;
 mod scanf;
 mod slots;
 pub mod vcruntime140;
+pub mod windowing;
 pub mod ws2_32;
 pub mod xgameruntime;
 
@@ -81,6 +86,10 @@ pub static TABLES: &[&[Export]] = &[
     api_ms_win_crt_string::EXPORTS,
     api_ms_win_crt_time::EXPORTS,
     api_ms_win_crt_utility::EXPORTS,
+    ext_ms_win_rtcore_ntuser_message::EXPORTS,
+    ext_ms_win_rtcore_ntuser_message_ansi::EXPORTS,
+    ext_ms_win_rtcore_ntuser_window::EXPORTS,
+    ext_ms_win_rtcore_ntuser_window_ansi::EXPORTS,
     gameinput::EXPORTS,
     msvcp140::EXPORTS,
     vcruntime140::EXPORTS,

@@ -53,6 +53,21 @@ their own vtable struct.
 `ws2_32`, wired in `lookup_ordinal`. It exposes an `IGameInput` with no devices (readings are
 `GAMEINPUT_E_READING_NOT_FOUND`); callbacks are stored and never fire (TODO: evdev input).
 
+## Windowing (`src/windowing.rs`)
+
+`ext-ms-win-rtcore-ntuser-{window,window-ansi,message,message-ansi}` (also exported under
+`user32`) share `windowing.rs`: class registry (atoms from `0xC000`, case-insensitive names,
+`ERROR_CLASS_ALREADY_EXISTS` / `ERROR_INVALID_PARAMETER`), window table (HWNDs from `0x10000`,
+distinct from kernel handles) and one message queue per thread. `CreateWindowExA` calls the
+class procedure synchronously: `WM_NCCREATE` (FALSE aborts, NULL), `WM_CREATE` (-1 aborts), then
+`WM_SIZE`, `WM_MOVE`, and `ShowWindow` for `WS_VISIBLE`. `ShowWindow` sends `WM_SHOWWINDOW`,
+`WM_SIZE`, `WM_ACTIVATE`. `PeekMessageA` never blocks (hwnd / range filters, `PM_REMOVE`).
+`DefWindowProcA`: `WM_NCCREATE` -> TRUE, `WM_CLOSE` -> destroy (`WM_DESTROY`, `WM_NCDESTROY`).
+Skipped: `WM_GETMINMAXINFO`, `WM_NCCALCSIZE`, `WM_WINDOWPOSCHANGING/CHANGED`, non-client area,
+focus chains, paint/timer, sent messages, `W` variants, `WM_CHAR` from `TranslateMessage`.
+The host seam is the `WindowBackend` trait (`on_create`, `on_show`, `on_destroy`,
+`poll_events`); only `HeadlessBackend` exists, the Wayland/X11 Vulkan surface comes later.
+
 ## File paths (rule for the file APIs)
 
 `\` maps to `/`; a drive prefix (`G:`) is dropped. Reads search a list of directories: the package
