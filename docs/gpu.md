@@ -26,6 +26,10 @@ APIs only (libc as its only dependency).
   to a `RootSignature` model for `CreateRootSignature`. The DXBC checksum is written (modified
   MD5), not verified on read. Null desc is E_INVALIDARG, null blob out E_POINTER, bad version or
   parameter type E_INVALIDARG plus a text error blob.
+- `d3d12/rootobj.rs`: `CreateRootSignature` (device slot 16): the blob is parsed with `deserialize`
+  (DXBC with an `RTS0` chunk, other chunks skipped); the model is kept in the object (`+0x10`) for
+  later `Set*RootSignature`. Null or empty blob and non-DXBC garbage are E_INVALIDARG; no methods
+  of its own beyond `ID3D12DeviceChild`'s.
 - `d3d12/resource.rs`: `CreateCommittedResource` (slot 27) and `CreateCommittedResource3` (slot 127,
   `+0x3f8`): zeroed memory sized and aligned by the console layout, taken from the host
   reservation table (2^32..2^40) so its address is the GPU address; freed with the resource.

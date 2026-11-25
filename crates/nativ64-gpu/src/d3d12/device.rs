@@ -122,6 +122,10 @@ static DEVICE_TABLE: SlotTable<160> = SlotTable::new(Iface::Device)
         crate::d3d12::descriptor::create_descriptor_heap as *const (),
     )
     .with(
+        16,
+        crate::d3d12::rootobj::create_root_signature as *const (),
+    )
+    .with(
         17,
         crate::d3d12::descriptor::create_constant_buffer_view as *const (),
     )

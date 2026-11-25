@@ -13,4 +13,5 @@ pub mod list_record;
 pub mod object;
 pub mod queue;
 pub mod resource;
+pub mod rootobj;
 pub mod rootsig;
