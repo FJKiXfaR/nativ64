@@ -14,6 +14,7 @@
 //! * Priorities are validated and stored, not applied to the Linux scheduler.
 
 use super::*;
+use std::cell::Cell;
 use std::ffi::c_void;
 use std::sync::Condvar;
 
@@ -84,17 +85,88 @@ fn finish(o: &Arc<Object>, code: u32) {
     t.waiters.wake();
 }
 
-/// Ends the calling thread with `code` (`_endthreadex`): runs the exit bookkeeping (abandons the
-/// mutexes it owns, signals its thread object with `code`), then `pthread_exit`.
+// Run-and-escape of a thread's start routine, without unwinding (as `ExitThread` on Windows,
+// which does not unwind the caller's frames).
+//
+// `nativ64_run_start(start, param, slot)` (SysV) saves the callee-saved registers on the stack,
+// stores that stack pointer in `*slot`, and calls `start(param)` (win64). It returns the routine's
+// result, or, if `nativ64_exit_jump(slot, code)` was called meanwhile, `code`: the jump reloads
+// the stack pointer from `*slot` and falls into the epilogue, which restores the registers.
+// Everything between (the win64 frames, with or without unwind info) is simply abandoned, so no
+// destructor of theirs runs.
+std::arch::global_asm!(
+    ".text",
+    ".globl nativ64_run_start",
+    ".type nativ64_run_start,@function",
+    "nativ64_run_start:",
+    "push rbp",
+    "push rbx",
+    "push r12",
+    "push r13",
+    "push r14",
+    "push r15",
+    "sub rsp, 8",
+    "mov [rdx], rsp",
+    "mov rax, rdi",
+    "mov rcx, rsi",
+    "sub rsp, 32",
+    "call rax",
+    "add rsp, 32",
+    "2:",
+    "add rsp, 8",
+    "pop r15",
+    "pop r14",
+    "pop r13",
+    "pop r12",
+    "pop rbx",
+    "pop rbp",
+    "ret",
+    ".size nativ64_run_start, .-nativ64_run_start",
+    ".globl nativ64_exit_jump",
+    ".type nativ64_exit_jump,@function",
+    "nativ64_exit_jump:",
+    "mov rsp, [rdi]",
+    "mov eax, esi",
+    "jmp 2b",
+    ".size nativ64_exit_jump, .-nativ64_exit_jump",
+);
+
+unsafe extern "sysv64" {
+    fn nativ64_run_start(start: ThreadStart, param: *mut c_void, slot: *mut usize) -> u32;
+    fn nativ64_exit_jump(slot: *mut usize, code: u32) -> !;
+}
+
+thread_local! {
+    /// Stack pointer saved by `nativ64_run_start` while this thread runs a start routine of
+    /// `CreateThread`; 0 otherwise.
+    static RESUME_SP: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Ends the calling thread with `code` (`_endthreadex`, and later `ExitThread`).
 ///
-/// `pthread_exit` unwinds the thread's frames (glibc forced unwind), so frames without unwind
-/// information between here and the thread's start would make it abort; the thread object is
-/// already signaled by then, and the code is final (a second `finish` is a no-op).
+/// A thread made by `CreateThread` jumps back into its trampoline, which goes on as if the start
+/// routine had returned `code` (mutexes abandoned, thread object signaled, then a normal return
+/// from the pthread, which runs the TLS/FLS cleanup). Nothing is unwound. Under ThreadSanitizer
+/// the jump skips the instrumented function exits of the abandoned frames; the shadow stack of
+/// this ending thread is simply left unbalanced, which is harmless since the thread ends.
+///
+/// The main thread ends the process with `code` (the last thread to leave decides on Windows).
+/// Any other thread (not made by `CreateThread`) gets the exit bookkeeping, then `pthread_exit`
+/// as a last resort: it unwinds, which aborts if a frame lacks unwind information.
 pub fn end_current_thread(code: u32) -> ! {
+    // Plain copy: no value with a destructor is alive when jumping.
+    let sp = RESUME_SP.with(|c| c.get());
+    if sp != 0 {
+        let slot = RESUME_SP.with(|c| c.as_ptr());
+        unsafe { nativ64_exit_jump(slot, code) }
+    }
     abandon_owned();
     let o = current_thread();
     finish(&o, code);
     drop(o);
+    if tid() == std::process::id() {
+        unsafe { libc::exit(code as i32) }
+    }
     unsafe { libc::pthread_exit(std::ptr::null_mut()) }
 }
 
@@ -149,7 +221,7 @@ struct Boot {
     tx: std::sync::mpsc::Sender<u32>,
 }
 
-extern "C-unwind" fn trampoline(arg: *mut c_void) -> *mut c_void {
+extern "C" fn trampoline(arg: *mut c_void) -> *mut c_void {
     let Boot {
         obj,
         start,
@@ -172,7 +244,9 @@ extern "C-unwind" fn trampoline(arg: *mut c_void) -> *mut c_void {
         }
         s.started = true;
     }
-    let code = unsafe { start(param as *mut c_void) };
+    let slot = RESUME_SP.with(|c| c.as_ptr());
+    let code = unsafe { nativ64_run_start(start, param as *mut c_void, slot) };
+    RESUME_SP.with(|c| c.set(0));
     abandon_owned();
     finish(&obj, code);
     std::ptr::null_mut()
@@ -198,8 +272,7 @@ pub fn create_thread(
         param: param as usize,
         tx,
     }));
-    // A raw detached pthread (not `std::thread`): `_endthreadex` ends it with `pthread_exit`,
-    // whose forced unwind must not cross std's `catch_unwind`, which would abort.
+    // A raw detached pthread (not `std::thread`), whose trampoline `end_current_thread` jumps back to.
     let spawned = unsafe {
         let mut attr: libc::pthread_attr_t = std::mem::zeroed();
         libc::pthread_attr_init(&mut attr);
@@ -208,9 +281,7 @@ pub fn create_thread(
             libc::pthread_attr_setstacksize(&mut attr, stack.max(MIN_STACK));
         }
         let mut th: libc::pthread_t = 0;
-        let entry: extern "C" fn(*mut c_void) -> *mut c_void =
-            std::mem::transmute(trampoline as extern "C-unwind" fn(*mut c_void) -> *mut c_void);
-        let r = libc::pthread_create(&mut th, &attr, entry, boot as *mut c_void);
+        let r = libc::pthread_create(&mut th, &attr, trampoline, boot as *mut c_void);
         libc::pthread_attr_destroy(&mut attr);
         r == 0
     };

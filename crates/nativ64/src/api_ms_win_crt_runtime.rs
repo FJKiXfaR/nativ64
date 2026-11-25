@@ -1252,6 +1252,80 @@ mod startup_tests {
         }
     }
 
+    static NEST_MUTEX: AtomicUsize = AtomicUsize::new(0);
+    static NEST_FLS_SEEN: AtomicUsize = AtomicUsize::new(0);
+    static NEST_TLS_DROPPED: AtomicUsize = AtomicUsize::new(0);
+    static NEST_FLS_IDX: AtomicUsize = AtomicUsize::new(0);
+
+    struct DropMark;
+    impl Drop for DropMark {
+        fn drop(&mut self) {
+            NEST_TLS_DROPPED.store(1, Ordering::SeqCst);
+        }
+    }
+    thread_local! { static MARK: DropMark = const { DropMark }; }
+
+    unsafe extern "win64" fn nest_fls_cb(p: *mut c_void) {
+        NEST_FLS_SEEN.store(p as usize, Ordering::SeqCst);
+    }
+    unsafe extern "win64" fn nest_inner(depth: u32) -> u32 {
+        if depth > 0 {
+            return nest_inner(depth - 1) + 1;
+        }
+        _endthreadex(0x5150)
+    }
+    unsafe extern "win64" fn nest_start(_p: *mut c_void) -> u32 {
+        use crate::api_ms_win_core_fibers::FlsSetValue;
+        use crate::api_ms_win_core_synch::WaitForSingleObject;
+        MARK.with(|_| {});
+        assert_eq!(
+            FlsSetValue(NEST_FLS_IDX.load(Ordering::SeqCst) as u32, 9 as *mut c_void),
+            1
+        );
+        assert_eq!(
+            WaitForSingleObject(NEST_MUTEX.load(Ordering::SeqCst), 5000),
+            0
+        );
+        nest_inner(5)
+    }
+
+    #[test]
+    fn endthreadex_from_nested_frames() {
+        use crate::api_ms_win_core_fibers::{FlsAlloc, FlsFree};
+        use crate::api_ms_win_core_synch::{CreateMutexW, WaitForSingleObject};
+        unsafe {
+            let m = CreateMutexW(std::ptr::null(), 0, std::ptr::null());
+            NEST_MUTEX.store(m, Ordering::SeqCst);
+            let i = FlsAlloc(nest_fls_cb as *const () as usize);
+            NEST_FLS_IDX.store(i as usize, Ordering::SeqCst);
+            let h = _beginthreadex(
+                std::ptr::null_mut(),
+                0,
+                Some(nest_start),
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+            );
+            assert_ne!(h, 0);
+            assert_eq!(wait_thread(h), 0);
+            assert_eq!(exit_code(h), 0x5150);
+            // Owned by the ended thread: abandoned (WAIT_ABANDONED_0).
+            assert_eq!(WaitForSingleObject(m, 5000), 0x80);
+            // The pthread returned normally, so its cleanups run (shortly after signaling).
+            for _ in 0..500 {
+                if NEST_TLS_DROPPED.load(Ordering::SeqCst) == 1
+                    && NEST_FLS_SEEN.load(Ordering::SeqCst) == 9
+                {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert_eq!(NEST_TLS_DROPPED.load(Ordering::SeqCst), 1);
+            assert_eq!(NEST_FLS_SEEN.load(Ordering::SeqCst), 9);
+            FlsFree(i);
+        }
+    }
+
     #[test]
     fn endthreadex_ends_only_the_calling_thread() {
         unsafe {
