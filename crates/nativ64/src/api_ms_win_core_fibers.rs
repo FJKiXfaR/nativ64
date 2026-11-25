@@ -69,6 +69,13 @@ mod tests {
     use crate::api_ms_win_core_errorhandling::GetLastError;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    /// The tests share the global table, and allocation takes the lowest free index: a test that
+    /// frees an index and then expects it to be invalid would race with another test reusing it.
+    static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        SERIAL.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     static SEEN: AtomicUsize = AtomicUsize::new(0);
     unsafe extern "win64" fn cb(p: *mut c_void) {
         SEEN.fetch_add(p as usize, Ordering::SeqCst);
@@ -80,6 +87,7 @@ mod tests {
 
     #[test]
     fn basic_and_errors() {
+        let _g = serial();
         unsafe {
             let i = FlsAlloc(0);
             assert_ne!(i, FLS_OUT_OF_INDEXES);
@@ -110,13 +118,14 @@ mod tests {
 
     #[test]
     fn free_runs_callback_and_reuse_is_null() {
+        let _g = serial();
         unsafe {
             let i = FlsAlloc(cb as *const () as usize);
             assert_eq!(FlsSetValue(i, 5 as *mut _), 1);
             assert_eq!(FlsFree(i), 1);
             assert_eq!(SEEN.load(Ordering::SeqCst), 5);
             let j = FlsAlloc(0);
-            // Other tests allocate concurrently, so j may differ from i; slots.rs pins reuse.
+            // j may differ from i; slots.rs pins reuse.
             assert!(FlsGetValue(j).is_null());
             FlsFree(j);
             // NULL value: no callback.
@@ -128,6 +137,7 @@ mod tests {
 
     #[test]
     fn thread_exit_runs_callbacks() {
+        let _g = serial();
         unsafe {
             let i = FlsAlloc(cb2 as *const () as usize);
             let z = FlsAlloc(cb2 as *const () as usize); // stays NULL
