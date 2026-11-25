@@ -40,6 +40,9 @@ fn main() -> ExitCode {
     };
     drop(data);
     if !check {
+        let full = std::fs::canonicalize(path)
+            .map_or_else(|_| path.clone(), |p| p.to_string_lossy().into_owned());
+        nativ64::process::set_main_module(img.base() as usize, &full);
         nativ64_loader::fault::install(img.base(), img.size());
         nativ64_loader::fault::set_timeout(timeout);
         return match img.run_main() {

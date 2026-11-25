@@ -58,3 +58,12 @@ A base plugs in through a thin adapter. It must:
    handle the switch from System V).
 4. Own what the library does not: loading PE images, TLS setup, and anything outside the
    Windows host APIs (Direct3D, GPU).
+
+### Main module
+
+A base that loads the main image tells the library where it is, once, after mapping and before
+running the entry point: Rust `nativ64::process::set_main_module(base, path)` (`path` is UTF-8,
+the file's path as the base knows it). `GetModuleHandle(NULL)`, `GetModuleFileName(NULL, ...)`
+and `GetModuleHandle(<exe name>)` read it. Without it they fail with `ERROR_MOD_NOT_FOUND`.
+The library gives host modules (kernel32, `api-ms-win-*`, ...) synthetic handles for
+`LoadLibraryEx`/`GetProcAddress`; other DLLs are not found.
