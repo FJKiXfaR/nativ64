@@ -105,11 +105,30 @@ the thread-name request, vectored handlers are stored, never called.
    nativ64 code (not in a guest image) keep today's report. `NATIV64_NO_SEH=1` keeps the
    plain report, for debugging.
 
+### Implementation notes (chunk 2)
+
+- `RaiseException`, `RtlUnwindEx`, `RtlUnwind` are assembly entries (`context_entry!` in
+  `seh.rs`) that capture the caller's context on their own frame, then run Rust and resume
+  through `RtlRestoreContext`.
+- Our dispatcher frames have no unwind info. A second pass whose walk leaves the images
+  (called from our `__C_specific_handler`, or from a shipped handler that our dispatcher
+  called) continues from the context of the innermost exception being dispatched (`ACTIVE`,
+  per thread); the entries a landing abandons are dropped.
+- A handler returning `ContinueExecution` for a non-continuable exception raises
+  `STATUS_NONCONTINUABLE_EXCEPTION` (non-continuable, same context); any other bad value raises
+  `STATUS_INVALID_DISPOSITION`. A non-continuable escalation that is continued again stops.
+- In test builds the report-and-stop step records `(code, address)` (`take_stopped`) and
+  returns, so a raise returns to its caller after an unhandled exception.
+
 ### Shortcuts
 
 No `__CxxFrameHandler`/`_CxxThrowException` of our own (the shipped vcruntime ones);
 history table unused; guard-page exceptions and stack overflow (`0xC00000FD`) not raised;
-x87 state not saved beyond FXSAVE; `RtlUnwind` on the ARM-style `UNWIND_HISTORY_TABLE` cache
+no stack-limit check from the TEB (the walks stop outside the images, when the stack does not
+climb, or after 100000 frames); `NestedException` only sets `NESTED_CALL` (the handler's own
+record is not chained); the `RtlUnwindEx` context argument is only scratch, the unwind runs on
+its own capture; exit unwind (`target_frame` NULL) resumes at `target_ip` in the last context
+reached; x87 state not saved beyond FXSAVE; `RtlUnwind` on the ARM-style `UNWIND_HISTORY_TABLE` cache
 never filled.
 
 ## Chunks

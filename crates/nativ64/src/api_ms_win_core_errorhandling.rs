@@ -2,22 +2,22 @@ use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
-/// The process-wide top-level exception filter (0: none). Nothing dispatches exceptions to it yet.
+/// The process-wide top-level exception filter (0: none), called by `UnhandledExceptionFilter`.
 static UNHANDLED_FILTER: AtomicUsize = AtomicUsize::new(0);
 
 /// Vectored exception handlers `(handle, handler)` in call order (first-registered `first`
-/// ones at the front). Nothing dispatches exceptions to them yet, as for the filter.
+/// ones at the front); [`crate::seh`] calls them before the frames' handlers.
 static VECTORED: Mutex<Vec<(usize, usize)>> = Mutex::new(Vec::new());
 static NEXT_VECTORED: AtomicUsize = AtomicUsize::new(1);
 
 /// The MSVC convention for naming a thread: `RaiseException` with this code and a
 /// `THREADNAME_INFO { u32 kind = 0x1000; const char *name; u32 thread_id (-1: caller); u32 flags }`
 /// as its arguments, caught by the debugger or the caller's own handler.
-const THREAD_NAME_CODE: u32 = 0x406D_1388;
+pub(crate) const THREAD_NAME_CODE: u32 = 0x406D_1388;
 
 /// Names the calling thread as `RaiseException(THREAD_NAME_CODE)` asks; returns false when the
 /// arguments are not a thread-name request. Other threads' names are dropped (shortcut).
-unsafe fn name_thread(nargs: u32, args: *const usize) -> bool {
+pub(crate) unsafe fn name_thread(nargs: u32, args: *const usize) -> bool {
     if args.is_null() || nargs < 3 {
         return false;
     }
@@ -40,6 +40,36 @@ unsafe fn name_thread(nargs: u32, args: *const usize) -> bool {
     }
     true
 }
+
+/// The registered vectored handlers, in call order.
+pub fn vectored_handlers() -> Vec<usize> {
+    let list = VECTORED.lock().unwrap_or_else(|e| e.into_inner());
+    list.iter().map(|&(_, h)| h).collect()
+}
+
+/// The filter `SetUnhandledExceptionFilter` installed (0: none).
+pub fn top_level_filter() -> usize {
+    UNHANDLED_FILTER.load(Ordering::Acquire)
+}
+
+/// `RaiseException`, which must capture its caller's context and so is assembly
+/// ([`crate::seh::nativ64_raise_exception`]): dispatches the exception to the vectored handlers
+/// and the frames' handlers; returns when one continues execution, or (thread-name request)
+/// when nobody took it.
+pub static ASM_EXPORTS: &[crate::Export] = &[
+    crate::Export {
+        module: "api-ms-win-core-errorhandling",
+        name: "RaiseException",
+        addr: crate::seh::nativ64_raise_exception as *const (),
+        status: crate::Status::Native,
+    },
+    crate::Export {
+        module: "kernel32",
+        name: "RaiseException",
+        addr: crate::seh::nativ64_raise_exception as *const (),
+        status: crate::Status::Native,
+    },
+];
 
 thread_local! {
     static LAST_ERROR: Cell<u32> = const { Cell::new(0) };
@@ -77,17 +107,10 @@ win32! {
         }
         handle
     }
-    // Only the thread-name request returns; anything else stops the process with its code, as
-    // no exception dispatch exists yet.
-    Native fn RaiseException(code: u32, flags: u32, nargs: u32, args: *const usize) {
-        if code == THREAD_NAME_CODE && name_thread(nargs, args) {
-            return;
-        }
-        eprintln!(
-            "nativ64: RaiseException code {code:#x} flags {flags:#x} with {nargs} arguments: \
-             no exception dispatch yet"
-        );
-        std::process::abort();
+    // Verdict of the title's top-level filter (-1 continue, 1 execute handler); without one, or
+    // when it declines, reports the exception and stops.
+    Native fn UnhandledExceptionFilter(info: *const crate::seh::ExceptionPointers) -> i32 {
+        crate::seh::unhandled_exception_filter(info)
     }
     Native fn RemoveVectoredExceptionHandler(handle: usize) -> u32 {
         let mut list = VECTORED.lock().unwrap_or_else(|e| e.into_inner());
@@ -104,6 +127,14 @@ win32! {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::seh::nativ64_raise_exception as RaiseException;
+
+    unsafe extern "win64" fn no_filter(_: *const crate::seh::ExceptionPointers) -> i32 {
+        0
+    }
+    unsafe extern "win64" fn no_vectored(_: *mut crate::seh::ExceptionPointers) -> i32 {
+        0
+    }
 
     #[test]
     fn per_thread() {
@@ -124,8 +155,8 @@ mod tests {
     fn vectored_handlers_add_and_remove() {
         unsafe {
             assert_eq!(AddVectoredExceptionHandler(1, 0), 0);
-            let a = AddVectoredExceptionHandler(0, 0x1000);
-            let b = AddVectoredExceptionHandler(1, 0x2000);
+            let a = AddVectoredExceptionHandler(0, no_vectored as *const () as usize);
+            let b = AddVectoredExceptionHandler(1, no_vectored as *const () as usize);
             assert!(a != 0 && b != 0 && a != b);
             {
                 let list = VECTORED.lock().unwrap();
@@ -158,9 +189,16 @@ mod tests {
 
     #[test]
     fn unhandled_filter_returns_previous() {
+        let _lock = crate::seh::FILTER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         unsafe {
-            let first = SetUnhandledExceptionFilter(0x1000);
-            assert_eq!(SetUnhandledExceptionFilter(0x2000), 0x1000);
+            let (f1, f2) = (
+                no_filter as *const () as usize,
+                no_vectored as *const () as usize,
+            );
+            let first = SetUnhandledExceptionFilter(f1);
+            assert_eq!(SetUnhandledExceptionFilter(f2), f1);
             SetUnhandledExceptionFilter(first);
         }
     }

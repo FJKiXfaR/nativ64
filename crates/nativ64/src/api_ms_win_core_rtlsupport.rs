@@ -1,6 +1,6 @@
 //! `api-ms-win-core-rtlsupport`: `RtlPcToFileHeader`, the image containing an address, and the
 //! unwinding support (`RtlLookupFunctionEntry`, `RtlVirtualUnwind`, `RtlCaptureContext`,
-//! `RtlRestoreContext`, `RtlAddFunctionTable`, `RtlDeleteFunctionTable`); the logic is in
+//! `RtlRestoreContext`, `RtlUnwindEx`, `RtlUnwind`, `RtlAddFunctionTable`, `RtlDeleteFunctionTable`); the logic is in
 //! [`crate::seh`].
 //!
 //! Images are the ranges registered with [`crate::process::register_image_range`] (the main
@@ -11,7 +11,7 @@ use crate::process::image_base_of;
 use crate::seh;
 use crate::{Export, Status};
 
-/// The two assembly functions, which cannot go through `win32!` (a Rust wrapper would change
+/// The assembly functions, which cannot go through `win32!` (a Rust wrapper would change
 /// the frame they capture). Also known under `kernel32`.
 pub static ASM_EXPORTS: &[Export] = &[
     Export {
@@ -36,6 +36,30 @@ pub static ASM_EXPORTS: &[Export] = &[
         module: "kernel32",
         name: "RtlRestoreContext",
         addr: seh::nativ64_rtl_restore_context as *const (),
+        status: Status::Native,
+    },
+    Export {
+        module: "api-ms-win-core-rtlsupport",
+        name: "RtlUnwindEx",
+        addr: seh::nativ64_rtl_unwind_ex as *const (),
+        status: Status::Native,
+    },
+    Export {
+        module: "kernel32",
+        name: "RtlUnwindEx",
+        addr: seh::nativ64_rtl_unwind_ex as *const (),
+        status: Status::Native,
+    },
+    Export {
+        module: "api-ms-win-core-rtlsupport",
+        name: "RtlUnwind",
+        addr: seh::nativ64_rtl_unwind as *const (),
+        status: Status::Native,
+    },
+    Export {
+        module: "kernel32",
+        name: "RtlUnwind",
+        addr: seh::nativ64_rtl_unwind as *const (),
         status: Status::Native,
     },
 ];

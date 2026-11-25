@@ -530,6 +530,581 @@ unsafe extern "win64" {
     pub fn nativ64_rtl_restore_context(ctx: *const u8, record: *const u8) -> !;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Level 2: exception dispatch, `RaiseException`, `RtlUnwindEx` / `RtlUnwind`, our own
+// `__C_specific_handler`.
+// ---------------------------------------------------------------------------------------------
+
+pub const STATUS_NONCONTINUABLE_EXCEPTION: u32 = 0xc000_0025;
+pub const STATUS_INVALID_DISPOSITION: u32 = 0xc000_0026;
+pub const STATUS_UNWIND: u32 = 0xc000_0027;
+pub const STATUS_INVALID_UNWIND_TARGET: u32 = 0xc000_0029;
+
+pub const EXCEPTION_NONCONTINUABLE: u32 = 1;
+pub const EXCEPTION_UNWINDING: u32 = 2;
+pub const EXCEPTION_EXIT_UNWIND: u32 = 4;
+pub const EXCEPTION_NESTED_CALL: u32 = 0x10;
+pub const EXCEPTION_TARGET_UNWIND: u32 = 0x20;
+pub const EXCEPTION_COLLIDED_UNWIND: u32 = 0x40;
+
+/// A walk or a handler chain longer than this is taken for a corrupt stack.
+const MAX_FRAMES: usize = 100_000;
+
+/// `EXCEPTION_RECORD`.
+#[repr(C)]
+pub struct ExceptionRecord {
+    pub code: u32,
+    pub flags: u32,
+    pub record: usize,
+    pub address: usize,
+    pub nparams: u32,
+    pub pad: u32,
+    pub info: [usize; 15],
+}
+
+impl ExceptionRecord {
+    fn new(code: u32, flags: u32, address: usize) -> ExceptionRecord {
+        ExceptionRecord {
+            code,
+            flags,
+            record: 0,
+            address,
+            nparams: 0,
+            pad: 0,
+            info: [0; 15],
+        }
+    }
+}
+
+/// `EXCEPTION_POINTERS`.
+#[repr(C)]
+pub struct ExceptionPointers {
+    pub record: *mut ExceptionRecord,
+    pub context: *mut u8,
+}
+
+/// `DISPATCHER_CONTEXT` (0x50 bytes).
+#[repr(C)]
+pub struct DispatcherContext {
+    pub control_pc: usize,
+    pub image_base: usize,
+    pub function_entry: usize,
+    pub establisher_frame: usize,
+    pub target_ip: usize,
+    pub context_record: usize,
+    pub language_handler: usize,
+    pub handler_data: usize,
+    pub history_table: usize,
+    pub scope_index: u32,
+    pub fill0: u32,
+}
+
+type FrameHandler =
+    unsafe extern "win64" fn(*mut ExceptionRecord, usize, *mut u8, *mut DispatcherContext) -> i32;
+
+/// A CONTEXT on the Rust stack.
+#[repr(C, align(16))]
+#[derive(Clone)]
+struct CtxBuf([u8; CONTEXT_SIZE]);
+
+impl CtxBuf {
+    unsafe fn from(p: *const u8) -> CtxBuf {
+        let mut b = CtxBuf([0; CONTEXT_SIZE]);
+        std::ptr::copy_nonoverlapping(p, b.0.as_mut_ptr(), CONTEXT_SIZE);
+        b
+    }
+    fn ptr(&mut self) -> *mut u8 {
+        self.0.as_mut_ptr()
+    }
+}
+
+thread_local! {
+    /// Contexts of the exceptions being dispatched on this thread (innermost last). A second
+    /// pass that reaches a frame no unwind info describes (our own dispatcher) continues from
+    /// the innermost one, as the Windows dispatcher frames would have been unwound.
+    static ACTIVE: std::cell::RefCell<Vec<usize>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn active_top() -> Option<usize> {
+    ACTIVE.with(|a| a.borrow().last().copied())
+}
+
+/// Tests that install a top-level filter hold this, so that they do not step on each other.
+#[cfg(test)]
+pub static FILTER_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+#[cfg(test)]
+thread_local! {
+    static STOPPED: std::cell::RefCell<Vec<(u32, usize)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The `(code, address)` of every fatal exception reported on this thread (test builds only:
+/// they record instead of ending the process).
+#[cfg(test)]
+pub fn take_stopped() -> Vec<(u32, usize)> {
+    STOPPED.with(|s| std::mem::take(&mut *s.borrow_mut()))
+}
+
+/// Reports a fatal exception (`fatal exception 0x… at image+0x…`) and ends the process.
+fn stop(code: u32, address: usize) {
+    #[cfg(test)]
+    {
+        STOPPED.with(|s| s.borrow_mut().push((code, address)));
+    }
+    #[cfg(not(test))]
+    {
+        match crate::process::image_base_of(address) {
+            Some(b) => eprintln!(
+                "nativ64: fatal exception {code:#x} at image {b:#x}+{:#x}",
+                address - b
+            ),
+            None => eprintln!("nativ64: fatal exception {code:#x} at {address:#x}"),
+        }
+        std::process::exit(1);
+    }
+}
+
+/// One step of a walk.
+struct Frame {
+    pc: usize,
+    base: usize,
+    entry: usize,
+    u: Unwound,
+}
+
+/// Unwinds `c` to the caller of its current frame. `None` outside every image, on malformed
+/// unwind info, an unreadable stack or a step that does not climb the stack.
+unsafe fn step(c: *mut u8, handler_type: u32) -> Option<Frame> {
+    let pc = Ctx(c).get(CONTEXT_RIP_OFF) as usize;
+    let rsp = Ctx(c).rsp();
+    let (base, entry) = lookup_function_entry(pc);
+    if base == 0 || (entry == 0 && !mapped(rsp as usize, 8)) {
+        return None;
+    }
+    let u = virtual_unwind(
+        handler_type,
+        base,
+        pc,
+        entry as *const RuntimeFunction,
+        c,
+        std::ptr::null_mut(),
+    )
+    .ok()?;
+    if Ctx(c).rsp() <= rsp {
+        return None;
+    }
+    Some(Frame { pc, base, entry, u })
+}
+
+fn dispatcher(f: &Frame, target_ip: usize, context: *mut u8) -> DispatcherContext {
+    DispatcherContext {
+        control_pc: f.pc,
+        image_base: f.base,
+        function_entry: f.entry,
+        establisher_frame: f.u.establisher,
+        target_ip,
+        context_record: context as usize,
+        language_handler: f.u.handler,
+        handler_data: f.u.handler_data,
+        history_table: 0,
+        scope_index: 0,
+        fill0: 0,
+    }
+}
+
+/// First pass: vectored handlers, then the frames' exception handlers. True when one continued
+/// execution; false when nobody took the exception (a handler that takes it by unwinding never
+/// returns).
+unsafe fn search(rec: *mut ExceptionRecord, ctx: *mut u8) -> bool {
+    ACTIVE.with(|a| a.borrow_mut().push(ctx as usize));
+    let r = search_frames(rec, ctx);
+    ACTIVE.with(|a| {
+        a.borrow_mut().pop();
+    });
+    r
+}
+
+unsafe fn search_frames(rec: *mut ExceptionRecord, ctx: *mut u8) -> bool {
+    let mut ptrs = ExceptionPointers {
+        record: rec,
+        context: ctx,
+    };
+    for h in crate::api_ms_win_core_errorhandling::vectored_handlers() {
+        let f: unsafe extern "win64" fn(*mut ExceptionPointers) -> i32 = std::mem::transmute(h);
+        if f(&mut ptrs) == -1 {
+            return resume(rec, ctx);
+        }
+    }
+    let mut c = CtxBuf::from(ctx);
+    for i in 0..MAX_FRAMES {
+        let mut frame_ctx = c.clone();
+        let Some(f) = step(c.ptr(), UNW_FLAG_EHANDLER) else {
+            break;
+        };
+        if f.u.handler != 0 {
+            // The first frame gets the exception context itself, so a handler can change it.
+            let fc = if i == 0 { ctx } else { frame_ctx.ptr() };
+            let mut d = dispatcher(&f, 0, fc);
+            let h: FrameHandler = std::mem::transmute(f.u.handler);
+            match h(rec, f.u.establisher, fc, &mut d) {
+                0 => return resume(rec, ctx),
+                1 => {}
+                // The handler raised and survived an exception of its own: keep searching,
+                // marked (the nested record chain is not followed).
+                2 => (*rec).flags |= EXCEPTION_NESTED_CALL,
+                _ => return escalate(rec, ctx, STATUS_INVALID_DISPOSITION),
+            }
+        }
+    }
+    false
+}
+
+/// A handler continues execution: refused for a non-continuable exception.
+unsafe fn resume(rec: *mut ExceptionRecord, ctx: *mut u8) -> bool {
+    if (*rec).flags & EXCEPTION_NONCONTINUABLE == 0 {
+        return true;
+    }
+    escalate(rec, ctx, STATUS_NONCONTINUABLE_EXCEPTION)
+}
+
+/// Raises `code` (non-continuable) about `old`, from the same context; always true (execution
+/// goes on only if the new exception was handled, or ends).
+unsafe fn escalate(old: *mut ExceptionRecord, ctx: *mut u8, code: u32) -> bool {
+    if (*old).code == code {
+        // The escalation itself was continued: give up.
+        stop(code, (*old).address);
+        return true;
+    }
+    let mut new = ExceptionRecord::new(code, EXCEPTION_NONCONTINUABLE, (*old).address);
+    new.record = old as usize;
+    if !search(&mut new, ctx) {
+        unhandled(&mut new, ctx);
+    }
+    true
+}
+
+/// Nobody handled `rec`: the top-level filter, then report and stop.
+unsafe fn unhandled(rec: *mut ExceptionRecord, ctx: *mut u8) {
+    let ptrs = ExceptionPointers {
+        record: rec,
+        context: ctx,
+    };
+    if filter_verdict(&ptrs) != -1 {
+        stop((*rec).code, (*rec).address);
+    }
+}
+
+/// What the title's top-level filter says: `-1` continue, `1` execute handler (terminate), `0`
+/// when there is none or it declines.
+unsafe fn filter_verdict(info: *const ExceptionPointers) -> i32 {
+    let f = crate::api_ms_win_core_errorhandling::top_level_filter();
+    if f == 0 {
+        return 0;
+    }
+    let f: unsafe extern "win64" fn(*const ExceptionPointers) -> i32 = std::mem::transmute(f);
+    match f(info) {
+        -1 => -1,
+        1 => 1,
+        _ => 0,
+    }
+}
+
+/// `UnhandledExceptionFilter`: returns the top-level filter's verdict (`-1` continue, `1`
+/// execute handler); without a filter, or when it declines, reports the exception, stops, and
+/// returns `1`.
+///
+/// # Safety
+/// `info` must be a valid `EXCEPTION_POINTERS`.
+pub unsafe fn unhandled_exception_filter(info: *const ExceptionPointers) -> i32 {
+    let v = filter_verdict(info);
+    if v == 0 {
+        let rec = (*info).record;
+        stop((*rec).code, (*rec).address);
+        return 1;
+    }
+    v
+}
+
+/// The body of `RaiseException`, called with the caller's captured context.
+unsafe extern "win64" fn raise_exception_impl(
+    code: u32,
+    flags: u32,
+    nargs: u32,
+    args: *const usize,
+    ctx: *mut u8,
+    _caller_stack: *const usize,
+) {
+    let mut rec = ExceptionRecord::new(code, flags, Ctx(ctx).get(CONTEXT_RIP_OFF) as usize);
+    if !args.is_null() {
+        let n = nargs.min(15) as usize;
+        rec.nparams = n as u32;
+        std::ptr::copy_nonoverlapping(args, rec.info.as_mut_ptr(), n);
+    }
+    if search(&mut rec, ctx) {
+        return;
+    }
+    // The thread-name request is for a debugger: it is served only when no handler took it.
+    if code == crate::api_ms_win_core_errorhandling::THREAD_NAME_CODE
+        && crate::api_ms_win_core_errorhandling::name_thread(nargs, args)
+    {
+        return;
+    }
+    unhandled(&mut rec, ctx);
+}
+
+/// `RtlUnwindEx`'s second pass. Walks from `start` (the caller's context), calling the unwind
+/// handlers, until the frame whose establisher is `target_frame` (`0`: every frame), then
+/// resumes there at `target_ip` with `rax = retval`. `bridged`: `start` is already the
+/// exception context (the caller is our own dispatcher). Returns only on error.
+///
+/// # Safety
+/// `start` is a CONTEXT; `rec_in` null or an `EXCEPTION_RECORD`.
+pub unsafe fn unwind_ex(
+    target_frame: usize,
+    target_ip: usize,
+    rec_in: *mut ExceptionRecord,
+    retval: usize,
+    start: *const u8,
+    mut bridged: bool,
+) {
+    let mut local = ExceptionRecord::new(STATUS_UNWIND, 0, 0);
+    let rec: *mut ExceptionRecord = if rec_in.is_null() {
+        local.address = Ctx(start as *mut u8).get(CONTEXT_RIP_OFF) as usize;
+        &mut local
+    } else {
+        rec_in
+    };
+    (*rec).flags |= EXCEPTION_UNWINDING;
+    if target_frame == 0 {
+        (*rec).flags |= EXCEPTION_EXIT_UNWIND;
+    }
+    let mut c = CtxBuf::from(start);
+    for _ in 0..MAX_FRAMES {
+        let mut frame = c.clone();
+        let Some(f) = step(c.ptr(), UNW_FLAG_UHANDLER) else {
+            if !bridged {
+                if let Some(p) = active_top() {
+                    c = CtxBuf::from(p as *const u8);
+                    bridged = true;
+                    continue;
+                }
+            }
+            break;
+        };
+        if target_frame != 0 && f.u.establisher > target_frame {
+            break;
+        }
+        let is_target = target_frame != 0 && f.u.establisher == target_frame;
+        if f.u.handler != 0 {
+            let mut flags = (*rec).flags & !EXCEPTION_TARGET_UNWIND;
+            if is_target {
+                flags |= EXCEPTION_TARGET_UNWIND;
+            }
+            (*rec).flags = flags;
+            let mut d = dispatcher(&f, target_ip, frame.ptr());
+            let h: FrameHandler = std::mem::transmute(f.u.handler);
+            match h(rec, f.u.establisher, frame.ptr(), &mut d) {
+                1 => {}
+                3 => {
+                    // Collided unwind: the handler unwound past this frame itself and left
+                    // the context to continue from.
+                    (*rec).flags |= EXCEPTION_COLLIDED_UNWIND;
+                    c = frame.clone();
+                    if step(c.ptr(), 0).is_none() {
+                        break;
+                    }
+                    continue;
+                }
+                _ => {
+                    stop(STATUS_INVALID_DISPOSITION, f.pc);
+                    return;
+                }
+            }
+        }
+        if is_target {
+            let fc = Ctx(frame.ptr());
+            fc.set_gp(0, retval as u64);
+            if target_ip != 0 {
+                fc.set(CONTEXT_RIP_OFF, target_ip as u64);
+            }
+            // The dispatches this unwind abandons are those whose context is below the target.
+            let sp = fc.rsp() as usize;
+            ACTIVE.with(|a| a.borrow_mut().retain(|&p| p >= sp));
+            nativ64_rtl_restore_context(frame.ptr(), std::ptr::null());
+        }
+    }
+    if target_frame == 0 && target_ip != 0 {
+        // Exit unwind: every frame is gone, resume at the target with the last context.
+        let fc = Ctx(c.ptr());
+        fc.set_gp(0, retval as u64);
+        fc.set(CONTEXT_RIP_OFF, target_ip as u64);
+        ACTIVE.with(|a| a.borrow_mut().clear());
+        nativ64_rtl_restore_context(c.ptr(), std::ptr::null());
+    }
+    stop(STATUS_INVALID_UNWIND_TARGET, (*rec).address);
+}
+
+/// The bodies of `RtlUnwindEx` / `RtlUnwind`, called with the caller's captured context.
+unsafe extern "win64" fn rtl_unwind_ex_impl(
+    target_frame: usize,
+    target_ip: usize,
+    record: *mut ExceptionRecord,
+    retval: usize,
+    ctx: *mut u8,
+    _caller_stack: *const usize,
+) {
+    unwind_ex(target_frame, target_ip, record, retval, ctx, false);
+}
+
+/// `__C_specific_handler` (the frame handler of the MSVC `__try` family; format in
+/// `docs/seh.md`).
+///
+/// # Safety
+/// The arguments are those of a frame handler: record, establisher frame, context and
+/// dispatcher context with this function's language data.
+pub unsafe fn c_specific_handler(
+    rec: *mut ExceptionRecord,
+    frame: usize,
+    ctx: *mut u8,
+    disp: *mut DispatcherContext,
+) -> i32 {
+    let d = &mut *disp;
+    let base = d.image_base;
+    let data = d.handler_data as *const u8;
+    let count = data.cast::<u32>().read_unaligned() as usize;
+    let scope = |i: usize| {
+        let p = data.add(4 + 16 * i).cast::<u32>();
+        (
+            p.read_unaligned(),
+            p.add(1).read_unaligned(),
+            p.add(2).read_unaligned(),
+            p.add(3).read_unaligned(),
+        )
+    };
+    let rva = d.control_pc.wrapping_sub(base) as u32;
+    let flags = (*rec).flags;
+    if flags & EXCEPTION_UNWINDING != 0 {
+        let target_rva = d.target_ip.wrapping_sub(base) as u32;
+        for i in d.scope_index as usize..count {
+            let (b, e, h, t) = scope(i);
+            if rva < b || rva >= e || t != 0 {
+                continue;
+            }
+            // The frame that stays: a __finally around the landing pad does not run.
+            if flags & EXCEPTION_TARGET_UNWIND != 0 && target_rva >= b && target_rva < e {
+                continue;
+            }
+            d.scope_index = i as u32 + 1;
+            let fin: unsafe extern "win64" fn(u8, usize) = std::mem::transmute(base + h as usize);
+            fin(1, frame);
+        }
+        return 1;
+    }
+    for i in d.scope_index as usize..count {
+        let (b, e, h, t) = scope(i);
+        if rva < b || rva >= e || t == 0 {
+            continue;
+        }
+        if h != 1 {
+            let mut ptrs = ExceptionPointers {
+                record: rec,
+                context: ctx,
+            };
+            let filter: unsafe extern "win64" fn(*mut ExceptionPointers, usize) -> i32 =
+                std::mem::transmute(base + h as usize);
+            let r = filter(&mut ptrs, frame);
+            if r < 0 {
+                return 0;
+            }
+            if r == 0 {
+                continue;
+            }
+        }
+        d.scope_index = i as u32;
+        let start = active_top().unwrap_or(d.context_record) as *const u8;
+        unwind_ex(frame, base + t as usize, rec, 0, start, true);
+        return 1;
+    }
+    1
+}
+
+// The entries that capture the caller's context before running Rust: `RaiseException`,
+// `RtlUnwindEx`, `RtlUnwind`. Frame: 0x20 of outgoing home space, the 5th and 6th arguments
+// (the captured context and the address of the caller's stack arguments), the context at
+// rsp+0x30. They resume through `RtlRestoreContext` (RaiseException continues after its call,
+// the unwinds only get there on error).
+macro_rules! context_entry {
+    ($name:literal, $imp:path) => {
+        std::arch::global_asm!(
+            ".text",
+            concat!(".globl ", $name),
+            concat!(".type ", $name, ",@function"),
+            concat!($name, ":"),
+            "sub rsp, 0x508",
+            "lea r10, [rsp+0x30]",
+            "mov [r10+0x78], rax",
+            "mov [r10+0x80], rcx",
+            "mov [r10+0x88], rdx",
+            "mov [r10+0x90], rbx",
+            "mov [r10+0xa0], rbp",
+            "mov [r10+0xa8], rsi",
+            "mov [r10+0xb0], rdi",
+            "mov [r10+0xb8], r8",
+            "mov [r10+0xc0], r9",
+            "mov [r10+0xd8], r12",
+            "mov [r10+0xe0], r13",
+            "mov [r10+0xe8], r14",
+            "mov [r10+0xf0], r15",
+            "lea rax, [rsp+0x510]",
+            "mov [r10+0x98], rax",
+            "mov rax, [rsp+0x508]",
+            "mov [r10+0xf8], rax",
+            "pushfq",
+            "pop rax",
+            "mov [r10+0x44], eax",
+            "mov ax, cs",
+            "mov [r10+0x38], ax",
+            "stmxcsr [r10+0x34]",
+            "fxsave [r10+0x100]",
+            "mov dword ptr [r10+0x30], 0x10000b",
+            "mov [rsp+0x20], r10",
+            "lea rax, [rsp+0x530]",
+            "mov [rsp+0x28], rax",
+            "call {imp}",
+            "lea rcx, [rsp+0x30]",
+            "xor edx, edx",
+            "call nativ64_rtl_restore_context",
+            concat!(".size ", $name, ", .-", $name),
+            imp = sym $imp,
+        );
+    };
+}
+
+context_entry!("nativ64_raise_exception", raise_exception_impl);
+context_entry!("nativ64_rtl_unwind_ex", rtl_unwind_ex_impl);
+context_entry!("nativ64_rtl_unwind", rtl_unwind_ex_impl);
+
+unsafe extern "win64" {
+    /// `RaiseException(code, flags, nargs, args)`.
+    pub fn nativ64_raise_exception(code: u32, flags: u32, nargs: u32, args: *const usize);
+    /// `RtlUnwindEx(target_frame, target_ip, record, retval, context, history)`.
+    pub fn nativ64_rtl_unwind_ex(
+        target_frame: usize,
+        target_ip: usize,
+        record: *mut ExceptionRecord,
+        retval: usize,
+        context: *mut u8,
+        history: usize,
+    );
+    /// `RtlUnwind(target_frame, target_ip, record, retval)`.
+    pub fn nativ64_rtl_unwind(
+        target_frame: usize,
+        target_ip: usize,
+        record: *mut ExceptionRecord,
+        retval: usize,
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1187,5 +1762,495 @@ mod tests {
         assert_eq!(r[3], u64::from_le_bytes(x[8..].try_into().unwrap()));
         assert_eq!(r[4], top);
         assert_eq!(r[5] & 0xcd5, 0x45);
+    }
+
+    /// Dispatch, `RaiseException`, `RtlUnwindEx` and `__C_specific_handler` on generated code.
+    mod dispatch {
+        use super::*;
+        use crate::api_ms_win_core_errorhandling::{
+            AddVectoredExceptionHandler, RemoveVectoredExceptionHandler,
+            SetUnhandledExceptionFilter, UnhandledExceptionFilter,
+        };
+        use std::cell::{Cell, RefCell};
+
+        type Log = Vec<(&'static str, u32, u32)>;
+
+        thread_local! {
+            static LOG: RefCell<Log> = const { RefCell::new(Vec::new()) };
+            static MODE: Cell<i32> = const { Cell::new(0) };
+            static FILTER: Cell<i32> = const { Cell::new(0) };
+        }
+
+        fn log(tag: &'static str, a: u32, b: u32) {
+            LOG.with(|l| l.borrow_mut().push((tag, a, b)));
+        }
+        fn take_log() -> Log {
+            LOG.with(|l| std::mem::take(&mut *l.borrow_mut()))
+        }
+
+        /// Offset of the return address of the call, and of the landing pad.
+        const RET: u32 = 29;
+        const LABEL: u32 = 40;
+        const CALL_BEGIN: u32 = 4;
+        const CALL_END: u32 = 34;
+
+        /// `sub rsp,0x28; call target(ecx = code, 0, 0, 0); mov eax,tail; add rsp,0x28; ret;
+        /// [landing pad: mov eax,label; ] add rsp,0x28; ret`.
+        fn body(target: usize, ecx: u32, tail: u32, label: Option<u32>) -> Vec<u8> {
+            let mut v = vec![0x48, 0x83, 0xec, 0x28, 0xb9];
+            v.extend_from_slice(&ecx.to_le_bytes());
+            v.extend_from_slice(&[0x31, 0xd2, 0x45, 0x31, 0xc0, 0x45, 0x31, 0xc9, 0x48, 0xb8]);
+            v.extend_from_slice(&(target as u64).to_le_bytes());
+            v.extend_from_slice(&[0xff, 0xd0, 0xb8]);
+            v.extend_from_slice(&tail.to_le_bytes());
+            v.extend_from_slice(&[0x48, 0x83, 0xc4, 0x28, 0xc3, 0x90]);
+            assert_eq!(v.len(), LABEL as usize);
+            if let Some(x) = label {
+                v.push(0xb8);
+                v.extend_from_slice(&x.to_le_bytes());
+            }
+            v.extend_from_slice(&[0x48, 0x83, 0xc4, 0x28, 0xc3]);
+            v
+        }
+
+        /// Unwind info of `body` (ALLOC_SMALL 0x28) with a language handler and scope table.
+        fn info(flags: u8, handler: u32, scopes: &[[u32; 4]]) -> Vec<u8> {
+            let mut v = vec![1 | flags << 3, 4, 1, 0, 4, 0x42, 0, 0];
+            if flags != 0 {
+                v.extend_from_slice(&handler.to_le_bytes());
+                v.extend_from_slice(&(scopes.len() as u32).to_le_bytes());
+                for s in scopes {
+                    for x in s {
+                        v.extend_from_slice(&x.to_le_bytes());
+                    }
+                }
+            }
+            v
+        }
+
+        /// Function `i` of the image: code at 0x1000 + 0x100 i, unwind info at 0x2000 + 0x100 i.
+        fn func(m: &Mem, i: usize, code: Vec<u8>, info: Vec<u8>) -> u32 {
+            let (begin, ui) = (0x1000 + 0x100 * i as u32, 0x2000 + 0x100 * i as u32);
+            m.put(begin as usize, &code);
+            m.put(ui as usize, &info);
+            m.rf(i, begin, begin + code.len() as u32, ui);
+            begin
+        }
+
+        /// A jump to a Rust function, reachable by RVA; returns the RVA.
+        fn stub(m: &Mem, k: usize, addr: usize) -> u32 {
+            let off = 0x3000 + 0x10 * k;
+            m.put(off, &[0xff, 0x25, 0, 0, 0, 0]);
+            m.put(off + 6, &(addr as u64).to_le_bytes());
+            off as u32
+        }
+
+        unsafe fn call0(addr: usize) -> u32 {
+            let f: unsafe extern "win64" fn() -> u32 = std::mem::transmute(addr);
+            f()
+        }
+
+        // ---- handlers ----
+
+        unsafe extern "win64" fn vec_resume(p: *mut ExceptionPointers) -> i32 {
+            let r = &*(*p).record;
+            if r.code != 0xe001_0001 {
+                return 0;
+            }
+            log("vec", r.nparams, (r.address & 0xfff) as u32);
+            -1
+        }
+
+        unsafe extern "win64" fn vec_args(p: *mut ExceptionPointers) -> i32 {
+            let r = &*(*p).record;
+            if r.code != 0xe001_0002 {
+                return 0;
+            }
+            log("args", r.nparams, r.info[2] as u32);
+            -1
+        }
+
+        unsafe extern "win64" fn vec_codes(p: *mut ExceptionPointers) -> i32 {
+            let r = &*(*p).record;
+            match r.code {
+                0xe003_0001 => {
+                    log("vec", r.code, r.flags);
+                    -1
+                }
+                0xe003_0002 | STATUS_NONCONTINUABLE_EXCEPTION | STATUS_INVALID_DISPOSITION => {
+                    let orig = if r.record != 0 {
+                        (*(r.record as *const ExceptionRecord)).code
+                    } else {
+                        0
+                    };
+                    log("vec", r.code, orig);
+                    0
+                }
+                _ => 0,
+            }
+        }
+
+        unsafe extern "win64" fn h_inner(
+            rec: *mut ExceptionRecord,
+            _frame: usize,
+            _ctx: *mut u8,
+            _d: *mut DispatcherContext,
+        ) -> i32 {
+            let code = (*rec).code;
+            if code != 0xe002_0001 && code != STATUS_UNWIND {
+                return 1;
+            }
+            log("inner", (*rec).flags, code);
+            if MODE.get() == 4 && (*rec).flags & EXCEPTION_UNWINDING != 0 {
+                return 3;
+            }
+            1
+        }
+
+        unsafe extern "win64" fn h_outer(
+            rec: *mut ExceptionRecord,
+            frame: usize,
+            ctx: *mut u8,
+            d: *mut DispatcherContext,
+        ) -> i32 {
+            let code = (*rec).code;
+            if code != 0xe002_0001 && code != STATUS_UNWIND {
+                return 1;
+            }
+            let flags = (*rec).flags;
+            log("outer", flags, code);
+            if flags & EXCEPTION_UNWINDING == 0 {
+                let begin = (*((*d).function_entry as *const RuntimeFunction)).begin as usize;
+                let target = (*d).image_base + begin + LABEL as usize;
+                match MODE.get() {
+                    1 => nativ64_rtl_unwind(frame, target, std::ptr::null_mut(), 99),
+                    2 => nativ64_rtl_unwind_ex(frame + 0x1_0000, target, rec, 99, ctx, 0),
+                    3 => nativ64_rtl_unwind_ex(0, 0, rec, 99, ctx, 0),
+                    _ => nativ64_rtl_unwind_ex(frame, target, rec, 99, ctx, 0),
+                }
+            }
+            1
+        }
+
+        unsafe extern "win64" fn h_bad(
+            rec: *mut ExceptionRecord,
+            _frame: usize,
+            _ctx: *mut u8,
+            _d: *mut DispatcherContext,
+        ) -> i32 {
+            if (*rec).code == 0xe003_0002 || (*rec).code == STATUS_INVALID_DISPOSITION {
+                9
+            } else {
+                1
+            }
+        }
+
+        unsafe extern "win64" fn filt(p: *mut ExceptionPointers, frame: usize) -> i32 {
+            assert_ne!(frame, 0);
+            log("filter", (*(*p).record).code, 0);
+            FILTER.get()
+        }
+
+        unsafe extern "win64" fn fin(abnormal: u8, frame: usize) {
+            assert_ne!(frame, 0);
+            log("fin", abnormal as u32, 0);
+        }
+
+        unsafe extern "win64" fn uef(p: *const ExceptionPointers) -> i32 {
+            match (*(*p).record).code {
+                0xe004_0001 => -1,
+                0xe004_0002 => 1,
+                _ => 0,
+            }
+        }
+
+        // ---- tests ----
+
+        #[test]
+        fn raise_continued_by_a_vectored_handler() {
+            let m = Mem::new();
+            let raise = nativ64_raise_exception as *const () as usize;
+            let f = func(&m, 0, body(raise, 0xe001_0001, 42, None), info(0, 0, &[]));
+            m.register(1);
+            unsafe {
+                let h = AddVectoredExceptionHandler(0, vec_resume as *const () as usize);
+                assert_eq!(
+                    call0(m.0 + f as usize),
+                    42,
+                    "execution resumes after the call"
+                );
+                assert_eq!(RemoveVectoredExceptionHandler(h), 1);
+            }
+            assert_eq!(take_log(), [("vec", 0, RET)]);
+            assert!(take_stopped().is_empty());
+        }
+
+        #[test]
+        fn raise_passes_its_arguments() {
+            let args: [usize; 20] = std::array::from_fn(|i| 10 + i);
+            unsafe {
+                let h = AddVectoredExceptionHandler(0, vec_args as *const () as usize);
+                nativ64_raise_exception(0xe001_0002, 0, 20, args.as_ptr());
+                nativ64_raise_exception(0xe001_0002, 0, 3, args.as_ptr());
+                // arguments announced but not given
+                nativ64_raise_exception(0xe001_0002, 0, 5, std::ptr::null());
+                RemoveVectoredExceptionHandler(h);
+            }
+            assert_eq!(
+                take_log(),
+                [("args", 15, 12), ("args", 3, 12), ("args", 0, 0)]
+            );
+        }
+
+        /// A (outer) calls B (inner) which raises; B's handler searches on, A's unwinds.
+        fn chain(mode: i32) -> (u32, Log) {
+            MODE.set(mode);
+            let m = Mem::new();
+            let b_addr = m.0 + 0x1100;
+            let ho = stub(&m, 0, h_outer as *const () as usize);
+            let hi = stub(&m, 1, h_inner as *const () as usize);
+            func(&m, 0, body(b_addr, 0, 5, None), info(3, ho, &[]));
+            let raise = nativ64_raise_exception as *const () as usize;
+            func(&m, 1, body(raise, 0xe002_0001, 6, None), info(3, hi, &[]));
+            m.register(2);
+            let r = unsafe { call0(m.0 + 0x1000) };
+            (r, take_log())
+        }
+
+        #[test]
+        fn unwind_calls_unwind_handlers_and_lands_on_the_target() {
+            let c = 0xe002_0001;
+            let (r, l) = chain(0);
+            assert_eq!(r, 99, "the landing pad sees the return value");
+            assert_eq!(
+                l,
+                [
+                    ("inner", 0, c),
+                    ("outer", 0, c),
+                    ("inner", EXCEPTION_UNWINDING, c),
+                    ("outer", EXCEPTION_UNWINDING | EXCEPTION_TARGET_UNWIND, c),
+                ]
+            );
+            assert!(take_stopped().is_empty());
+        }
+
+        #[test]
+        fn rtl_unwind_without_a_record_makes_one() {
+            let (r, l) = chain(1);
+            assert_eq!(r, 99);
+            let u = STATUS_UNWIND;
+            assert_eq!(l[2], ("inner", EXCEPTION_UNWINDING, u));
+            assert_eq!(
+                l[3],
+                ("outer", EXCEPTION_UNWINDING | EXCEPTION_TARGET_UNWIND, u)
+            );
+        }
+
+        #[test]
+        fn unwind_to_a_frame_that_is_not_on_the_stack_is_fatal() {
+            let (r, l) = chain(2);
+            // the failed unwind returned to the handler, the search went on and found nobody;
+            // the raise returned, then A's own tail ran
+            assert_eq!(r, 5);
+            assert_eq!(l.len(), 4, "{l:?}");
+            let codes: Vec<u32> = take_stopped().iter().map(|s| s.0).collect();
+            assert_eq!(codes, [STATUS_INVALID_UNWIND_TARGET, 0xe002_0001]);
+        }
+
+        #[test]
+        fn exit_unwind_has_its_flag() {
+            let (_, l) = chain(3);
+            let f = EXCEPTION_UNWINDING | EXCEPTION_EXIT_UNWIND;
+            assert!(l.contains(&("inner", f, 0xe002_0001)), "{l:?}");
+            assert!(l.contains(&("outer", f, 0xe002_0001)), "{l:?}");
+            assert_eq!(take_stopped()[0].0, STATUS_INVALID_UNWIND_TARGET);
+        }
+
+        #[test]
+        fn a_collided_unwind_goes_on_from_the_handlers_context() {
+            let (r, l) = chain(4);
+            assert_eq!(r, 99);
+            let c = 0xe002_0001;
+            assert_eq!(l[2], ("inner", EXCEPTION_UNWINDING, c));
+            let flags = EXCEPTION_UNWINDING | EXCEPTION_COLLIDED_UNWIND | EXCEPTION_TARGET_UNWIND;
+            assert_eq!(l[3], ("outer", flags, c));
+        }
+
+        /// H (scopes given) calls K (a `__finally` around its call) which raises.
+        fn c_specific(scopes: &dyn Fn(u32, u32) -> Vec<[u32; 4]>, filter: i32) -> (u32, Log) {
+            FILTER.set(filter);
+            let m = Mem::new();
+            let hs = stub(
+                &m,
+                0,
+                crate::vcruntime140::__C_specific_handler as *const () as usize,
+            );
+            let fl = stub(&m, 1, filt as *const () as usize);
+            let fi = stub(&m, 2, fin as *const () as usize);
+            let hscopes = scopes(fl, 0x1000 + LABEL);
+            func(
+                &m,
+                0,
+                body(m.0 + 0x1100, 0, 1, Some(7)),
+                info(3, hs, &hscopes),
+            );
+            let kscopes = [[0x1100 + CALL_BEGIN, 0x1100 + CALL_END, fi, 0]];
+            let raise = nativ64_raise_exception as *const () as usize;
+            func(
+                &m,
+                1,
+                body(raise, 0xe005_0001, 5, None),
+                info(3, hs, &kscopes),
+            );
+            m.register(2);
+            let r = unsafe { call0(m.0 + 0x1000) };
+            (r, take_log())
+        }
+
+        fn except(handler: u32, target: u32) -> [u32; 4] {
+            [0x1000 + CALL_BEGIN, 0x1000 + CALL_END, handler, target]
+        }
+
+        const C: u32 = 0xe005_0001;
+
+        #[test]
+        fn except_filter_executes_and_runs_the_finally() {
+            let (r, l) = c_specific(&|fl, label| vec![except(fl, label)], 1);
+            assert_eq!(r, 7, "lands in the __except body");
+            assert_eq!(l, [("filter", C, 0), ("fin", 1, 0)]);
+            assert!(take_stopped().is_empty());
+        }
+
+        #[test]
+        fn except_filter_searches_on_then_the_exception_is_fatal() {
+            let (r, l) = c_specific(&|fl, label| vec![except(fl, label)], 0);
+            assert_eq!(r, 1, "RaiseException returned in a test build");
+            assert_eq!(l, [("filter", C, 0)], "no unwind, no finally");
+            let s = take_stopped();
+            assert_eq!(s.len(), 1);
+            assert_eq!(s[0].0, C);
+        }
+
+        #[test]
+        fn except_filter_continues_execution() {
+            let (r, l) = c_specific(&|fl, label| vec![except(fl, label)], -1);
+            assert_eq!(r, 1);
+            assert_eq!(l, [("filter", C, 0)]);
+            assert!(take_stopped().is_empty());
+        }
+
+        #[test]
+        fn constant_execute_handler() {
+            let (r, l) = c_specific(&|_, label| vec![except(1, label)], 0);
+            assert_eq!(r, 7);
+            assert_eq!(l, [("fin", 1, 0)]);
+        }
+
+        #[test]
+        fn nested_scopes_inner_filter_declines() {
+            let (r, l) = c_specific(&|fl, label| vec![except(fl, label), except(1, label)], 0);
+            assert_eq!(r, 7);
+            assert_eq!(l, [("filter", C, 0), ("fin", 1, 0)]);
+        }
+
+        #[test]
+        fn a_finally_around_the_landing_pad_does_not_run() {
+            let (r, l) = c_specific(
+                &|fin_stub, label| {
+                    // a __try/__finally enclosing the whole __try/__except, landing pad
+                    // included (`fin_stub` is the filter stub: calling it would be logged)
+                    vec![
+                        [0x1000 + CALL_BEGIN, 0x1000 + LABEL + 5, fin_stub, 0],
+                        except(1, label),
+                    ]
+                },
+                0,
+            );
+            assert_eq!(r, 7);
+            // only K's own finally ran
+            assert_eq!(l, [("fin", 1, 0)]);
+        }
+
+        #[test]
+        fn noncontinuable_exception_cannot_be_continued() {
+            unsafe {
+                let h = AddVectoredExceptionHandler(0, vec_codes as *const () as usize);
+                let no_args = std::ptr::null();
+                nativ64_raise_exception(0xe003_0001, EXCEPTION_NONCONTINUABLE, 0, no_args);
+                RemoveVectoredExceptionHandler(h);
+            }
+            assert_eq!(
+                take_log(),
+                [
+                    ("vec", 0xe003_0001, EXCEPTION_NONCONTINUABLE),
+                    ("vec", STATUS_NONCONTINUABLE_EXCEPTION, 0xe003_0001),
+                ]
+            );
+            assert_eq!(take_stopped()[0].0, STATUS_NONCONTINUABLE_EXCEPTION);
+        }
+
+        #[test]
+        fn a_bad_disposition_raises_invalid_disposition() {
+            let m = Mem::new();
+            let hb = stub(&m, 0, h_bad as *const () as usize);
+            let raise = nativ64_raise_exception as *const () as usize;
+            let f = func(&m, 0, body(raise, 0xe003_0002, 3, None), info(1, hb, &[]));
+            m.register(1);
+            unsafe {
+                let h = AddVectoredExceptionHandler(0, vec_codes as *const () as usize);
+                assert_eq!(call0(m.0 + f as usize), 3);
+                RemoveVectoredExceptionHandler(h);
+            }
+            assert_eq!(
+                take_log(),
+                [
+                    ("vec", 0xe003_0002, 0),
+                    ("vec", STATUS_INVALID_DISPOSITION, 0xe003_0002)
+                ]
+            );
+            assert_eq!(take_stopped()[0].0, STATUS_INVALID_DISPOSITION);
+        }
+
+        #[test]
+        fn unhandled_exception_goes_to_the_top_level_filter() {
+            let _lock = FILTER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            unsafe {
+                let prev = SetUnhandledExceptionFilter(uef as *const () as usize);
+                let no_args = std::ptr::null();
+                // CONTINUE_EXECUTION: the raise returns, nothing is reported
+                nativ64_raise_exception(0xe004_0001, 0, 0, no_args);
+                assert!(take_stopped().is_empty());
+                // EXECUTE_HANDLER or a refusal: reported and stopped
+                nativ64_raise_exception(0xe004_0002, 0, 0, no_args);
+                assert_eq!(take_stopped()[0].0, 0xe004_0002);
+                nativ64_raise_exception(0xe004_0003, 0, 0, no_args);
+                assert_eq!(take_stopped()[0].0, 0xe004_0003);
+
+                // the export itself
+                let mut rec = ExceptionRecord::new(0xe004_0001, 0, 0x1234);
+                let p = ExceptionPointers {
+                    record: &mut rec,
+                    context: std::ptr::null_mut(),
+                };
+                assert_eq!(UnhandledExceptionFilter(&p), -1);
+                (*p.record).code = 0xe004_0002;
+                assert_eq!(UnhandledExceptionFilter(&p), 1);
+                assert!(
+                    take_stopped().is_empty(),
+                    "the filter's verdict is not reported"
+                );
+                (*p.record).code = 0xe004_0003;
+                assert_eq!(UnhandledExceptionFilter(&p), 1);
+                assert_eq!(take_stopped(), [(0xe004_0003, 0x1234)]);
+                SetUnhandledExceptionFilter(0);
+                assert_eq!(
+                    UnhandledExceptionFilter(&p),
+                    1,
+                    "no filter: report and stop"
+                );
+                assert_eq!(take_stopped().len(), 1);
+                SetUnhandledExceptionFilter(prev);
+            }
+        }
     }
 }

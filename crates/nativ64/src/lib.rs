@@ -68,6 +68,7 @@ pub static TABLES: &[&[Export]] = &[
     acphal::EXPORTS,
     api_ms_win_core_com::EXPORTS,
     api_ms_win_core_errorhandling::EXPORTS,
+    api_ms_win_core_errorhandling::ASM_EXPORTS,
     api_ms_win_core_fibers::EXPORTS,
     api_ms_win_core_file::EXPORTS,
     api_ms_win_core_handle::EXPORTS,

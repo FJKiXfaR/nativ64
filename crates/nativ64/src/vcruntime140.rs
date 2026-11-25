@@ -19,6 +19,16 @@ win32! {
     Native fn _get_purecall_handler() -> usize {
         PURECALL_HANDLER.load(Ordering::Relaxed)
     }
+    // The frame handler of `__try` / `__except` / `__finally` (language data format in
+    // docs/seh.md); the shipped vcruntime140 has its own and is bound first.
+    Native fn __C_specific_handler(
+        record: *mut crate::seh::ExceptionRecord,
+        frame: usize,
+        ctx: *mut u8,
+        dispatcher: *mut crate::seh::DispatcherContext
+    ) -> i32 {
+        crate::seh::c_specific_handler(record, frame, ctx, dispatcher)
+    }
     Native fn memchr(p: *const c_void, c: c_int, n: usize) -> *const c_void {
         if n == 0 {
             return std::ptr::null();
