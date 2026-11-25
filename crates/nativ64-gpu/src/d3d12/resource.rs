@@ -8,6 +8,7 @@ use std::ffi::c_void;
 
 use crate::d3d12::device::E_INVALIDARG;
 use crate::d3d12::object::{guid, hand_out, with_child_methods, PAGEABLE_IIDS};
+use crate::texture::Layout;
 use crate::xobj::{Guid, Iface, SlotTable, HRESULT, S_OK};
 
 pub static RESOURCE_IIDS: [Guid; 4] = [
@@ -109,17 +110,31 @@ pub struct AllocationInfo {
     pub alignment: u64,
 }
 
-/// What a resource takes in memory: buffers their width rounded up to 64 KiB; `None` for what
-/// has no known size (zero or overflowing sizes, a bad alignment and every texture: their
-/// console layout comes with the `xg_xs` swizzle code).
-fn footprint(desc: &ResourceDesc) -> Option<AllocationInfo> {
-    if desc.dimension != BUFFER || desc.width == 0 {
-        return None;
+/// What a resource takes in memory: buffers their width rounded up to 64 KiB, textures what
+/// their console layout takes (`texture::Layout`). The error says why there is no known size
+/// (zero or overflowing sizes, a bad alignment, a texture we cannot lay out); the API itself
+/// cannot fail, it reports the documented size `u64::MAX`.
+fn footprint(desc: &ResourceDesc) -> Result<AllocationInfo, String> {
+    if desc.dimension != BUFFER {
+        let layout = Layout::new(desc).map_err(|e| e.to_string())?;
+        return Ok(AllocationInfo {
+            size: layout.size,
+            alignment: layout.alignment,
+        });
+    }
+    if desc.width == 0 {
+        return Err("zero width".into());
     }
     let alignment = desc.alignment.max(KIB_64);
-    alignment.is_power_of_two().then_some(())?;
-    Some(AllocationInfo {
-        size: desc.width.checked_next_multiple_of(KIB_64)?,
+    alignment
+        .is_power_of_two()
+        .then_some(())
+        .ok_or("alignment is not a power of two")?;
+    Ok(AllocationInfo {
+        size: desc
+            .width
+            .checked_next_multiple_of(KIB_64)
+            .ok_or("size overflows")?,
         alignment,
     })
 }
@@ -127,23 +142,24 @@ fn footprint(desc: &ResourceDesc) -> Option<AllocationInfo> {
 /// The footprint of resources placed one after another; an unknown one gives the documented
 /// size `u64::MAX`.
 fn placed_together(descs: &[ResourceDesc]) -> AllocationInfo {
+    let unknown = AllocationInfo {
+        size: u64::MAX,
+        alignment: 0,
+    };
     let mut total = AllocationInfo {
         size: 0,
         alignment: KIB_64,
     };
     for desc in descs {
-        let Some(one) = footprint(desc) else {
-            eprintln!("nativ64: no allocation size for resource {desc:?}");
-            return AllocationInfo {
-                size: u64::MAX,
-                alignment: 0,
-            };
+        let one = match footprint(desc) {
+            Ok(one) => one,
+            Err(why) => {
+                eprintln!("nativ64: no allocation size for resource {desc:?}: {why}");
+                return unknown;
+            }
         };
         let Some(offset) = total.size.checked_next_multiple_of(one.alignment) else {
-            return AllocationInfo {
-                size: u64::MAX,
-                alignment: 0,
-            };
+            return unknown;
         };
         total.size = offset.saturating_add(one.size);
         total.alignment = total.alignment.max(one.alignment);
@@ -323,6 +339,69 @@ mod tests {
                 get_resource_allocation_info(std::ptr::null_mut(), n, 1, 0, std::ptr::null())
                     .is_null()
             );
+        }
+    }
+
+    #[test]
+    fn allocation_info_of_textures() {
+        unsafe {
+            let n = std::ptr::null_mut();
+            let mut info = AllocationInfo {
+                size: 0,
+                alignment: 0,
+            };
+            // the reference render target, with a buffer placed after it
+            let rt = ResourceDesc {
+                dimension: 3,
+                width: 3840,
+                height: 2160,
+                depth_or_array_size: 1,
+                mip_levels: 1,
+                format: 28,
+                sample_count: 1,
+                flags: 0x5,
+                ..Default::default()
+            };
+            get_resource_allocation_info(&mut info, n, 1, 1, &rt);
+            assert_eq!(
+                info,
+                AllocationInfo {
+                    size: 33_521_664,
+                    alignment: 65536
+                }
+            );
+            let two = [rt, buffer(1)];
+            get_resource_allocation_info(&mut info, n, 1, 2, two.as_ptr());
+            assert_eq!(info.size, 512 * 65536 + 65536);
+            // a small texture keeps its block alignment; the group stays 64 KiB aligned
+            let small = ResourceDesc {
+                width: 16,
+                height: 16,
+                flags: 0,
+                ..rt
+            };
+            get_resource_allocation_info(&mut info, n, 1, 1, &small);
+            assert_eq!(
+                info,
+                AllocationInfo {
+                    size: 4096,
+                    alignment: 65536
+                }
+            );
+            // MSAA and VAR layouts have no size
+            for bad in [
+                ResourceDesc {
+                    sample_count: 4,
+                    ..rt
+                },
+                ResourceDesc {
+                    layout: 0x100 | 28,
+                    ..rt
+                },
+            ] {
+                get_resource_allocation_info(&mut info, n, 1, 1, &bad);
+                assert_eq!(info.size, u64::MAX);
+            }
         }
     }
 

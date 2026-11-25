@@ -38,8 +38,10 @@ own implementation in `crates/nativ64-gpu/src/texture/` and `xg_xs.rs`.
   `colorBaseIndex` rule. The pipe/bank XOR value of a surface comes from the low bits of its
   base address (`base & (block - 1)`), as addrlib's `ComputeOffsetFromEquation` expects.
 - **Block dimensions**: thin blocks from `elements_log2 = block_log2 - elem_log2 -
-  samples_log2` split between x and y (x gets the extra bit); thick (3D) blocks for the S/D
-  modes of 3D textures only; `_X`, `_R_X`, `_T` stay thin even in 3D. Example: 64 KiB, 4-byte
+  samples_log2` split between x and y (x gets the extra bit); thick (3D) blocks for every S/D
+  mode of a 3D texture (`_S`, `_D`, `_S_X`, `_D_X`, `_S_T`, `_D_T`, addrlib's `isStd` /
+  `isDisp`, with its dedicated 3D tables); only `_Z_X` and `_R_X` stay thin in 3D. 4KB_R_X
+  (mode 23) has no pattern in addrlib and is refused. Example: 64 KiB, 4-byte
   elements → 128 × 128.
 - **Mip chain**: each mip padded to whole blocks; one block holds the **mip tail** (the
   smallest mips) at offset 0 of the slice, then mips from smallest to largest, mip 0 last.
