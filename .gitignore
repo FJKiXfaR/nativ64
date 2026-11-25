@@ -11,3 +11,6 @@ MicrosoftGame.Config
 # Reports derived from game files (import lists, logs)
 reports/
 __pycache__/
+
+# Rust
+target/

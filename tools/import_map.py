@@ -5,7 +5,7 @@ Reads the import tables (normal and delay-load) of one or more PE files,
 groups every imported function by area (files, threads, graphics...), applies
 a status file, and writes an HTML coverage map plus a JSON summary.
 
-    python -I tools/import_map.py game/*.dll game/game_scarlett_master.exe \
+    python -I tools/import_map.py game/*.dll game/<title>.exe \
         --status tools/import-status.json --out reports/import-map.html
 
 Statuses:

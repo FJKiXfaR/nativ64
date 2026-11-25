@@ -1,0 +1,14 @@
+[package]
+name = "vn-win32"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Ybucaille/vice-native"
+description = "Native Linux implementation of the Windows host APIs a title imports"
+publish = false
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+libc = "0.2"

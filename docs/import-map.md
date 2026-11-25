@@ -31,7 +31,7 @@ python -I tools/import_map.py game/*.dll --out reports/import-map.html --json re
 Once the executable is available, add it:
 
 ```bash
-python -I tools/import_map.py game/game_scarlett_master.exe game/*.dll --out reports/import-map.html
+python -I tools/import_map.py game/<title>.exe game/*.dll --out reports/import-map.html
 ```
 
 `reports/` is not versioned: it lists the game's imports, which is derived from game files.
@@ -115,6 +115,24 @@ Run it after each mirror sync to follow VIctory's progress. On the package DLLs 
   if called.
 - Linux view: 28 portable, 38 tied to Windows, 430 host APIs to write, 2 unresolved,
   113 shipped (28 of 498 = 5.6%).
+
+## Library view
+
+The `vn-win32` crate (`crates/vn-win32`, see `docs/library.md`) registers every function it
+implements. Its `vn-win32-status` binary turns that registry into a status file, so a third
+tab shows how much of the title's import list the library covers, whatever base loads the game:
+
+```bash
+cargo run -q -p vn-win32 --bin vn-win32-status > reports/status-vn-win32.json
+python -I tools/import_map.py game/*.dll \
+    --status reports/status-victory-windows.json \
+    --status reports/status-victory-linux.json \
+    --status reports/status-vn-win32.json \
+    --out reports/import-map.html
+```
+
+Labels mirror the Linux view (`native`, `stub`, `todo`, shipped); only `native` counts for the
+percentage. Functions the library registers but the game does not import are ignored.
 
 ## Limits
 
