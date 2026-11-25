@@ -5,9 +5,11 @@
 //! `VkError::Load`, never a link error. Driver failures are `VkError`s, not panics.
 
 mod device;
+mod format;
 mod image;
 mod instance;
 mod memory;
+mod replay;
 mod swapchain;
 
 use ash::vk;
@@ -17,6 +19,7 @@ use std::sync::{Mutex, OnceLock};
 
 pub use device::Gpu;
 pub use memory::{AlignedBuf, HostBuffer};
+pub use replay::{Readback, ReplayStats, VkBackend};
 pub use swapchain::Swapchain;
 
 #[derive(Debug)]

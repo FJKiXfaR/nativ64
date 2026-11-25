@@ -85,6 +85,16 @@ pub(crate) unsafe fn desc_of(ptr: *mut c_void) -> Option<ResourceDesc> {
     Some(XObject::<ResourceData>::data(ptr).desc)
 }
 
+/// The description and memory address of `ptr` when it is one of our resources.
+///
+/// # Safety
+/// `ptr` is NULL or points at readable memory of at least 8 bytes.
+pub(crate) unsafe fn info_of(ptr: *mut c_void) -> Option<(ResourceDesc, u64)> {
+    desc_of(ptr)?;
+    let d = XObject::<ResourceData>::data(ptr);
+    Some((d.desc, d.address))
+}
+
 /// `ID3D12Device::CreateResourceAtAddressX(address, desc1, layout, clear, riid, out)` (device
 /// slot 133): a resource over memory the title mapped itself. The clear value is not kept.
 /// Shortcut: the address is not checked against the memory tables.
