@@ -53,14 +53,15 @@ pub struct ResourceData {
     pub desc: ResourceDesc,
     /// Initial barrier layout (`-1` when the creation call gives none).
     pub layout: u32,
-    /// Committed resources own their memory (released with the resource).
-    owned: bool,
+    /// Committed resources own their memory (released with the resource), taken with these
+    /// `XMemAlloc` attributes; 0 for memory the title owns.
+    owned: u64,
 }
 
 impl Drop for ResourceData {
     fn drop(&mut self) {
-        if self.owned {
-            let _ = nativ64::api_ms_win_core_memory::free(self.address as usize, 0, 0x8000);
+        if self.owned != 0 {
+            crate::xmem::free(self.address as *mut c_void, self.owned);
         }
     }
 }
@@ -104,16 +105,12 @@ pub unsafe extern "win64" fn create_at_address(
             address,
             desc,
             layout,
-            owned: false,
+            owned: 0,
         },
         iid,
         out,
     )
 }
-
-/// Committed resources land here: above the 32-bit memory, below the 2^40 title memory.
-const COMMITTED_LO: usize = 1 << 32;
-const COMMITTED_HI: usize = (1 << 40) - 1;
 
 /// Shared by the committed creation slots: zeroed memory sized and aligned by `footprint`, at
 /// an address that is the resource's GPU address. Shortcut: the heap properties and flags are
@@ -157,18 +154,16 @@ unsafe fn create_committed(
         *out = std::ptr::null_mut();
         return E_INVALIDARG;
     };
-    let placement = nativ64::api_ms_win_core_memory::Placement {
-        lo: COMMITTED_LO,
-        hi: COMMITTED_HI,
-        align: (info.alignment as usize).max(KIB_64 as usize),
-    };
-    let Ok(address) =
-        nativ64::api_ms_win_core_memory::alloc(0, size, 0x3000, 0x04, Some(placement))
-    else {
+    // The memory comes from `XMemAlloc`, so the title's allocation hook (its own pool for
+    // graphics memory) sees the request as it would on the console.
+    let attributes = crate::xmem::GPU_ALLOC_ATTRIBUTES
+        | u64::from(info.alignment.max(KIB_64).trailing_zeros()) << 24;
+    let address = crate::xmem::alloc(size, attributes);
+    if address.is_null() {
         eprintln!("nativ64: no memory for committed resource {desc:?}");
         *out = std::ptr::null_mut();
         return E_OUTOFMEMORY;
-    };
+    }
     let hr = hand_out(
         &TABLE,
         Iface::Resource,
@@ -179,13 +174,13 @@ unsafe fn create_committed(
             address: address as u64,
             desc,
             layout,
-            owned: true,
+            owned: attributes,
         },
         iid,
         out,
     );
     if hr != S_OK {
-        let _ = nativ64::api_ms_win_core_memory::free(address, 0, 0x8000);
+        crate::xmem::free(address, attributes);
     }
     hr
 }

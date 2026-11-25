@@ -102,9 +102,8 @@ impl Image {
         img.copy_sections(&pe);
         img.relocate(&pe)?;
         img.bind_imports(&pe, ctx)?;
-        if is_dll {
-            img.resolve_exports(&pe, ctx)?;
-        }
+        // an EXE may export too (the title's `__XMemAllocationHooks__`)
+        img.resolve_exports(&pe, ctx)?;
         img.setup_tls(&pe, ctx, is_dll)?;
         img.protect(&pe)?;
         Ok(img)
@@ -417,6 +416,9 @@ impl Image {
             return Err(LoadError::NoEntryPoint);
         }
         self.register_dlls();
+        if let Some(hooks) = self.export(ExportRef::Name("__XMemAllocationHooks__")) {
+            nativ64_gpu::xmem::set_allocation_hooks(hooks as usize);
+        }
         let (base, entry) = (self.base(), self.entry_point());
         // (name, base, DllMain, TLS) per DLL
         let dlls: Vec<(String, u64, Option<u64>, Option<TlsInfo>)> = self

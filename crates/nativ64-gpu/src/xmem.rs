@@ -252,6 +252,129 @@ fn take_physical_pages(n: usize) -> Option<Vec<usize>> {
     Some(pages)
 }
 
+/// Attribute bits `XMemAlloc` callers pass: bits 14-15 are the allocation class (2 is the
+/// fixed-size class of GPU memory), bits 16-23 the allocator id the title's hooks are keyed on.
+const CLASS_MASK: u64 = 0xc000;
+const CLASS_GPU: u64 = 0x8000;
+/// Attributes of the memory the D3D device takes for committed resources, as the title's hooks
+/// see them (allocator id 0x80, GPU class).
+pub const GPU_ALLOC_ATTRIBUTES: u64 = 0x0080_0000 | CLASS_GPU;
+
+/// The title's `__XMemAllocationHooks__` export: `{ alloc(size, attributes) -> ptr,
+/// free(ptr, attributes), .. }`. Zero until the base registers it.
+static HOOKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Registers the address of the title's `__XMemAllocationHooks__` table; `XMemAlloc` and
+/// `XMemFree` go through its functions from then on.
+pub fn set_allocation_hooks(table: usize) {
+    HOOKS.store(table, Ordering::Release);
+}
+
+/// `XMemAlloc`: through the title's allocation hook when it has one, else the default allocator.
+pub fn alloc(size: usize, attributes: u64) -> *mut c_void {
+    alloc_with(
+        HOOKS.load(Ordering::Acquire) as *const usize,
+        size,
+        attributes,
+    )
+}
+
+fn alloc_with(table: *const usize, size: usize, attributes: u64) -> *mut c_void {
+    // SAFETY: the base registered the address of the export table of the mapped title.
+    let hook = (!table.is_null())
+        .then(|| unsafe { table.read() })
+        .filter(|&f| f != 0);
+    match hook {
+        Some(f) => {
+            // SAFETY: the table's first entry is the title's `void *(size, attributes)`.
+            let f: unsafe extern "win64" fn(usize, u64) -> *mut c_void =
+                unsafe { std::mem::transmute(f) };
+            unsafe { f(size, attributes) }
+        }
+        None => default_alloc(size, attributes),
+    }
+}
+
+/// `XMemFree`: through the title's free hook when it has one, else the default allocator.
+pub fn free(address: *mut c_void, attributes: u64) {
+    free_with(
+        HOOKS.load(Ordering::Acquire) as *const usize,
+        address,
+        attributes,
+    )
+}
+
+fn free_with(table: *const usize, address: *mut c_void, attributes: u64) {
+    // SAFETY: as in `alloc`.
+    let hook = (!table.is_null())
+        .then(|| unsafe { table.add(1).read() })
+        .filter(|&f| f != 0);
+    match hook {
+        Some(f) => {
+            // SAFETY: the table's second entry is the title's `void (ptr, attributes)`.
+            let f: unsafe extern "win64" fn(*mut c_void, u64) = unsafe { std::mem::transmute(f) };
+            unsafe { f(address, attributes) }
+        }
+        None => default_free(address, attributes),
+    }
+}
+
+/// Graphics-class memory: 64 KiB (or 2 MiB) aligned, where GPU addresses can reach it.
+fn gpu_alloc(size: usize, attributes: u64) -> *mut c_void {
+    let align_log2 = attributes >> ALIGNMENT_SHIFT & 0x1f;
+    let kind = MEM_RESERVE | MEM_COMMIT | if align_log2 >= 21 { PAGES_2M } else { 0 };
+    virtual_alloc(std::ptr::null_mut(), size, kind, 3, 0x04)
+}
+
+fn default_alloc(size: usize, attributes: u64) -> *mut c_void {
+    if attributes & CLASS_MASK == CLASS_GPU {
+        return gpu_alloc(size, attributes);
+    }
+    if attributes & ALLOC_32BIT != 0 {
+        return virtual_alloc(
+            std::ptr::null_mut(),
+            size,
+            MEM_RESERVE | MEM_COMMIT,
+            3 | ADDRESS_32BIT,
+            0x04,
+        );
+    }
+    let align = (1usize << (attributes >> ALIGNMENT_SHIFT & 0x1f)).max(16);
+    let mut raw = std::ptr::null_mut();
+    let Some(total) = size.checked_add(HEADER) else {
+        return std::ptr::null_mut();
+    };
+    // SAFETY: the alignment is a power of two and a multiple of a pointer's size.
+    if unsafe { libc::posix_memalign(&mut raw, align, total + align) } != 0 {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: `raw` holds `total + align` bytes; the user pointer, `align` bytes in, keeps
+    // the header below it inside the block.
+    unsafe {
+        let user = (raw as *mut u8).add(align);
+        (user.sub(HEADER) as *mut [usize; 2]).write([raw as usize, size]);
+        user as *mut c_void
+    }
+}
+
+fn default_free(address: *mut c_void, attributes: u64) {
+    if address.is_null() {
+        return;
+    }
+    if attributes & (CLASS_MASK) == CLASS_GPU || attributes & ALLOC_32BIT != 0 {
+        let _ = nativ64::api_ms_win_core_memory::release(address as usize);
+        return;
+    }
+    // SAFETY: the address came from `default_alloc`, which wrote the header.
+    unsafe {
+        let [raw, _] = (address as *const u8)
+            .sub(HEADER)
+            .cast::<[usize; 2]>()
+            .read();
+        libc::free(raw as *mut c_void);
+    }
+}
+
 nativ64::win32! {
     module "xmem";
 
@@ -373,56 +496,20 @@ nativ64::win32! {
     }
 
     Native fn XMemAllocDefault(size: usize, attributes: u64) -> *mut c_void {
-        if attributes & ALLOC_32BIT != 0 {
-            return virtual_alloc(
-                std::ptr::null_mut(),
-                size,
-                MEM_RESERVE | MEM_COMMIT,
-                3 | ADDRESS_32BIT,
-                0x04,
-            );
-        }
-        let align = (1usize << (attributes >> ALIGNMENT_SHIFT & 0x1f)).max(16);
-        let mut raw = std::ptr::null_mut();
-        let Some(total) = size.checked_add(HEADER) else {
-            return std::ptr::null_mut();
-        };
-        // SAFETY: the alignment is a power of two and a multiple of a pointer's size.
-        if unsafe { libc::posix_memalign(&mut raw, align, total + align) } != 0 {
-            return std::ptr::null_mut();
-        }
-        // SAFETY: `raw` holds `total + align` bytes; the user pointer, `align` bytes in, keeps
-        // the header below it inside the block.
-        unsafe {
-            let user = (raw as *mut u8).add(align);
-            (user.sub(HEADER) as *mut [usize; 2]).write([raw as usize, size]);
-            user as *mut c_void
-        }
+        default_alloc(size, attributes)
     }
 
     Native fn XMemFreeDefault(address: *mut c_void, attributes: u64) {
-        if address.is_null() {
-            return;
-        }
-        if attributes & ALLOC_32BIT != 0 {
-            let _ = nativ64::api_ms_win_core_memory::release(address as usize);
-            return;
-        }
-        // SAFETY: the address came from `XMemAllocDefault`, which wrote the header.
-        unsafe {
-            let [raw, _] = (address as *const u8).sub(HEADER).cast::<[usize; 2]>().read();
-            libc::free(raw as *mut c_void);
-        }
+        default_free(address, attributes)
     }
 
-    // shortcut: the title's `__XMemAllocationHooks__` export is not consulted; XMemAlloc and
-    // XMemFree go straight to the default allocator.
+    // The title's `__XMemAllocationHooks__` export is consulted (see `set_allocation_hooks`).
     Native fn XMemAlloc(size: usize, attributes: u64) -> *mut c_void {
-        XMemAllocDefault(size, attributes)
+        alloc(size, attributes)
     }
 
     Native fn XMemFree(address: *mut c_void, attributes: u64) {
-        XMemFreeDefault(address, attributes)
+        free(address, attributes)
     }
 
     // A retail console has no tools memory.
@@ -611,6 +698,41 @@ mod tests {
             assert_eq!(XMemTransferMemory(0, 4096), 1);
             assert_eq!(XMemTransferMemory(0, 16 << 30), 0);
         }
+    }
+
+    unsafe extern "win64" fn test_alloc(size: usize, attributes: u64) -> *mut c_void {
+        // marks the call: the size and the attributes end up in the returned "address"
+        (size ^ attributes as usize) as *mut c_void
+    }
+
+    unsafe extern "win64" fn test_free(address: *mut c_void, _attributes: u64) {
+        FREED.store(address as usize, Ordering::SeqCst);
+    }
+
+    static FREED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    #[test]
+    fn title_hooks_see_alloc_and_free() {
+        let table = [
+            test_alloc as *const () as usize,
+            test_free as *const () as usize,
+        ];
+        let attrs = GPU_ALLOC_ATTRIBUTES | 16 << ALIGNMENT_SHIFT;
+        let p = alloc_with(table.as_ptr(), 0x1000, attrs);
+        assert_eq!(p as usize, 0x1000 ^ attrs as usize);
+        free_with(table.as_ptr(), 0x1234 as *mut c_void, attrs);
+        assert_eq!(FREED.load(Ordering::SeqCst), 0x1234);
+    }
+
+    #[test]
+    fn gpu_class_memory_is_graphics_memory_without_hooks() {
+        let attrs = GPU_ALLOC_ATTRIBUTES | 16 << ALIGNMENT_SHIFT;
+        let p = alloc_with(std::ptr::null(), 3 * MIB, attrs);
+        assert!(!p.is_null());
+        assert!(p as usize >= 1 << 32 && (p as usize) < 1 << 40);
+        assert_eq!(p as usize % (64 << 10), 0);
+        unsafe { (p as *mut u8).add(3 * MIB - 1).write(7) };
+        free_with(std::ptr::null(), p, attrs);
     }
 
     #[test]
