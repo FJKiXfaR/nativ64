@@ -11,7 +11,7 @@ executable without any compatibility layer, and runs its entry point.
    address. Copies headers and sections (the tail up to VirtualSize is zero), applies base
    relocations (`DIR64` and `ABSOLUTE`; anything else is an error) when it moved, then sets
    each section's protection (R/W/X) with `mprotect`.
-3. Resolves the import table (names and ordinals) through `nativ64::lookup` and writes the
+3. Resolves the import table (names and ordinals) through `nativ64::lookup`, then `nativ64_gpu::lookup` and writes the
    address into the IAT. An unknown import gets the address of a per-import trap stub that
    prints `nativ64: unimplemented import MODULE!NAME` and aborts. The list of unresolved
    imports is kept in `Image::imports`.

@@ -27,7 +27,8 @@ pub struct Export {
 // The address of a function is immutable and valid for the whole process.
 unsafe impl Sync for Export {}
 
-/// Declares win64 functions and registers each under `$module` and its forwarder `$alias`.
+/// Declares win64 functions and registers each under `$module` and, with the `=> $alias` form,
+/// its forwarder `$alias`. Exported so sibling crates (e.g. nativ64-gpu) share one registry type.
 ///
 /// ```ignore
 /// win32! {
@@ -35,7 +36,21 @@ unsafe impl Sync for Export {}
 ///     Native fn Foo(a: u32) -> u32 { a }
 /// }
 /// ```
+#[macro_export]
 macro_rules! win32 {
+    (module $m:literal;
+     $( $status:ident fn $name:ident ( $($arg:ident : $ty:ty),* ) $(-> $ret:ty)? $body:block )* ) => {
+        $(
+            #[allow(non_snake_case, clippy::missing_safety_doc)]
+            pub unsafe extern "win64" fn $name($($arg: $ty),*) $(-> $ret)? $body
+        )*
+        pub static EXPORTS: &[$crate::Export] = &[
+            $(
+                $crate::Export { module: $m, name: stringify!($name),
+                    addr: $name as *const (), status: $crate::Status::$status },
+            )*
+        ];
+    };
     (module $m:literal => $k:literal;
      $( $status:ident fn $name:ident ( $($arg:ident : $ty:ty),* ) $(-> $ret:ty)? $body:block )* ) => {
         $(

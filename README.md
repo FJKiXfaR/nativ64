@@ -125,6 +125,7 @@ calls, synchronization primitives on futexes.
 |---|---|
 | `crates/nativ64/` | The library: Windows APIs on Linux, one module per Windows module |
 | `crates/nativ64-loader/` | The native PE loader ([`docs/loader.md`](docs/loader.md)) |
+| `crates/nativ64-gpu/` | Graphics modules (Xbox Direct3D 12, XMem) ([`docs/gpu.md`](docs/gpu.md)) |
 | `tools/` | Import map scripts and page template |
 | `docs/` | Documentation |
 | `game/` | Your local game files (not versioned) |

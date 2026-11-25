@@ -199,6 +199,9 @@ struct Argv {
     wide: *mut *mut u16,
     /// Command line after the program name (points into `cmdline`).
     winmain: *const c_char,
+    /// The whole command line, program name included, narrow and wide (`GetCommandLine*`).
+    full_a: *const c_char,
+    full_w: *const u16,
     #[allow(dead_code)]
     #[allow(clippy::type_complexity)]
     keep: (
@@ -207,6 +210,7 @@ struct Argv {
         Vec<*mut c_char>,
         Vec<*mut u16>,
         CString,
+        Vec<u16>,
     ),
 }
 
@@ -241,13 +245,22 @@ fn build_argv() -> Argv {
     let skip =
         after_program_name(full.to_str().unwrap_or("")).as_ptr() as usize - full.as_ptr() as usize;
     let winmain = unsafe { full.as_ptr().add(skip) };
+    let full_w: Vec<u16> = full.to_string_lossy().encode_utf16().chain([0]).collect();
     Argv {
         argc: args.len() as i32,
         narrow: np.as_mut_ptr(),
         wide: wp.as_mut_ptr(),
         winmain,
-        keep: (narrow, wide, np, wp, full),
+        full_a: full.as_ptr(),
+        full_w: full_w.as_ptr(),
+        keep: (narrow, wide, np, wp, full, full_w),
     }
+}
+
+/// The whole command line, narrow and wide, valid for the process.
+pub(crate) fn full_command_line() -> (*const c_char, *const u16) {
+    let a = argv();
+    (a.full_a, a.full_w)
 }
 
 fn argv() -> &'static Argv {

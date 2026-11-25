@@ -12,6 +12,7 @@ pub mod api_ms_win_core_fibers;
 pub mod api_ms_win_core_handle;
 pub mod api_ms_win_core_interlocked;
 pub mod api_ms_win_core_libraryloader;
+pub mod api_ms_win_core_processenvironment;
 pub mod api_ms_win_core_processthreads;
 pub mod api_ms_win_core_profile;
 pub mod api_ms_win_core_registry;
@@ -44,6 +45,7 @@ pub static TABLES: &[&[Export]] = &[
     api_ms_win_core_interlocked::EXPORTS,
     api_ms_win_core_libraryloader::EXPORTS,
     api_ms_win_core_registry::EXPORTS,
+    api_ms_win_core_processenvironment::EXPORTS,
     api_ms_win_core_processthreads::EXPORTS,
     api_ms_win_core_processthreads::ALIASES,
     api_ms_win_core_profile::EXPORTS,

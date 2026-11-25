@@ -1,0 +1,12 @@
+[package]
+name = "nativ64-gpu"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Ybucaille/nativ64"
+description = "Graphics side of nativ64: the Xbox Direct3D 12 exports, natively on Linux"
+publish = false
+
+[dependencies]
+nativ64 = { path = "../nativ64" }
+libc = "0.2"

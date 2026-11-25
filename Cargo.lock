@@ -16,9 +16,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "nativ64-gpu"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "nativ64",
+]
+
+[[package]]
 name = "nativ64-loader"
 version = "0.1.0"
 dependencies = [
  "libc",
  "nativ64",
+ "nativ64-gpu",
 ]

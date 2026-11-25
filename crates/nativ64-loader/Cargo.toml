@@ -9,4 +9,5 @@ publish = false
 
 [dependencies]
 nativ64 = { path = "../nativ64" }
+nativ64-gpu = { path = "../nativ64-gpu" }
 libc = "0.2"

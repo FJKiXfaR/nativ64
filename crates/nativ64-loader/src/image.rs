@@ -197,6 +197,7 @@ impl Image {
                         None
                     } else {
                         nativ64::lookup(&module, &name)
+                            .or_else(|| nativ64_gpu::lookup(&module, &name))
                     };
                     let idx = self.imports.len();
                     self.imports.push(ImportEntry {

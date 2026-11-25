@@ -1,4 +1,8 @@
 use std::cell::Cell;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// The process-wide top-level exception filter (0: none). Nothing dispatches exceptions to it yet.
+static UNHANDLED_FILTER: AtomicUsize = AtomicUsize::new(0);
 
 thread_local! {
     static LAST_ERROR: Cell<u32> = const { Cell::new(0) };
@@ -16,6 +20,10 @@ win32! {
     }
     Native fn SetLastError(code: u32) {
         set_last_error(code)
+    }
+    // Installs the filter and returns the previous one (Windows semantics).
+    Native fn SetUnhandledExceptionFilter(filter: usize) -> usize {
+        UNHANDLED_FILTER.swap(filter, Ordering::AcqRel)
     }
 }
 
@@ -35,6 +43,15 @@ mod tests {
             .join()
             .unwrap();
             assert_eq!(GetLastError(), 5);
+        }
+    }
+
+    #[test]
+    fn unhandled_filter_returns_previous() {
+        unsafe {
+            let first = SetUnhandledExceptionFilter(0x1000);
+            assert_eq!(SetUnhandledExceptionFilter(0x2000), 0x1000);
+            SetUnhandledExceptionFilter(first);
         }
     }
 }
