@@ -6,13 +6,26 @@
 use std::ffi::c_void;
 
 use crate::d3d12::command::Command;
-use crate::d3d12::list::record;
+use crate::d3d12::list::{record, reset};
 use crate::xobj::SlotTable;
+use crate::xobj::HRESULT;
 
 /// Pipeline syncs at the top (slot 131, `+0x418`) and bottom (slot 132, `+0x420`) of the pipe.
 pub const fn with_recording<const N: usize>(t: SlotTable<N>) -> SlotTable<N> {
     t.with(131, sync_top as *const ())
         .with(132, sync_bottom as *const ())
+        .with(139, reset_x as *const ())
+}
+
+/// Slot 139 (`+0x458`): `ResetX(allocator, pipeline, flags)`, `Reset` with console flags that only
+/// tune the console's command memory.
+unsafe extern "win64" fn reset_x(
+    this: *mut c_void,
+    allocator: *mut c_void,
+    pipeline: *mut c_void,
+    _flags: u32,
+) -> HRESULT {
+    reset(this, allocator, pipeline)
 }
 
 unsafe fn sync(this: *mut c_void, bottom: bool, flags: u32, control: u32, address: u64, size: u64) {

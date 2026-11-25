@@ -75,6 +75,14 @@ trampoline that logs `nativ64: call module!name` on entry (argument registers, x
 arguments are preserved; the return value is not logged). Off by default. Imports by ordinal
 resolve through `nativ64::lookup_ordinal` (only `ws2_32` has a table).
 
+## CPU instructions the host may lack
+
+The console CPU is an AMD Zen 2; the host may not be. `clzero` (zero the 64-byte line at `rax`) traps
+as SIGILL on other CPUs, so the fault handler in `fault.rs` emulates it and resumes. The two loops
+compilers build around it (`clzero; add rax,0x40; cmp rax,b; jb`, and `mov rax,a; add a,0x40; clzero;
+cmp a,b; jb`) are done whole in one trap, leaving registers and flags as their last pass would.
+Other Zen-only instructions are reported as faults, not emulated, until a title needs them.
+
 ## Not done yet
 
 - Structured exception handling (`.pdata` unwind tables, vectored handlers).

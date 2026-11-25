@@ -219,7 +219,7 @@ unsafe extern "win64" fn close(this: *mut c_void) -> HRESULT {
 }
 
 /// Slot 10: `Reset(allocator, pipeline)`: drops the recording and reopens the list.
-unsafe extern "win64" fn reset(
+pub(crate) unsafe extern "win64" fn reset(
     this: *mut c_void,
     allocator: *mut c_void,
     pipeline: *mut c_void,
