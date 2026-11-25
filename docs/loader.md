@@ -31,12 +31,32 @@ executable without any compatibility layer, and runs its entry point.
    the entry point as `extern "win64" fn() -> u32`; the return value is the result. An image
    with no entry point gives `LoadError::NoEntryPoint`.
 
+7. Package DLLs (`image.rs`, `exports.rs`): `LoadOptions::search_dirs` is the list of directories
+   searched for the DLLs the image imports (`nativ64-run` passes the exe's directory, then
+   `--data DIR` (repeatable) and `NATIV64_PACKAGE_DIRS`). An import module that exists there as a
+   file (name compared ignoring case) is mapped with the same loader, recursively, each DLL once
+   (cycle-safe: a module still loading binds to nativ64), dependencies first. Its export
+   directory is parsed (names, ordinals, forwarders `mod.func` / `mod.#n` resolved to another
+   package DLL, else to nativ64; an unresolvable one is left out, so importers get a trap stub)
+   with every array bounds-checked (`LoadError::BadExports`; a failing DLL is `LoadError::Dll`).
+   An import binds to the shipped DLL's export first, then `nativ64::lookup` /
+   `nativ64_gpu::lookup`, then a trap stub. `LoadOptions::native_modules` (env
+   `NATIV64_NATIVE_MODULES`, comma-separated names) forces nativ64 for those modules. Each
+   image with static TLS gets its own index (main image 0, DLLs 1, 2...; at most 64 images).
+   `run_main` registers the DLLs with `nativ64::process::register_module` (so `GetModuleHandle*`
+   returns the real base and `GetProcAddress` resolves their exports, by name or ordinal), then,
+   on the guest thread with the TEB installed and before the exe's own TLS callbacks, runs for
+   each DLL in dependency order its TLS callbacks and `DllMain(base, DLL_PROCESS_ATTACH, 0)`; a
+   FALSE return is `LoadError::DllInitFailed`. `--trace-imports` also covers the DLLs' imports.
+
 `nativ64-run <exe>` maps, binds and runs the image; the entry's return value is the exit code.
 `--timeout SECONDS` (default 20, 0 = none) prints `nativ64: timeout` and exits 124. A
 SIGSEGV/SIGILL/SIGBUS/SIGFPE/SIGTRAP (an `int3`) in guest code (handled on a sigaltstack, see `fault.rs`) prints the
 signal, fault address, RIP and `image+0xOFFSET` when RIP is inside the image, then exits 139. A
 trap stub aborts (SIGABRT). `nativ64-run --check <exe>` only maps and binds, printing the base,
-entry point, section count and import statistics, plus the first 20 unresolved imports.
+entry point, section count and import statistics, the first 20 unresolved imports, the loaded
+package DLLs (base, path, import and unresolved counts) and the unresolved imports per module
+for the exe and each DLL.
 `--trace-imports` (`LoadOptions::trace_imports`) routes every resolved import through a
 trampoline that logs `nativ64: call module!name` on entry (argument registers, xmm0-3 and stack
 arguments are preserved; the return value is not logged). Off by default. Imports by ordinal
@@ -45,7 +65,13 @@ resolve through `nativ64::lookup_ordinal` (only `ws2_32` has a table).
 ## Not done yet
 
 - Structured exception handling (`.pdata` unwind tables, vectored handlers).
-- Delay-load imports, ordinal imports (they are bound to a trap stub), forwarded exports.
+- Delay-load imports. Ordinal imports resolve only against a package DLL (nativ64 has an
+  ordinal table for `ws2_32` only).
+- `LoadLibrary*` of a package DLL that was not an import: only the DLLs mapped at start are
+  found (run-time loading would need `DllMain`, TLS slots on every live thread and a loader
+  hook).
+- Package DLLs: `DLL_THREAD_ATTACH/DETACH`, `DLL_PROCESS_DETACH`, `FreeLibrary` reference
+  counts, forwarder cycles between DLLs (the module still loading binds to nativ64), the
+  `image+0xOFF` fault report for DLL addresses.
 - Threads created by nativ64 (`CreateThread`) do not get a TEB or TLS yet: they must call
   `teb::install_for_current_thread` and allocate a `ThreadTls` on the new thread.
-- Packaging and loading DLLs (guest DLLs, their TLS callbacks, `DLL_THREAD_ATTACH`).

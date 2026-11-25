@@ -55,11 +55,19 @@ their own vtable struct.
 
 ## File paths (rule for the file APIs)
 
-`\` maps to `/`; relative paths resolve against the package root (the exe's directory). The
-package directory is never written: writes go to `$XDG_DATA_HOME/nativ64/<exe stem>` (default
-`~/.local/share`). `nativ64::paths` implements the read side (`map_read_path`, with a
-case-insensitive fallback per component; a path starting with `/` as written is a host path),
-plus `package_root` and `write_dir`; no write API uses them yet.
+`\` maps to `/`; a drive prefix (`G:`) is dropped. Reads search a list of directories: the package
+root (the exe's directory) first, then the extra directories set with
+`nativ64::paths::set_extra_package_dirs` (`nativ64-run --data DIR`, repeatable), then those of the
+environment variable `NATIV64_PACKAGE_DIRS` (colon-separated, empty entries ignored). The first
+directory where the path exists wins (each component is matched ignoring case when the exact name
+is missing); when none has it, the package-root mapping is returned. A path starting with `/` as
+written is a host path. The package directories are never written: writes go to
+`$XDG_DATA_HOME/nativ64/<exe stem>` (default `~/.local/share`). `nativ64::paths` implements the
+read side (`map_read_path`, `package_dirs`), plus `package_root` and `write_dir`.
+
+Guest DLLs the base mapped are registered with `nativ64::process::register_module` (name, base,
+export lookup): `GetModuleHandle*` returns their real base and `GetProcAddress` resolves their
+exports.
 
 ## ABI rules
 

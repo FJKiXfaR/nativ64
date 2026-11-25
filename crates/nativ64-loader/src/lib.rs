@@ -3,6 +3,7 @@
 //! fake TEB/PEB and static TLS.
 
 mod error;
+mod exports;
 pub mod fault;
 mod image;
 mod pe;

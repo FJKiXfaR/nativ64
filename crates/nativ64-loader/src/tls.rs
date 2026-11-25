@@ -6,6 +6,8 @@ use std::alloc::Layout;
 
 const DLL_PROCESS_ATTACH: u32 = 1;
 const SLOTS: usize = 64;
+/// How many images (the exe and its DLLs) can have static TLS.
+pub const MAX_TLS_IMAGES: usize = SLOTS;
 
 /// What the loader keeps of the TLS directory (addresses are mapped VAs).
 #[derive(Clone, Debug)]
@@ -89,30 +91,30 @@ impl TlsInfo {
 
 /// One thread's TLS block and slot array. Keep alive as long as the thread runs guest code.
 pub struct ThreadTls {
-    block: *mut u8,
-    layout: Layout,
+    blocks: Vec<(*mut u8, Layout)>,
     slots: Box<[usize; SLOTS]>,
 }
 
 impl ThreadTls {
-    /// Allocates the block (raw data copied, the rest zero) and fills slot 0.
+    /// Allocates one block per `(index, info)` (raw data copied, the rest zero) and fills its
+    /// slot. An index must be below the slot count (see [`MAX_TLS_IMAGES`]).
     ///
     /// # Safety
-    /// `info` must describe a mapped, readable range (as validated by [`TlsInfo::parse`]).
-    pub unsafe fn new(info: &TlsInfo) -> ThreadTls {
-        let raw_len = (info.raw_end - info.raw_start) as usize;
-        let total = (raw_len + info.zero_fill as usize).max(1);
-        let layout = Layout::from_size_align(total, 64).expect("TLS layout");
-        let block = std::alloc::alloc_zeroed(layout);
-        assert!(!block.is_null(), "out of memory for the TLS block");
-        std::ptr::copy_nonoverlapping(info.raw_start as *const u8, block, raw_len);
+    /// Every `info` must describe a mapped, readable range (as validated by [`TlsInfo::parse`]).
+    pub unsafe fn new(images: &[(usize, TlsInfo)]) -> ThreadTls {
         let mut slots = Box::new([0usize; SLOTS]);
-        slots[0] = block as usize;
-        ThreadTls {
-            block,
-            layout,
-            slots,
+        let mut blocks = Vec::new();
+        for (index, info) in images {
+            let raw_len = (info.raw_end - info.raw_start) as usize;
+            let total = (raw_len + info.zero_fill as usize).max(1);
+            let layout = Layout::from_size_align(total, 64).expect("TLS layout");
+            let block = std::alloc::alloc_zeroed(layout);
+            assert!(!block.is_null(), "out of memory for the TLS block");
+            std::ptr::copy_nonoverlapping(info.raw_start as *const u8, block, raw_len);
+            slots[*index] = block as usize;
+            blocks.push((block, layout));
         }
+        ThreadTls { blocks, slots }
     }
 
     /// The value for `TEB.ThreadLocalStoragePointer`.
@@ -123,7 +125,9 @@ impl ThreadTls {
 
 impl Drop for ThreadTls {
     fn drop(&mut self) {
-        unsafe { std::alloc::dealloc(self.block, self.layout) };
+        for &(block, layout) in &self.blocks {
+            unsafe { std::alloc::dealloc(block, layout) };
+        }
     }
 }
 

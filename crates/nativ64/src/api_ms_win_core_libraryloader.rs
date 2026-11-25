@@ -3,7 +3,10 @@
 //! Modules are the main image (registered with [`crate::process::set_main_module`]) and the
 //! host modules of this crate (`kernel32`, `api-ms-win-*`, `ucrtbase`, ...). A host module gets
 //! a synthetic handle (never dereferenced, distinct per module) and `GetProcAddress` resolves
-//! through [`crate::lookup`]. Any other DLL is not found (`ERROR_MOD_NOT_FOUND`).
+//! through [`crate::lookup`]. Guest DLLs the base mapped and registered with
+//! [`crate::process::register_module`] come first: they have their real base as handle and
+//! `GetProcAddress` (by name or ordinal) resolves through their export table. Any other DLL
+//! is not found (`ERROR_MOD_NOT_FOUND`); there is no run-time loading of a guest DLL yet.
 //!
 //! Gaps: no reference counting (`FreeLibrary` of a valid handle always succeeds), no export
 //! table for the main image (`GetProcAddress` on it fails), no ordinal lookup, no path search
@@ -12,7 +15,7 @@
 //! module, the path given by the base as is.
 
 use crate::api_ms_win_core_errorhandling::set_last_error;
-use crate::process::main_module;
+use crate::process::{main_module, registered_module, registered_module_at, ExportRef};
 use std::ffi::{c_char, c_void, CStr};
 use std::sync::Mutex;
 
@@ -73,9 +76,12 @@ fn is_main_name(name: &str) -> Option<usize> {
     (!want.is_empty() && strip(&want) == strip(&have)).then_some(m.base)
 }
 
-/// Resolves a module name to a handle: the main module, then the host modules.
+/// Resolves a module name to a handle: the main module, the registered guest DLLs, then the
+/// host modules.
 fn find_module(name: &str) -> Option<usize> {
-    is_main_name(name).or_else(|| host_handle(name))
+    is_main_name(name)
+        .or_else(|| registered_module(file_name(name)).map(|m| m.base))
+        .or_else(|| host_handle(name))
 }
 
 unsafe fn wide_to_string(p: *const u16) -> String {
@@ -98,6 +104,9 @@ fn module_path(h: usize) -> Option<String> {
     }
     if main.as_ref().is_some_and(|m| m.base == h) {
         return main.map(|m| m.path);
+    }
+    if let Some(m) = registered_module_at(h) {
+        return Some(m.path);
     }
     host_name(h).map(|n| format!("C:\\Windows\\System32\\{n}.dll"))
 }
@@ -178,6 +187,20 @@ unsafe fn proc_address(h: usize, name: *const c_char) -> *const c_void {
     if name.is_null() {
         return fail(ERROR_INVALID_PARAMETER);
     }
+    if let Some(m) = registered_module_at(h) {
+        let r = if (name as usize) < 0x10000 {
+            ExportRef::Ordinal(name as usize as u16)
+        } else {
+            match CStr::from_ptr(name).to_str() {
+                Ok(n) => ExportRef::Name(n),
+                Err(_) => return fail(ERROR_PROC_NOT_FOUND),
+            }
+        };
+        return match m.export(r) {
+            Some(a) => a as *const c_void,
+            None => fail(ERROR_PROC_NOT_FOUND),
+        };
+    }
     let Some(module) = host_name(h) else {
         // The main module has no export table here; anything else is not a module.
         let main = main_module().is_some_and(|m| m.base == h);
@@ -253,7 +276,9 @@ win32! {
         load_library(ansi_to_string(name))
     }
     Native fn FreeLibrary(h: usize) -> i32 {
-        let known = main_module().is_some_and(|m| m.base == h) || host_name(h).is_some();
+        let known = main_module().is_some_and(|m| m.base == h)
+            || registered_module_at(h).is_some()
+            || host_name(h).is_some();
         if !known {
             set_last_error(ERROR_INVALID_HANDLE);
         }

@@ -8,8 +8,19 @@ fn main() -> ExitCode {
     let trace_imports = args.iter().any(|a| a == "--trace-imports");
     let mut timeout = 20u32;
     let mut path = None;
+    let mut data_dirs: Vec<std::path::PathBuf> = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
+        if a == "--data" {
+            match it.next() {
+                Some(v) => data_dirs.push(v.into()),
+                None => {
+                    eprintln!("nativ64-run: --data needs a directory");
+                    return ExitCode::from(64);
+                }
+            }
+            continue;
+        }
         if a == "--timeout" {
             match it.next().and_then(|v| v.parse().ok()) {
                 Some(v) => timeout = v,
@@ -24,7 +35,7 @@ fn main() -> ExitCode {
     }
     let Some(path) = path else {
         eprintln!(
-            "usage: nativ64-run [--check [--all]] [--timeout SECONDS] [--trace-imports] <exe>"
+            "usage: nativ64-run [--check [--all]] [--timeout SECONDS] [--trace-imports] [--data DIR]... <exe>"
         );
         return ExitCode::from(64);
     };
@@ -35,10 +46,27 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
+    nativ64::paths::set_extra_package_dirs(data_dirs);
+    // DLL search list: the exe's directory first, then the extra package directories.
+    let mut search_dirs = vec![std::fs::canonicalize(path)
+        .ok()
+        .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
+        .unwrap_or_else(|| ".".into())];
+    search_dirs.extend(nativ64::paths::extra_package_dirs());
+    let native_modules = std::env::var("NATIV64_NATIVE_MODULES")
+        .map(|v| {
+            v.split(',')
+                .map(|m| m.trim().to_string())
+                .filter(|m| !m.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
     let img = match Image::load(
         &data,
         &LoadOptions {
             trace_imports,
+            search_dirs,
+            native_modules,
             ..LoadOptions::default()
         },
     ) {
@@ -79,6 +107,29 @@ fn main() -> ExitCode {
     );
     for i in unresolved.iter().take(if all { usize::MAX } else { 20 }) {
         println!("  unresolved: {}", i.display());
+    }
+    println!("package DLLs: {}", img.dlls().len());
+    for d in img.dlls() {
+        println!(
+            "  {} at {:#x} ({}), {} imports, {} unresolved",
+            d.name(),
+            d.base(),
+            d.path(),
+            d.imports.len(),
+            d.unresolved().count()
+        );
+    }
+    // Unresolved imports per module, for the main image and each DLL.
+    for (owner, im) in
+        std::iter::once(("exe", &img)).chain(img.dlls().iter().map(|d| (d.name(), d)))
+    {
+        let mut per: std::collections::BTreeMap<&str, usize> = Default::default();
+        for i in im.unresolved() {
+            *per.entry(i.module.as_str()).or_default() += 1;
+        }
+        for (m, n) in per {
+            println!("  unresolved in {owner}: {m}: {n}");
+        }
     }
     ExitCode::SUCCESS
 }

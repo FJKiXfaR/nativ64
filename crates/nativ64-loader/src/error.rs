@@ -28,6 +28,12 @@ pub enum LoadError {
     NoEntryPoint,
     /// The TLS directory is invalid.
     BadTls(&'static str),
+    /// The export directory is invalid.
+    BadExports(&'static str),
+    /// A package DLL could not be loaded: its name and the reason.
+    Dll(String, Box<LoadError>),
+    /// A package DLL's `DllMain(DLL_PROCESS_ATTACH)` returned FALSE.
+    DllInitFailed(String),
     /// A system call failed (errno).
     Os(&'static str, i32),
 }
@@ -48,6 +54,9 @@ impl fmt::Display for LoadError {
             Self::NoRelocations => write!(f, "image moved but it has no relocations"),
             Self::NoEntryPoint => write!(f, "image has no entry point"),
             Self::BadTls(w) => write!(f, "bad TLS directory: {w}"),
+            Self::BadExports(w) => write!(f, "bad export directory: {w}"),
+            Self::Dll(n, e) => write!(f, "{n}: {e}"),
+            Self::DllInitFailed(n) => write!(f, "{n}: DllMain(DLL_PROCESS_ATTACH) returned FALSE"),
             Self::Os(w, e) => write!(f, "{w} failed (errno {e})"),
         }
     }

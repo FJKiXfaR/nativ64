@@ -3,6 +3,7 @@
 use crate::LoadError;
 
 pub const MACHINE_AMD64: u16 = 0x8664;
+pub const DIR_EXPORT: usize = 0;
 pub const DIR_IMPORT: usize = 1;
 pub const DIR_BASERELOC: usize = 5;
 pub const DIR_TLS: usize = 9;
