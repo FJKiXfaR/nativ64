@@ -13,3 +13,4 @@ mod tls;
 pub use error::LoadError;
 pub use image::{Image, ImportEntry, LoadOptions};
 pub use pe::{DataDir, Pe, Section};
+pub use stubs::trace_calls;

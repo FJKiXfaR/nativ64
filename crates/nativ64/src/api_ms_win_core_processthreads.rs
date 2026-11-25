@@ -7,6 +7,9 @@ use std::ffi::c_void;
 
 pub const TLS_OUT_OF_INDEXES: u32 = 0xFFFF_FFFF;
 const ERROR_NOT_ENOUGH_MEMORY: u32 = 8;
+const ERROR_INVALID_HANDLE: u32 = 6;
+static PRIORITY_BOOST_DISABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 /// 64 slots plus 1024 expansion slots, as Windows.
 const MAX_TLS: usize = 1088;
 
@@ -18,13 +21,40 @@ thread_local! {
     static TLS_VALUES: RefCell<Values> = const { RefCell::new(Values::new(&TLS)) };
 }
 
-/// `SetThreadAffinityMask` is also imported from `api-ms-win-core-processtopology-obsolete`.
-pub static ALIASES: &[Export] = &[Export {
-    module: "api-ms-win-core-processtopology-obsolete",
-    name: "SetThreadAffinityMask",
-    addr: SetThreadAffinityMask as *const (),
-    status: Status::Native,
-}];
+/// `SetThreadAffinityMask` is also imported from `api-ms-win-core-processtopology-obsolete`;
+/// `Get/SetThreadGroupAffinity` come from `api-ms-win-core-processtopology`.
+pub static ALIASES: &[Export] = &[
+    Export {
+        module: "api-ms-win-core-processtopology-obsolete",
+        name: "SetThreadAffinityMask",
+        addr: SetThreadAffinityMask as *const (),
+        status: Status::Native,
+    },
+    Export {
+        module: "api-ms-win-core-processtopology",
+        name: "GetThreadGroupAffinity",
+        addr: GetThreadGroupAffinity as *const (),
+        status: Status::Native,
+    },
+    Export {
+        module: "kernel32",
+        name: "GetThreadGroupAffinity",
+        addr: GetThreadGroupAffinity as *const (),
+        status: Status::Native,
+    },
+    Export {
+        module: "api-ms-win-core-processtopology",
+        name: "SetThreadGroupAffinity",
+        addr: SetThreadGroupAffinity as *const (),
+        status: Status::Native,
+    },
+    Export {
+        module: "kernel32",
+        name: "SetThreadGroupAffinity",
+        addr: SetThreadGroupAffinity as *const (),
+        status: Status::Native,
+    },
+];
 
 win32! {
     module "api-ms-win-core-processthreads" => "kernel32";
@@ -47,6 +77,29 @@ win32! {
             None => 0,
         }
     }
+    // The pseudo-handle -1, the one `DuplicateHandle` accepts as the current process.
+    Native fn GetCurrentProcess() -> usize { usize::MAX }
+    // Only the current process (the pseudo-handle) can be queried; the boost is a stored flag.
+    Native fn SetProcessPriorityBoost(h: usize, disable: i32) -> i32 {
+        if h != usize::MAX {
+            set_last_error(ERROR_INVALID_HANDLE);
+            return 0;
+        }
+        PRIORITY_BOOST_DISABLED.store(disable != 0, std::sync::atomic::Ordering::Relaxed);
+        1
+    }
+    Native fn GetProcessPriorityBoost(h: usize, disabled: *mut i32) -> i32 {
+        if h != usize::MAX {
+            set_last_error(ERROR_INVALID_HANDLE);
+            return 0;
+        }
+        if disabled.is_null() {
+            set_last_error(ERROR_INVALID_PARAMETER);
+            return 0;
+        }
+        *disabled = PRIORITY_BOOST_DISABLED.load(std::sync::atomic::Ordering::Relaxed) as i32;
+        1
+    }
     Native fn GetCurrentThread() -> usize { handles::CURRENT_THREAD }
     Native fn GetExitCodeThread(h: usize, code: *mut u32) -> i32 {
         if code.is_null() {
@@ -68,6 +121,13 @@ win32! {
     Native fn SetThreadPriority(h: usize, p: i32) -> i32 { handles::set_priority(h, p) }
     Native fn GetThreadPriority(h: usize) -> i32 { handles::get_priority(h) }
     Native fn SetThreadAffinityMask(h: usize, mask: usize) -> usize { handles::set_affinity(h, mask) }
+    // `out` is a GROUP_AFFINITY (16 bytes).
+    Native fn GetThreadGroupAffinity(h: usize, out: *mut u8) -> i32 {
+        handles::get_group_affinity(h, out)
+    }
+    Native fn SetThreadGroupAffinity(h: usize, new: *const u8, old: *mut u8) -> i32 {
+        handles::set_group_affinity(h, new, old)
+    }
     Native fn SwitchToThread() -> i32 { handles::switch_to_thread() }
     // TLS: per-thread slots, 1088 at most; a freed slot reads as NULL in every thread.
     Native fn TlsAlloc() -> u32 {
@@ -140,6 +200,17 @@ mod tests {
     fn ids() {
         unsafe {
             assert_eq!(GetCurrentProcessId(), std::process::id());
+            assert_eq!(GetCurrentProcess(), usize::MAX);
+            let mut d = 7i32;
+            assert_eq!(SetProcessPriorityBoost(usize::MAX, 1), 1);
+            assert_eq!(GetProcessPriorityBoost(usize::MAX, &mut d), 1);
+            assert_eq!(d, 1);
+            assert_eq!(SetProcessPriorityBoost(usize::MAX, 0), 1);
+            assert_eq!(GetProcessPriorityBoost(usize::MAX, &mut d), 1);
+            assert_eq!(d, 0);
+            assert_eq!(SetProcessPriorityBoost(0x1234, 1), 0);
+            assert_eq!(GetProcessPriorityBoost(usize::MAX, std::ptr::null_mut()), 0);
+            assert!(crate::lookup("kernel32", "GetCurrentProcess").is_some());
             let main = GetCurrentThreadId();
             assert_ne!(main, 0);
             let other = std::thread::spawn(|| GetCurrentThreadId()).join().unwrap();

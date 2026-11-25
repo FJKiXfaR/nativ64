@@ -105,6 +105,7 @@ fn maps_relocates_and_binds() {
         &f,
         &LoadOptions {
             base_hint: Some(want),
+            ..LoadOptions::default()
         },
     )
     .unwrap();
@@ -201,6 +202,7 @@ fn rejects_unsupported_reloc() {
         &f,
         &LoadOptions {
             base_hint: Some(0x5000_0000_0000),
+            ..LoadOptions::default()
         },
     );
     assert!(matches!(r, Err(LoadError::UnsupportedReloc(3))));

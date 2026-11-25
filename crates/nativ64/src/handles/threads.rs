@@ -414,6 +414,49 @@ pub fn set_affinity(h: Handle, mask: usize) -> usize {
     prev.unwrap_or(0) as usize
 }
 
+/// Fills a `GROUP_AFFINITY` (mask, group 0, reserved) with the thread's affinity: the process
+/// has one processor group of up to 64 processors.
+///
+/// # Safety
+/// `out` must be NULL or point to 16 writable bytes.
+pub unsafe fn get_group_affinity(h: Handle, out: *mut u8) -> i32 {
+    if out.is_null() {
+        set_last_error(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    let Some(o) = thread_arg(h) else { return 0 };
+    let id = lock(&as_thread(&o).state).tid;
+    let Some(mask) = get_affinity(id) else {
+        set_last_error(ERROR_INVALID_PARAMETER);
+        return 0;
+    };
+    std::ptr::write_bytes(out, 0, 16);
+    std::ptr::write_unaligned(out as *mut u64, mask);
+    1
+}
+
+/// Sets the affinity from a `GROUP_AFFINITY`; only group 0 exists. `old`, when not NULL,
+/// receives the previous affinity first (as Wine does).
+///
+/// # Safety
+/// `new` must be NULL or point to 16 readable bytes, `old` NULL or 16 writable bytes.
+pub unsafe fn set_group_affinity(h: Handle, new: *const u8, old: *mut u8) -> i32 {
+    if new.is_null() {
+        set_last_error(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    let mask = std::ptr::read_unaligned(new as *const u64);
+    let group = std::ptr::read_unaligned(new.add(8) as *const u16);
+    if group != 0 {
+        set_last_error(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    if !old.is_null() && get_group_affinity(h, old) == 0 {
+        return 0;
+    }
+    (set_affinity(h, mask as usize) != 0) as i32
+}
+
 pub fn switch_to_thread() -> i32 {
     unsafe { libc::sched_yield() };
     1
@@ -620,6 +663,28 @@ mod tests {
             assert_eq!(SetThreadAffinityMask(t, process), lowest);
             // "All processors".
             assert_eq!(SetThreadAffinityMask(t, usize::MAX), process);
+            let mut ga = [0xFFu8; 16];
+            assert_eq!(GetThreadGroupAffinity(t, ga.as_mut_ptr()), 1);
+            assert_eq!(
+                u64::from_le_bytes(ga[..8].try_into().unwrap()),
+                process as u64
+            );
+            assert_eq!(&ga[8..], &[0u8; 8]);
+            assert_eq!(GetThreadGroupAffinity(t, null_mut()), 0);
+            assert_eq!(GetLastError(), ERROR_INVALID_PARAMETER);
+            assert_eq!(GetThreadGroupAffinity(0x1234, ga.as_mut_ptr()), 0);
+            let mut old = [0xFFu8; 16];
+            let mut new = [0u8; 16];
+            new[..8].copy_from_slice(&lowest.to_le_bytes());
+            assert_eq!(SetThreadGroupAffinity(t, new.as_ptr(), old.as_mut_ptr()), 1);
+            assert_eq!(
+                u64::from_le_bytes(old[..8].try_into().unwrap()),
+                process as u64
+            );
+            assert_eq!(SetThreadAffinityMask(t, usize::MAX), lowest);
+            new[8] = 1; // group 1 does not exist
+            assert_eq!(SetThreadGroupAffinity(t, new.as_ptr(), null_mut()), 0);
+            assert_eq!(SetThreadGroupAffinity(t, null(), null_mut()), 0);
             // Errors: empty, outside the process mask, bad handle.
             SetLastError(0);
             assert_eq!(SetThreadAffinityMask(t, 0), 0);

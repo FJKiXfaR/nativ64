@@ -171,6 +171,7 @@ fn tls_survives_relocation() {
         &f,
         &LoadOptions {
             base_hint: Some(0x5100_0000_0000),
+            ..LoadOptions::default()
         },
     )
     .unwrap();
@@ -202,10 +203,63 @@ fn tls_directory_out_of_bounds_is_an_error() {
         &f,
         &LoadOptions {
             base_hint: Some(IMAGE_BASE),
+            ..LoadOptions::default()
         },
     );
     assert!(matches!(
         r,
         Err(LoadError::BadTls(_)) | Err(LoadError::RvaOutOfBounds(_))
     ));
+}
+
+const IMPORT_DIR: usize = 0x600;
+const IMPORT_IAT: usize = 0x660;
+
+/// Adds an import of `kernel32!GetCurrentProcessId` (IAT slot at .text+IMPORT_IAT).
+fn with_import(mut f: Vec<u8>) -> Vec<u8> {
+    let r = |off: usize| (TEXT_RVA + off) as u32;
+    let o = 0x80 + 4 + 20;
+    let t = &mut f[TEXT_RAW..];
+    put32(t, IMPORT_DIR, r(0x640)); // OriginalFirstThunk
+    put32(t, IMPORT_DIR + 12, r(0x6a0)); // Name
+    put32(t, IMPORT_DIR + 16, r(IMPORT_IAT)); // FirstThunk
+    put64(t, 0x640, r(0x680) as u64);
+    put64(t, IMPORT_IAT, r(0x680) as u64);
+    t[0x682..0x682 + 20].copy_from_slice(b"GetCurrentProcessId\0");
+    t[0x6a0..0x6a0 + 13].copy_from_slice(b"KERNEL32.dll\0");
+    put32(&mut f, o + 112 + 8, r(IMPORT_DIR));
+    put32(&mut f, o + 112 + 8 + 4, 40);
+    f
+}
+
+fn call_import_code() -> Vec<u8> {
+    // call [rip+IAT] ; ret   (sub rsp,40 / add rsp,40 around the call for alignment)
+    let mut c = vec![0x48, 0x83, 0xEC, 0x28, 0xFF, 0x15];
+    c.extend(rip(IMPORT_IAT, 10));
+    c.extend([0x48, 0x83, 0xC4, 0x28, 0xC3]);
+    c
+}
+
+#[test]
+fn imports_are_called_directly_by_default() {
+    let _g = RUN.lock().unwrap_or_else(|p| p.into_inner());
+    let img = load(&with_import(build(&call_import_code(), None, false)));
+    assert_eq!(img.run_main().unwrap(), std::process::id());
+}
+
+#[test]
+fn traced_imports_go_through_a_trampoline() {
+    let _g = RUN.lock().unwrap_or_else(|p| p.into_inner());
+    let f = with_import(build(&call_import_code(), None, false));
+    let img = Image::load(
+        &f,
+        &LoadOptions {
+            trace_imports: true,
+            ..LoadOptions::default()
+        },
+    )
+    .unwrap();
+    let before = nativ64_loader::trace_calls();
+    assert_eq!(img.run_main().unwrap(), std::process::id());
+    assert_eq!(nativ64_loader::trace_calls(), before + 1);
 }

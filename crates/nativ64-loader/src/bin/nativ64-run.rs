@@ -5,6 +5,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let check = args.iter().any(|a| a == "--check");
     let all = args.iter().any(|a| a == "--all");
+    let trace_imports = args.iter().any(|a| a == "--trace-imports");
     let mut timeout = 20u32;
     let mut path = None;
     let mut it = args.iter();
@@ -22,7 +23,9 @@ fn main() -> ExitCode {
         }
     }
     let Some(path) = path else {
-        eprintln!("usage: nativ64-run [--check [--all]] [--timeout SECONDS] <exe>");
+        eprintln!(
+            "usage: nativ64-run [--check [--all]] [--timeout SECONDS] [--trace-imports] <exe>"
+        );
         return ExitCode::from(64);
     };
     let data = match std::fs::read(path) {
@@ -32,7 +35,13 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let img = match Image::load(&data, &LoadOptions::default()) {
+    let img = match Image::load(
+        &data,
+        &LoadOptions {
+            trace_imports,
+            ..LoadOptions::default()
+        },
+    ) {
         Ok(i) => i,
         Err(e) => {
             eprintln!("nativ64-run: {path}: {e}");

@@ -231,6 +231,20 @@ win32! {
         }
         load_library(wide_to_string(name))
     }
+    Native fn LoadLibraryW(name: *const u16) -> usize {
+        if name.is_null() {
+            set_last_error(ERROR_INVALID_PARAMETER);
+            return 0;
+        }
+        load_library(wide_to_string(name))
+    }
+    Native fn LoadLibraryA(name: *const c_char) -> usize {
+        if name.is_null() {
+            set_last_error(ERROR_INVALID_PARAMETER);
+            return 0;
+        }
+        load_library(ansi_to_string(name))
+    }
     Native fn LoadLibraryExA(name: *const c_char, _file: usize, _flags: u32) -> usize {
         if name.is_null() {
             set_last_error(ERROR_INVALID_PARAMETER);
@@ -262,6 +276,8 @@ mod tests {
             "GetModuleHandleW",
             "GetProcAddress",
             "LoadLibraryExW",
+            "LoadLibraryW",
+            "LoadLibraryA",
             "FreeLibrary",
         ] {
             assert!(crate::lookup("api-ms-win-core-libraryloader-l1-2-0.dll", n).is_some());
@@ -296,6 +312,13 @@ mod tests {
             assert_eq!(GetLastError(), ERROR_INVALID_PARAMETER);
             assert!(GetProcAddress(0x1234, c"GetTickCount64".as_ptr()).is_null());
             assert_eq!(GetLastError(), ERROR_INVALID_HANDLE);
+
+            assert_eq!(LoadLibraryW(w("kernel32.dll").as_ptr()), k);
+            assert_eq!(LoadLibraryA(c"kernel32.dll".as_ptr()), k);
+            assert_ne!(LoadLibraryW(w("xgameruntime.dll").as_ptr()), 0);
+            assert_eq!(LoadLibraryW(w("nosuch.dll").as_ptr()), 0);
+            assert_eq!(GetLastError(), ERROR_MOD_NOT_FOUND);
+            assert_eq!(LoadLibraryW(std::ptr::null()), 0);
 
             assert_eq!(FreeLibrary(k), 1);
             assert_eq!(FreeLibrary(0x1234), 0);

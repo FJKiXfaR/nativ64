@@ -15,6 +15,7 @@ pub mod api_ms_win_core_libraryloader;
 pub mod api_ms_win_core_processenvironment;
 pub mod api_ms_win_core_processthreads;
 pub mod api_ms_win_core_profile;
+pub mod api_ms_win_core_psm_appnotify;
 pub mod api_ms_win_core_registry;
 pub mod api_ms_win_core_synch;
 pub mod api_ms_win_core_sysinfo;
@@ -36,9 +37,11 @@ pub mod process;
 mod scanf;
 mod slots;
 pub mod vcruntime140;
+pub mod ws2_32;
+pub mod xgameruntime;
 
 pub use api_ms_win_crt_runtime::{nativ64_set_command_line, set_command_line};
-pub use registry::{lookup, nativ64_lookup, normalize_module, Export, Status};
+pub use registry::{lookup, lookup_ordinal, nativ64_lookup, normalize_module, Export, Status};
 
 /// One table per Windows module file. Add a new module file here.
 pub static TABLES: &[&[Export]] = &[
@@ -52,6 +55,7 @@ pub static TABLES: &[&[Export]] = &[
     api_ms_win_core_processthreads::EXPORTS,
     api_ms_win_core_processthreads::ALIASES,
     api_ms_win_core_profile::EXPORTS,
+    api_ms_win_core_psm_appnotify::EXPORTS,
     api_ms_win_core_synch::EXPORTS,
     api_ms_win_core_sysinfo::EXPORTS,
     api_ms_win_crt_convert::EXPORTS,
@@ -66,6 +70,8 @@ pub static TABLES: &[&[Export]] = &[
     api_ms_win_crt_utility::EXPORTS,
     msvcp140::EXPORTS,
     vcruntime140::EXPORTS,
+    ws2_32::EXPORTS,
+    xgameruntime::EXPORTS,
 ];
 
 /// Every registered export (each function appears once per module name it is known under).

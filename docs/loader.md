@@ -33,10 +33,14 @@ executable without any compatibility layer, and runs its entry point.
 
 `nativ64-run <exe>` maps, binds and runs the image; the entry's return value is the exit code.
 `--timeout SECONDS` (default 20, 0 = none) prints `nativ64: timeout` and exits 124. A
-SIGSEGV/SIGILL/SIGBUS/SIGFPE in guest code (handled on a sigaltstack, see `fault.rs`) prints the
+SIGSEGV/SIGILL/SIGBUS/SIGFPE/SIGTRAP (an `int3`) in guest code (handled on a sigaltstack, see `fault.rs`) prints the
 signal, fault address, RIP and `image+0xOFFSET` when RIP is inside the image, then exits 139. A
 trap stub aborts (SIGABRT). `nativ64-run --check <exe>` only maps and binds, printing the base,
 entry point, section count and import statistics, plus the first 20 unresolved imports.
+`--trace-imports` (`LoadOptions::trace_imports`) routes every resolved import through a
+trampoline that logs `nativ64: call module!name` on entry (argument registers, xmm0-3 and stack
+arguments are preserved; the return value is not logged). Off by default. Imports by ordinal
+resolve through `nativ64::lookup_ordinal` (only `ws2_32` has a table).
 
 ## Not done yet
 

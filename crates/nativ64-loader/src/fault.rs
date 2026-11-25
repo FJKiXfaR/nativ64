@@ -40,6 +40,7 @@ extern "C" fn on_fault(sig: i32, info: *mut libc::siginfo_t, uc: *mut libc::c_vo
         libc::SIGILL => "SIGILL",
         libc::SIGBUS => "SIGBUS",
         libc::SIGFPE => "SIGFPE",
+        libc::SIGTRAP => "SIGTRAP",
         _ => "signal",
     };
     say(format_args!(
@@ -67,12 +68,18 @@ unsafe fn handle(sig: i32, f: usize, flags: i32) {
     libc::sigaction(sig, &sa, std::ptr::null_mut());
 }
 
-/// Installs the SIGSEGV/SIGILL/SIGBUS/SIGFPE reporter for a process whose guest image is at
+/// Installs the SIGSEGV/SIGILL/SIGBUS/SIGFPE/SIGTRAP reporter for a process whose guest image is at
 /// `[base, base+size)`. Each guest thread must also call [`setup_thread`].
 pub fn install(base: u64, size: usize) {
     IMAGE_BASE.store(base, Ordering::Relaxed);
     IMAGE_SIZE.store(size, Ordering::Relaxed);
-    for sig in [libc::SIGSEGV, libc::SIGILL, libc::SIGBUS, libc::SIGFPE] {
+    for sig in [
+        libc::SIGSEGV,
+        libc::SIGILL,
+        libc::SIGBUS,
+        libc::SIGFPE,
+        libc::SIGTRAP,
+    ] {
         unsafe {
             handle(
                 sig,

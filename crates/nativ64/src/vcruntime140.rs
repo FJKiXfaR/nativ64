@@ -5,9 +5,20 @@
 //! which exports them too.
 
 use std::ffi::{c_char, c_int, c_void};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// The handler `_purecall` would call; it is only recorded (nothing here calls it).
+static PURECALL_HANDLER: AtomicUsize = AtomicUsize::new(0);
 
 win32! {
     module "vcruntime140" => "ucrtbase";
+    // Returns the previous handler (NULL at first).
+    Native fn _set_purecall_handler(h: usize) -> usize {
+        PURECALL_HANDLER.swap(h, Ordering::Relaxed)
+    }
+    Native fn _get_purecall_handler() -> usize {
+        PURECALL_HANDLER.load(Ordering::Relaxed)
+    }
     Native fn memchr(p: *const c_void, c: c_int, n: usize) -> *const c_void {
         if n == 0 {
             return std::ptr::null();
@@ -105,6 +116,16 @@ win32! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn purecall_handler_roundtrip() {
+        unsafe {
+            assert_eq!(_set_purecall_handler(0x1234), 0);
+            assert_eq!(_get_purecall_handler(), 0x1234);
+            assert_eq!(_set_purecall_handler(0), 0x1234);
+        }
+        assert!(crate::lookup("VCRUNTIME140.dll", "_set_purecall_handler").is_some());
+    }
 
     #[test]
     fn registered_both_names() {

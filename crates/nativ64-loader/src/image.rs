@@ -1,7 +1,7 @@
 //! Mapping, relocation and import binding.
 
 use crate::pe::*;
-use crate::stubs::{errno, StubPage};
+use crate::stubs::{errno, StubPage, TracePage};
 use crate::tls::{self, ThreadTls, TlsInfo};
 use crate::LoadError;
 
@@ -10,6 +10,8 @@ pub struct LoadOptions {
     /// Try this address instead of the header's ImageBase (relocations still apply against
     /// the header's ImageBase). Mostly useful to test relocation.
     pub base_hint: Option<u64>,
+    /// Route every resolved import through a trampoline that logs `nativ64: call module!name`.
+    pub trace_imports: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -36,6 +38,7 @@ pub struct Image {
     pub imports: Vec<ImportEntry>,
     tls: Option<TlsInfo>,
     _stubs: Option<StubPage>,
+    _trace: Option<TracePage>,
 }
 
 impl Image {
@@ -52,10 +55,11 @@ impl Image {
             imports: Vec::new(),
             tls: None,
             _stubs: None,
+            _trace: None,
         };
         img.copy_sections(&pe);
         img.relocate(&pe)?;
-        img.bind_imports(&pe)?;
+        img.bind_imports(&pe, opts.trace_imports)?;
         img.setup_tls(&pe)?;
         img.protect(&pe)?;
         Ok(img)
@@ -158,10 +162,12 @@ impl Image {
         Ok(String::from_utf8_lossy(&tail[..n]).into_owned())
     }
 
-    fn bind_imports(&mut self, pe: &Pe) -> Result<(), LoadError> {
+    fn bind_imports(&mut self, pe: &Pe, trace: bool) -> Result<(), LoadError> {
         let dir = pe.dirs[DIR_IMPORT];
         // (iat slot rva, import index) of the imports that need a trap stub
         let mut pending: Vec<(usize, usize)> = Vec::new();
+        // (iat slot rva, name, target) of the resolved imports to trace
+        let mut traced: Vec<(usize, String, u64)> = Vec::new();
         if dir.rva != 0 {
             let mut desc = dir.rva as usize;
             loop {
@@ -194,12 +200,13 @@ impl Image {
                         self.cstr((thunk as u32).wrapping_add(2))?
                     };
                     let found = if thunk >> 63 != 0 {
-                        None
+                        nativ64::lookup_ordinal(&module, (thunk & 0xffff) as u16)
                     } else {
                         nativ64::lookup(&module, &name)
                             .or_else(|| nativ64_gpu::lookup(&module, &name))
                     };
                     let idx = self.imports.len();
+                    let shown = format!("{module}!{name}");
                     self.imports.push(ImportEntry {
                         module: module.clone(),
                         name,
@@ -208,13 +215,26 @@ impl Image {
                     match found {
                         Some(e) => {
                             let a = e.addr as u64;
-                            self.mem()[slot..slot + 8].copy_from_slice(&a.to_le_bytes());
+                            if trace {
+                                traced.push((slot, shown, a));
+                            } else {
+                                self.mem()[slot..slot + 8].copy_from_slice(&a.to_le_bytes());
+                            }
                         }
                         None => pending.push((slot, idx)),
                     }
                 }
                 desc += 20;
             }
+        }
+        if !traced.is_empty() {
+            let entries: Vec<(String, u64)> = traced.iter().map(|t| (t.1.clone(), t.2)).collect();
+            let page = TracePage::new(&entries)?;
+            for (k, t) in traced.iter().enumerate() {
+                let a = page.addr(k);
+                self.mem()[t.0..t.0 + 8].copy_from_slice(&a.to_le_bytes());
+            }
+            self._trace = Some(page);
         }
         if !pending.is_empty() {
             let names: Vec<String> = pending
