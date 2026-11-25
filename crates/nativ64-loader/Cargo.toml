@@ -1,0 +1,12 @@
+[package]
+name = "nativ64-loader"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Ybucaille/nativ64"
+description = "Native PE32+ loader for nativ64: maps an image, relocates it and resolves its imports"
+publish = false
+
+[dependencies]
+nativ64 = { path = "../nativ64" }
+libc = "0.2"
