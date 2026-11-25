@@ -9,6 +9,7 @@ mod format;
 mod image;
 mod instance;
 mod memory;
+mod present;
 mod replay;
 mod swapchain;
 

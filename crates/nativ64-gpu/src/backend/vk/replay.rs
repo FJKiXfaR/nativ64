@@ -84,6 +84,9 @@ pub struct VkBackend<'g> {
     images: HashMap<usize, Option<TitleImage>>,
     pub stats: ReplayStats,
     logged: HashSet<Discriminant<Command>>,
+    pub(super) swapchains: HashMap<usize, Option<super::Swapchain<'g>>>,
+    pub(super) dump: Option<std::path::PathBuf>,
+    pub(super) frames: u64,
 }
 
 fn range(
@@ -160,6 +163,9 @@ impl<'g> VkBackend<'g> {
             images: HashMap::new(),
             stats: ReplayStats::default(),
             logged: HashSet::new(),
+            swapchains: HashMap::new(),
+            dump: None,
+            frames: 0,
         }
     }
 
@@ -199,6 +205,16 @@ impl<'g> VkBackend<'g> {
 
     /// Image of `res`, made (and moved to `GENERAL`) at first use; None when the resource is
     /// not ours, not a 2D texture, or in a format without a mapping.
+    /// The colour image of `res` when a replay already made one: image, width, height.
+    pub(super) fn colour_image(&self, res: usize) -> Option<(vk::Image, u32, u32)> {
+        let t = self.images.get(&res)?.as_ref()?;
+        (t.info.aspect == vk::ImageAspectFlags::COLOR).then_some((
+            t.image,
+            t.desc.width as u32,
+            t.desc.height,
+        ))
+    }
+
     fn image(&mut self, d: &Device, cb: vk::CommandBuffer, res: usize) -> Option<Img> {
         // SAFETY: `res` was recorded by a list method from a live resource of ours.
         let (desc, _) = unsafe { info_of(res as *mut _) }?;
@@ -873,6 +889,7 @@ impl Drop for VkBackend<'_> {
         // SAFETY: the GPU is idle after the wait; images are ours.
         unsafe {
             let _ = self.gpu.device.device_wait_idle();
+            self.swapchains.clear();
             for (_, t) in std::mem::take(&mut self.images) {
                 if let Some(t) = t {
                     self.destroy(t);
@@ -1076,6 +1093,37 @@ mod tests {
             assert_eq!(&r.bytes[16..20], &[2, 0, 7, 255]);
             assert_eq!(&r.bytes[28..32], &[2, 3, 7, 255]);
         }
+    }
+
+    #[test]
+    fn present_dumps_a_png() {
+        let Some(g) = gpu_or_skip() else { return };
+        let mut b = VkBackend::new(&g);
+        let dir = std::env::temp_dir().join(format!("nativ64-dump-{}", std::process::id()));
+        b.set_dump_dir(dir.clone());
+        let res = texture(6, 4, 28, 1);
+        b.execute(&[vec![Command::ClearRenderTarget {
+            handle: rtv(res),
+            color: [0.0, 0.0, 1.0, 1.0],
+            rects: vec![],
+        }]]);
+        b.present(res, None, None);
+        b.present(res, Some([0, 0, 2, 2]), None);
+        assert_eq!(b.frames(), 2);
+        let file = std::fs::File::open(dir.join("frame_00001.png")).unwrap();
+        let mut reader = png::Decoder::new(std::io::BufReader::new(file))
+            .read_info()
+            .unwrap();
+        let mut buf = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut buf).unwrap();
+        assert_eq!((info.width, info.height), (6, 4));
+        assert!(buf[..96].chunks(4).all(|p| p == [0, 0, 255, 255]));
+        assert!(dir.join("frame_00002.png").exists());
+        std::fs::remove_dir_all(dir).unwrap();
+        // A resource nothing rendered to presents nothing and dumps nothing.
+        let n = b.frames();
+        b.present(texture(4, 4, 28, 1), None, None);
+        assert_eq!(b.frames(), n + 1);
     }
 
     fn tex_copy(tex: usize, buf: usize) -> Command {

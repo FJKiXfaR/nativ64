@@ -186,6 +186,16 @@ pub fn window_surface(hwnd: usize) -> Option<RawSurface> {
     with_backend(|b| b.surface(hwnd))
 }
 
+/// The title's main window: the oldest live top-level window (None before the first).
+pub fn main_window() -> Option<usize> {
+    windows(|t| {
+        t.iter()
+            .filter(|(_, w)| w.parent == 0)
+            .map(|(&h, _)| h)
+            .min()
+    })
+}
+
 /// The host's current client size of `hwnd` (None when headless or unknown).
 pub fn window_client_size(hwnd: usize) -> Option<(i32, i32)> {
     with_backend(|b| b.client_size(hwnd))

@@ -279,6 +279,33 @@ impl Swapchain<'_> {
     /// was presented (zero-sized window, or no image became available within 100 ms because
     /// the compositor is not consuming frames).
     pub fn present_clear(&mut self, rgba: [f32; 4]) -> Result<bool> {
+        self.present_with(|d, cb, image, range, _| {
+            // SAFETY: `cb` is recording and `image` is in TRANSFER_DST_OPTIMAL.
+            unsafe {
+                d.cmd_clear_color_image(
+                    cb,
+                    image,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    &vk::ClearColorValue { float32: rgba },
+                    &[range],
+                )
+            }
+        })
+    }
+
+    /// Acquire an image, let `record` write it (it arrives in `TRANSFER_DST_OPTIMAL`, with its
+    /// subresource range, its extent and the command buffer recording), present it. `Ok(false)` as for
+    /// `present_clear`.
+    pub fn present_with<F>(&mut self, record: F) -> Result<bool>
+    where
+        F: FnOnce(
+            &ash::Device,
+            vk::CommandBuffer,
+            vk::Image,
+            vk::ImageSubresourceRange,
+            vk::Extent2D,
+        ),
+    {
         let g = self.gpu;
         let d = &g.device;
         let fi = self.cur;
@@ -358,13 +385,7 @@ impl Swapchain<'_> {
                     vk::AccessFlags::TRANSFER_WRITE,
                 )],
             );
-            d.cmd_clear_color_image(
-                f.cb,
-                image,
-                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                &vk::ClearColorValue { float32: rgba },
-                &[range],
-            );
+            record(d, f.cb, image, range, self.extent);
             d.cmd_pipeline_barrier(
                 f.cb,
                 vk::PipelineStageFlags::TRANSFER,
