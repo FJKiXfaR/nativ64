@@ -10,3 +10,4 @@ publish = false
 [dependencies]
 nativ64 = { path = "../nativ64" }
 libc = "0.2"
+ash = { version = "0.38", features = ["loaded"] }

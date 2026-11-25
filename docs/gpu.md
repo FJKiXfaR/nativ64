@@ -20,6 +20,12 @@ APIs only (libc as its only dependency).
   (else DXGI_ERROR_UNSUPPORTED), IID of ID3D12Device or any level, E_NOINTERFACE otherwise. One
   device per process (later calls AddRef the same one). Object 0x58 bytes with the out-of-line
   flag at +0x18 = 1; table of 160 slots, only IUnknown filled, every other slot a trap.
+- `backend/vk` (no D3D12 yet): `Gpu::open()` loads Vulkan at run time (ash, no link-time
+  dependency), picks discrete > integrated > CPU (`NATIV64_GPU=<index|name part>` overrides;
+  needs 1.2, `VK_EXT_external_memory_host`, device address, timeline semaphores), one queue
+  behind a mutex, `submit_once`. `import_host(ptr, len)` binds a buffer to caller pages (zero
+  copy, alignment checked); `clear_and_read` proves the read-back. `NATIV64_VK_VALIDATION=1`
+  enables the validation layer. Tests skip without a device.
 - `xmem`: `XMemVirtualAlloc` (placement by XMem flags: 32-bit below 4 GiB, else 4 GiB up to
   2^40..2^46; 2 MiB alignment; reserve then commit), `XMemAllocDefault`, `XMemFreeDefault`,
   `XMemAlloc`, `XMemFree` (shortcut: the title's allocation hooks are not consulted),

@@ -10,7 +10,11 @@ jobs:
           components: rustfmt, clippy
       - run: cargo fmt --check
       - run: cargo clippy -- -D warnings
+      - name: Vulkan on lavapipe (Mesa's CPU driver)
+        run: sudo apt-get update && sudo apt-get install -y libvulkan1 mesa-vulkan-drivers
       - run: cargo test
+        env:
+          NATIV64_GPU: llvmpipe
       - run: python -I -m py_compile tools/*.py
   tsan:
     runs-on: ubuntu-latest
