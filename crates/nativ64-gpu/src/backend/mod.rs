@@ -5,6 +5,7 @@
 //! there is something to show it on (the title's window, or `NATIV64_DUMP_FRAMES`), else null.
 //! While the only missing piece is a window, the choice is retried at the next call.
 
+mod trace;
 pub mod vk;
 
 use crate::d3d12::command::{Command, Rect};
@@ -38,9 +39,11 @@ impl Backend for NullBackend {
     fn execute(&mut self, lists: &[Vec<Command>]) {
         self.lists += lists.len() as u64;
         self.commands += lists.iter().map(|l| l.len() as u64).sum::<u64>();
+        trace::execute(lists);
     }
     fn present(&mut self, _: usize, _: Option<Rect>) {
         self.presents += 1;
+        trace::present();
     }
 }
 
@@ -56,6 +59,7 @@ impl Backend for VulkanBackend {
         "vulkan"
     }
     fn execute(&mut self, lists: &[Vec<Command>]) {
+        trace::execute(lists);
         self.0.execute(lists);
     }
     fn present(&mut self, resource: usize, rect: Option<Rect>) {
@@ -69,6 +73,7 @@ impl Backend for VulkanBackend {
                 size,
             })
         });
+        trace::present();
         self.0.present(resource, rect, window);
     }
 }

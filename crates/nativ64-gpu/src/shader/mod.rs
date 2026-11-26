@@ -335,28 +335,107 @@ pub fn dump(
     std::fs::write(dir.join(format!("{hash:016x}.{stage}.txt")), text)
 }
 
-/// Appends one line to `pipelines.txt` in the dump directory when it is set: the stage hashes
-/// of a created pipeline, in creation order.
-pub fn note_pipeline(stages: &[(&str, &[u8])], targets: &[u32]) {
-    use std::io::Write;
-    let Some(dir) = std::env::var_os("NATIV64_DUMP_SHADERS") else {
-        return;
-    };
-    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+/// One created pipeline: its `pipelines.txt` description and how the replay used it.
+struct PipelineEntry {
+    text: String,
+    first_frame: Option<u64>,
+    uses: u64,
+}
+
+/// The pipelines created so far, the objects handed out for them, and their use by the replay.
+#[derive(Default)]
+struct PipelineLog {
+    entries: Vec<PipelineEntry>,
+    by_object: std::collections::HashMap<usize, usize>,
+    dirty: bool,
+}
+
+impl PipelineLog {
+    fn add(&mut self, text: String) -> usize {
+        self.entries.push(PipelineEntry {
+            text,
+            first_frame: None,
+            uses: 0,
+        });
+        self.dirty = true;
+        self.entries.len() - 1
+    }
+
+    /// Notes that the draw or dispatch `frame` (1-based present index) used `object`; returns
+    /// its id when it is a pipeline created here.
+    fn used(&mut self, object: usize, frame: u64) -> Option<usize> {
+        let id = *self.by_object.get(&object)?;
+        let e = &mut self.entries[id];
+        e.first_frame.get_or_insert(frame);
+        e.uses += 1;
+        self.dirty = true;
+        Some(id)
+    }
+
+    fn render(&self) -> String {
+        let mut out = String::new();
+        for (n, e) in self.entries.iter().enumerate() {
+            let first = e.first_frame.map_or("-".to_string(), |f| f.to_string());
+            out.push_str(&format!(
+                "pipeline {n} {} first_frame={first} draws={}\n",
+                e.text, e.uses
+            ));
+        }
+        out
+    }
+}
+
+static PIPELINES: std::sync::Mutex<Option<PipelineLog>> = std::sync::Mutex::new(None);
+
+fn with_log<T>(f: impl FnOnce(&mut PipelineLog) -> T) -> T {
+    let mut g = PIPELINES.lock().unwrap_or_else(|e| e.into_inner());
+    f(g.get_or_insert_with(PipelineLog::default))
+}
+
+/// Registers a created pipeline (stage hashes, in creation order) and returns its id.
+pub fn note_pipeline(stages: &[(&str, &[u8])], targets: &[u32]) -> usize {
     let stages: Vec<String> = stages
         .iter()
         .map(|(s, b)| format!("{s}={:016x}", fnv1a64(b)))
         .collect();
-    let line = format!("pipeline {n} {} targets {targets:?}\n", stages.join(" "));
+    let id = with_log(|l| l.add(format!("{} targets {targets:?}", stages.join(" "))));
+    flush_pipelines(false);
+    id
+}
+
+/// Tells the log which object the title got for pipeline `id`.
+pub fn bind_pipeline_object(object: usize, id: usize) {
+    with_log(|l| {
+        l.by_object.insert(object, id);
+    });
+}
+
+/// A draw or dispatch with the pipeline `object` during presented frame `frame`: returns the
+/// pipeline id (None for an object that is not one of ours).
+pub fn note_pipeline_use(object: usize, frame: u64) -> Option<usize> {
+    with_log(|l| l.used(object, frame))
+}
+
+/// Rewrites `pipelines.txt` in the `NATIV64_DUMP_SHADERS` directory when something changed:
+/// at most twice a second, unless `force`.
+pub fn flush_pipelines(force: bool) {
+    static LAST: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+    let Some(dir) = std::env::var_os("NATIV64_DUMP_SHADERS") else {
+        return;
+    };
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    let now = std::time::Instant::now();
+    if !force && last.is_some_and(|t| now.duration_since(t).as_millis() < 500) {
+        return;
+    }
+    let text = with_log(|l| {
+        let was = std::mem::replace(&mut l.dirty, false);
+        was.then(|| l.render())
+    });
+    let Some(text) = text else { return };
+    *last = Some(now);
     let _ = std::fs::create_dir_all(&dir);
-    let file = Path::new(&dir).join("pipelines.txt");
-    if let Err(e) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(file)
-        .and_then(|mut f| f.write_all(line.as_bytes()))
-    {
+    if let Err(e) = std::fs::write(Path::new(&dir).join("pipelines.txt"), text) {
         eprintln!("nativ64: NATIV64_DUMP_SHADERS: pipelines.txt: {e}");
     }
 }
@@ -505,5 +584,20 @@ mod tests {
         let t = std::fs::read_to_string(dir.join("0000000000000001.pixel.txt")).unwrap();
         assert!(t.starts_with("parse error: truncated"));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn pipeline_log_tracks_first_frame_and_uses() {
+        let mut l = PipelineLog::default();
+        let a = l.add("ps=1".into());
+        let b = l.add("cs=2".into());
+        l.by_object.insert(0x10, a);
+        l.by_object.insert(0x20, b);
+        assert_eq!(l.used(0x10, 3), Some(a));
+        assert_eq!(l.used(0x10, 5), Some(a));
+        assert_eq!(l.used(0x99, 5), None);
+        let text = l.render();
+        assert!(text.contains("pipeline 0 ps=1 first_frame=3 draws=2\n"));
+        assert!(text.contains("pipeline 1 cs=2 first_frame=- draws=0\n"));
     }
 }

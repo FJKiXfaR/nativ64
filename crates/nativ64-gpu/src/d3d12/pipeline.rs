@@ -181,7 +181,7 @@ unsafe fn input_layout(ptr: u64, count: u32) -> Vec<InputElement> {
 
 /// Parses each stage blob (a failure is logged once per blob, never fatal) and feeds the shader
 /// dump (`NATIV64_DUMP_SHADERS`).
-fn observe_shaders(data: &PipelineData) {
+fn observe_shaders(data: &PipelineData) -> usize {
     for s in &data.stages {
         crate::shader::observe(s.name, &s.bytes);
     }
@@ -190,13 +190,13 @@ fn observe_shaders(data: &PipelineData) {
         .graphics
         .as_ref()
         .map_or(&[][..], |g| &g.target_formats[..]);
-    crate::shader::note_pipeline(&stages, targets);
+    crate::shader::note_pipeline(&stages, targets)
 }
 
 fn make(data: PipelineData, iid: *const Guid, out: *mut *mut c_void) -> HRESULT {
-    observe_shaders(&data);
+    let id = observe_shaders(&data);
     // SAFETY: `iid` and `out` are the title's, NULL tolerated.
-    unsafe {
+    let hr = unsafe {
         hand_out(
             &TABLE,
             Iface::PipelineState,
@@ -205,7 +205,12 @@ fn make(data: PipelineData, iid: *const Guid, out: *mut *mut c_void) -> HRESULT 
             iid,
             out,
         )
+    };
+    // SAFETY: `out` is NULL or was just written by `hand_out`.
+    if let Some(obj) = unsafe { out.as_ref() }.filter(|o| !o.is_null()) {
+        crate::shader::bind_pipeline_object(*obj as usize, id);
     }
+    hr
 }
 
 fn data(
