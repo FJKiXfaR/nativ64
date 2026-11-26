@@ -237,7 +237,7 @@ boolean per invocation.
    A mask becomes a `bool` (this lane's bit). Uses allowed: EXEC write, `v_cndmask`, carry-in,
    `s_cbranch_vcc*/exec*`, SCC from a mask op (= the bit, see 2). Any other use (`s_bcnt1`,
    `s_ff1`, shifts, arithmetic, memory, `v_readlane` of a mask) is *cross-lane*: error until
-   the wave chunk (10).
+   the wave chunk (7).
 2. **Branches.** A wave-wide test of a mask (`s_cbranch_execz`, `vccz`, SCC of a mask op)
    becomes a test of the lane's own bit. Sound because compiled code skips only work the
    lanes outside the mask would not change, so each lane can decide alone **[VIctory]**. A
@@ -278,7 +278,8 @@ boolean per invocation.
      lane that runs on decides alike. `DivergentScalar` looks at the phis of the immediate
      post-dominator of each other lane-wise branch (a differing scalar, `undef` included). It
      is strict: it also stops the usual `v_cmpx` + `s_cbranch_execz` over scalar loads whose
-     result is read after the join (see the corpus numbers in the journal).
+     result is read after the join (corpus: 1321 CS, 683 PS, 50 VS, 8 mesh once cross-lane
+     uses are set aside; resolved by speculation, below).
   3. Guards are proved from per-value facts (EXEC of the entry, the bit a branch tests on its
      edges, copies and and/or/andn2 of known values). The join after an if/else (`exec | saved`
      where `saved` came out of an xor) is not proved: it needs bit-set reasoning, so those
@@ -292,6 +293,31 @@ boolean per invocation.
      Irreducible means a retreating edge whose target does not dominate its source.
   `nativ64-shader --structure --stats` reports per stage and per error kind, then the same
   ignoring cross-lane uses, and the cross-lane instructions by name.
+
+**Decisions after chunk 5** (corpus of 8610 programs with IR: 2862 structure; cross-lane uses
+stop 2023 CS, 1687 PS, all 1569 mesh, 270 VS; a divergent scalar stops the rest; none is
+irreducible):
+
+- **Speculated scalar regions.** Scalar instructions with no side effect (SALU, SMEM loads)
+  inside a region that lanes skip are run by every invocation, unguarded. The wave runs that
+  region when at least one lane enters it, so a scalar phi at the join selects the region's
+  value when `OpGroupNonUniformAny(entered)` and the old value otherwise: exact, and it replaces
+  the `DivergentScalar` error for these. SMEM loads are safe to speculate because every load is
+  bounds-checked (Resources). A scalar store, atomic or `s_sendmsg` in such a region stays an
+  error.
+- **Scalar bits as lane masks.** A mask operation with a uniform non-mask scalar
+  (`s_and_b32 exec_lo, exec_lo, s5`) is not cross-lane: lane n reads bit n of the scalar
+  (`n` = the console lane index, below). Only reading a whole mask as data (`v_mov_b32 v, s_mask`,
+  `s_bcnt1`, `s_ff1` of a mask) needs a ballot.
+- **Wave ops are on the main path** (chunk 7, right after the SPIR-V builder): `v_readfirstlane`
+  (1924 CS, 945 PS, 270 VS, all mesh), `v_mbcnt` (all mesh), `v_readlane/writelane`,
+  `v_permlanex16`, DPP, `ds_swizzle`. Console lane index = `SubgroupLocalInvocationId` when the
+  host runs 64-wide subgroups (`VK_EXT_subgroup_size_control`, RADV); on 32-wide hosts (NVIDIA,
+  most Intel) compute and mesh emulate the 64-lane wave through workgroup memory (XCL's
+  approach), PS limits itself to quad ops (DPP quad permutes and `ds_swizzle` in quad mode are
+  within 4 lanes on any host) and refuses the rest by name.
+- **Far jumps** resolve in one pass over the code before building (one program chains more than
+  16: the per-build loop of chunk 4 is quadratic there).
 
 ## Inputs and outputs
 
@@ -394,7 +420,7 @@ into `samplers[]`. One descriptor set, three `UPDATE_AFTER_BIND | PARTIALLY_BOUN
 from device limits, bound once; slot = registry index (one namespace, holes allowed).
 Buffers (CBV, raw/structured SRV/UAV) never need a descriptor: they are title memory, read by
 `PhysicalStorageBuffer` pointers. Typed buffers (`buffer_load_format`, MTBUF) use the format
-in the record and convert in the shader (chunk 8).
+in the record and convert in the shader (chunk 9).
 
 **Instructions.** SMEM `s_load*`/`s_buffer_load*` → BDA loads (bounds-checked against the
 record size: out of range reads 0, as RDNA2 robust buffers do **[spec]**); MUBUF
@@ -494,26 +520,26 @@ it says otherwise.
    exact-semantics list, `v_cvt_pkrtz`, `v_fma_mix*` (2179 + 135 uses in the corpus: the only
    VOP3P seen). Tests: `spirv-val` on each test program; opcode vectors through a small CPU
    evaluator of our IR where a GPU is absent.
-7. **I/O** (`io.rs`): user SGPRs and root block; VS system VGPRs and vertex attributes; PS
+7. **Wave ops and speculation** (`structure.rs`, `spirv/`): the decisions after chunk 5 above
+   (speculated scalar regions, scalar bits as masks, far jumps in one pass), then the cross-lane
+   instructions by corpus count: `v_readfirstlane`, `v_mbcnt`, `v_readlane/writelane`, DPP,
+   `ds_swizzle`, `v_permlanex16`, ballots; wave64 emulation for CS and mesh on 32-wide hosts.
+   Acceptance: `--structure --stats` near the IR count.
+8. **I/O** (`io.rs`): user SGPRs and root block; VS system VGPRs and vertex attributes; PS
    input VGPRs and `v_interp` raising; exports and linking by semantic; CS (`GLCompute`,
    `LocalSize` from the group size, thread id VGPRs, group id SGPRs); mesh (`MeshEXT`, one
    invocation per lane, `exp pos/param` per vertex, `exp prim` → `PrimitiveTriangleIndicesEXT`
    and cull, per-primitive params, `s_sendmsg GS_ALLOC_REQ` → `SetMeshOutputsEXT`).
    Milestone: one program of each stage translates and validates.
-8. **Resources and memory** (`resource.rs`): tracing table, BDA buffer loads with bounds
+9. **Resources and memory** (`resource.rs`): tracing table, BDA buffer loads with bounds
    (MUBUF, MTBUF typed formats, `global_load`), view table format, MIMG sample/load/resinfo/
    store, static samplers, DS → `Workgroup` LDS (compute, mesh). Tests: synthetic programs for
    each `Source`; one error test per refusal.
-9. **Vulkan pipelines, draws and dispatches** (`backend/vk/pipeline.rs`): bindless set and view
+10. **Vulkan pipelines, draws and dispatches** (`backend/vk/pipeline.rs`): bindless set and view
    table upkeep at submit, root block per draw, graphics (VS+PS) and mesh (MS+PS,
    `VK_EXT_mesh_shader`) pipelines from translated stages + `GraphicsState`, compute pipelines,
    cache, `vkCmdDraw*` / `vkCmdDrawMeshTasks*` / `vkCmdDispatch*` replay. Real validation: the
    first screen against the expected frame.
-10. **Wave ops**: `v_mbcnt` with a full mask = lane index, `v_readfirstlane` of uniform values =
-    identity, DPP quad permutes → `OpGroupNonUniformQuad*` or derivatives, ballot-style mask uses
-    through subgroup ops with wave64 emulated on 32-lane hosts as XCL describes. Mesh needs the
-    first two from chunk 7 on; the rest are errors until here, and the chunk 4-5 corpus counts
-    say how early this must move.
 11. **Widening, driven by the corpus report**: f16 and `v_pk_*`, remaining VOP3, MIMG
     gather/compare/derivatives, FLAT/SCRATCH stores and atomics, ray queries, merged stages if a
     title uses them (none in this corpus: its stages are VS, PS, CS, mesh only).
@@ -533,5 +559,5 @@ it says otherwise.
 - Kind 0x12 XDAT entry, `PRIV` part (12 bytes), program-record bytes not listed: meaning unknown,
   ignored.
 - Bindless limits, `VK_EXT_shader_demote_to_helper_invocation` and `VK_EXT_mesh_shader` on
-  lavapipe and the Intel driver: to check with `nativ64-vkcheck` before chunk 9 (mesh is 18%
+  lavapipe and the Intel driver: to check with `nativ64-vkcheck` before chunk 10 (mesh is 18%
   of the programs: without the extension those pipelines cannot be built at all).
