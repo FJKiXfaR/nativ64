@@ -100,7 +100,7 @@ python -I tools/import_map.py game/*.exe game/*.dll \
 ```
 
 Run it after each mirror sync to follow VIctory's progress. On the executable and the
-package DLLs (VIctory `42363ab`, 2026-11-25), 962 imported functions (587 from the
+package DLLs (VIctory `63bcca4`), 962 imported functions (587 from the
 executable, 351 of them imported by it alone):
 
 - Windows view: 115 implemented by VIctory (12.9%, the headline), 773 borrowed from host
@@ -111,7 +111,7 @@ executable, 351 of them imported by it alone):
 - Linux view: 46 portable, 69 tied to Windows, 580 host APIs to write (C/C++ runtime 240,
   system 155, threads & sync 95, network & crypto 48, files 18, other 24), 2 unresolved,
   265 shipped (46 of 697 = 6.6%).
-- nativ64 view: 289 native of 697 (41.5%).
+- nativ64 view: 467 native of 697 (67.0%).
 
 ## Library view
 

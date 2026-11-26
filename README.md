@@ -72,27 +72,29 @@ control.
 
 ## Status
 
-Early. The import map is done, and the library implements 314 of the 697 functions the
-first title needs (45.1%), each with tests: the C runtime math, string and conversion
+Early. The import map is done, and the library implements 467 of the 697 functions the
+first title needs (67.0%), each with tests: the C runtime math, string and conversion
 functions, the lightweight thread synchronization (SRW locks, critical sections,
 condition variables, wait on address), a handle table with events, mutexes and
 semaphores, threads, thread-local storage, lock-free lists, the CRT heap, sorting,
 random numbers, time and C locale, startup and exit, errno and invalid-parameter handler, module loading, an empty registry, plus a
 first set of system calls. A native PE loader (`nativ64-run`) runs the first title's
 executable through its C runtime startup, its package DLLs and its window, and creates
-its Direct3D 12 device.
+its Direct3D 12 device. The shader translator has started: a GFX10 decoder that reads
+every program the first title ships (8634 programs, checked against `llvm-mc`) and an SSA
+IR; no translated draw yet.
 Left to write:
 
 | Area | To write |
 |---|---|
-| System | 145 |
-| C/C++ runtime (`api-ms-win-crt-*`) | 50 |
-| Network & crypto | 52 |
-| Threads & sync | 32 |
-| Files | 30 |
-| Memory | 22 |
-| Loader | 6 |
-| Other (Xbox services, graphics, input, audio...) | 46 |
+| System | 93 |
+| C/C++ runtime (`api-ms-win-crt-*`) | 18 |
+| Network & crypto | 47 |
+| Threads & sync | 24 |
+| Files | 10 |
+| Memory | 19 |
+| Loader | 3 |
+| Other (Xbox services, graphics, input, audio...) | 16 |
 
 Also needed, outside the library: SEH support in the loader, and a
 Direct3D 12 to Vulkan path for the GPU.
