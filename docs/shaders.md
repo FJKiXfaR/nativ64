@@ -875,6 +875,98 @@ it says otherwise.
    `VK_EXT_mesh_shader`) pipelines from translated stages + `GraphicsState`, compute pipelines,
    cache, `vkCmdDraw*` / `vkCmdDrawMeshTasks*` / `vkCmdDispatch*` replay. Real validation: the
    first screen against the expected frame.
+   **Chunk 10 design** (Opus, from the first-screen trace and pipeline 56: vs e5fcb71c + ps
+   7ba0e3e2) **[seen]**: vs e5fcb71c has one layout row (root type 1, first dword 8, 2 user
+   SGPRs, root slot 0) and one used SRV row; its code builds a V# from `s8`, `s9 | 0x10000`,
+   `-1`, `0x11014fac`, reads dwords 0 and 0xc of that buffer (low nibble = a kind, 3 / 4; bits
+   7.. = offset, bits 3..8 = stride / 4), then loads position and colour at `offset + stride *
+   v0`. No vertex buffer, no texture; the ps reads its interpolated TEXCOORD. So frame 2 needs
+   memory, a root block, a graphics pipeline and `Draw`, nothing else.
+   * Split: **10a** = GPU memory, root block, bindless set (empty), buffer view records,
+     graphics pipelines (VS + PS), `Draw` / `DrawIndexed` into render targets, vertex and
+     index buffers; dispatches, mesh, indirect and draws needing an image stay counted and
+     skipped. **10b** = textures (title images detiled into `VkImage`s by `texture/`, views
+     into `textures[]`, heap samplers into `samplers[]`), re-upload rule, then frame 4 and
+     frame 565. **10c** = compute (after the cs I/O of chunk 8), mesh.
+   * Vulkan floor becomes **1.3** (all three drivers here are 1.4): `dynamicRendering`,
+     `extendedDynamicState` (topology, cull, front face, depth state, vertex strides
+     dynamic), `synchronization2` if replay wants it; plus 1.2 `bufferDeviceAddress`,
+     `descriptorIndexing` (update-after-bind, partially bound, runtime arrays, non-uniform
+     indexing), `shaderDemoteToHelperInvocation` (1.3 core). `Gpu::open` refuses a device
+     without them, naming the missing feature.
+   * **GPU memory: title addresses are host addresses** (`xmem.rs`: graphics memory 4 GiB -
+     1 TiB, `VirtualAlloc` above 1 TiB). Every address the backend hands a shader is
+     translated **on the CPU** into a device address, never in the shader: root CBV / SRV /
+     UAV pairs written into `user_data`, `table_base[n]`, view record addresses, vertex and
+     index buffer bindings. `GpuMemory` (backend) keeps imported `HostBuffer`s by host range;
+     `translate(va) -> Option<(vk::Buffer, offset, device address)>` finds the import holding
+     `va`, else imports the committed run around it (`api_ms_win_core_memory::query`: the
+     run of committed pages of that allocation, rounded to the import alignment), else
+     fails (logged once per allocation; the draw is skipped). Memory outside the table that
+     a shader reads: our own descriptor heaps, which become page-aligned and page-rounded
+     allocations listed by `descriptor.rs` (`heap_ranges()`). Lifetime: the memory table
+     and `xmem` (alias / unmap of physical pages) record every range they decommit,
+     release or remap (`take_gpu_changes() -> Vec<(usize, usize)>`, cheap when empty); at the
+     start of each `execute` the backend drops the imports overlapping a changed range (the
+     queue is idle between submits: every `ExecuteCommandLists` waits). A device address
+     must stay below 2^48 (a Built V# keeps 16 high bits): checked at import.
+     Not covered: an address the program reads from memory (a pointer stored in a buffer),
+     which reaches the GPU untranslated: `Translated` gains `memory_addresses: bool`, set when
+     a raw SMEM load or a Built V# has a base that does not trace to user data; the backend
+     skips such pipelines with a log.
+   * **Root block per draw**: `{u32 user_data[32]; u64 table_base[32]; u64 view_table}` (392
+     bytes, chunk 9a) written into a per-submit host-visible arena (256-byte aligned
+     records), its device address in an 8-byte push constant (VS | FS). Filled from the
+     list's current root signature and arguments (`RootSignature`, `RootTable`,
+     `RootConstants`, `RootView`; graphics and compute kept apart) by the **stage's layout
+     rows** (`first dword` = SGPR n, `user sgprs` = count, `slot` = root parameter): a
+     constants parameter → its 32-bit values (from `table dword`); a root descriptor → the
+     translated address as two dwords; a table → the low 32 bits of the translated handle
+     address, the full one in `table_base[n]`. Rows of both stages are merged (same root
+     signature). `view_table` = device address of the view buffer.
+   * **Bindless and view table**: one descriptor set layout (set 0: binding 0 sampled
+     images, 1 storage images, 2 samplers; `UPDATE_AFTER_BIND | PARTIALLY_BOUND`, sized by
+     `min(device limit, 1 << 20)`), one pool, one set, bound for every draw; 10a writes no
+     image. The view buffer (device-local + host-visible if available, else host-visible) has
+     one 32-byte record per registry index (`descriptor.rs` `VIEWS`), grown by doubling;
+     at each `execute` records for new indices are written: buffer SRV / UAV / CBV views get
+     kind 1, the translated address, size in bytes (`0xffffffff` for none), stride (structured
+     buffers; 0 raw); everything else kind 0 (10b fills images and samplers).
+   * **Pipelines** (`backend/vk/pipeline.rs`), built at the first draw that uses them, cached
+     by pipeline id with its outcome (`Built` or `Failed(reason)`, logged once): stages from
+     `io::translate_pair` (VS + PS; a missing PS = depth only, VS alone), modules validated
+     by `NATIV64_SHADER_VALIDATE`. Layout = set 0 + set 1 (the pair's static samplers as
+     immutable samplers, deduplicated across both stages; the PS's numbering must be
+     remapped or the pair shares one list: decide in `translate_pair`) + the push constant.
+     Fixed state parsed from `GraphicsState.raw` (description and stream forms, same reader
+     as the formats): blend per target (independent or not, logic op refused), write masks,
+     alpha-to-coverage, sample mask, rasterizer (fill, cull, front CCW, depth bias / clamp /
+     slope, depth clip → `depthClampEnable = !clip`, conservative refused), depth-stencil,
+     IB strip cut. Formats → dynamic rendering formats (`format::lookup`). Vertex input from
+     `input_layout`: each element matched with the VS input of the same semantic name and
+     index (ISG1 row = location), binding = input slot, rate per class / step rate (step
+     rate > 1 needs `vertexAttributeInstanceRateDivisor`: refuse for now), stride dynamic.
+     Topology: the type's first member, real topology dynamic. Dynamic: viewport, scissor,
+     blend constants, stencil reference, depth bounds, topology, vertex strides.
+   * **Draws**: replay keeps the list's state (pipeline, render targets, viewports, scissors,
+     IB, VBs, root arguments, heaps); at a draw it begins dynamic rendering on the current
+     targets (the `TitleImage`s of the RTV / DSV records, views made per record and cached),
+     ending it at the next non-draw command or target change. Viewport `y + height, -height`
+     (the D3D y-down convention); front face with that flip: `FrontCounterClockwise` false →
+     `CLOCKWISE` **[unverified]**. `Draw` → `vkCmdDraw`, `DrawIndexed` → `vkCmdBindIndexBuffer`
+     (translated address; R16 / R32) + `vkCmdDrawIndexed`. v0 stays `VertexIndex -
+     BaseVertex` (chunk 8): with a non-zero first vertex or base vertex log once, the run says
+     whether the title relies on it. A draw whose pipeline failed, whose memory did not
+     translate, or with no render target is skipped (counted in `ReplayStats` by reason).
+   * Tests (lavapipe): GPU memory (import on demand, reuse, drop after a recorded change,
+     refusal outside the table); root block filling from a synthetic root signature + layout
+     rows; a real draw: a synthetic VS (vertex id → position read from a root SRV buffer,
+     like vs e5fcb71c) + PS (colour from a root constant) into a cleared RGBA8 target, read
+     back and compared per pixel; an indexed draw with a vertex buffer; a pipeline that fails
+     translation is skipped and counted.
+   * Real validation of 10a: the title's frame 2 (`NATIV64_DUMP_FRAMES`) shows pipeline 56's
+     draw (not the clear colour), frames 4+ the draws of 50545 / 50546 that need no image;
+     compare with the console's first screen.
 11. **Widening, driven by the corpus report**: f16 and `v_pk_*`, remaining VOP3, MIMG
     gather/compare/derivatives, FLAT/SCRATCH stores and atomics, ray queries, merged stages if a
     title uses them (none in this corpus: its stages are VS, PS, CS, mesh only).
