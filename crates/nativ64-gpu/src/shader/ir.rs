@@ -1082,7 +1082,9 @@ fn fold(i: &Instr, srcs: &[Vec<Src>], scc_in: Option<Src>, code: &[u8]) -> Optio
                 scc: None,
             })
         }
-        "s_addc_u32" => {
+        // the carry (or borrow) of the low half is 0 (the code is aligned), so the high half
+        // keeps its value: far jumps back are `s_sub_u32` + `s_subb_u32`
+        "s_addc_u32" | "s_subb_u32" => {
             if let ([Src::CodeHi], [Src::Const(0)], Some(Src::Const(0))) =
                 (&srcs[0][..], &srcs[1][..], scc_in)
             {

@@ -280,6 +280,19 @@ fn far_jump_that_does_not_fold_or_leaves_the_code_is_an_error() {
 }
 
 #[test]
+fn far_jump_back_through_sub_and_subb_is_a_direct_jump() {
+    // s_branch LJ ; LT: s_endpgm ; LJ: s_getpc_b64 s[8:9] ; s_sub_u32 s8, s8, 8 ;
+    // s_subb_u32 s9, s9, 0 ; s_setpc_b64 s[8:9]: the jump lands on LT, 8 bytes before the
+    // end of the `s_getpc`.
+    let f = ir(&[
+        0xbf820001, 0xbf810000, 0xbe881f00, 0x80888808, 0x82898009, 0xbe802008,
+    ]);
+    assert_eq!(f.blocks.len(), 3);
+    assert_eq!(f.blocks[2].term, Term::Jump(1));
+    assert_eq!(f.blocks[1].term, Term::End);
+}
+
+#[test]
 fn two_far_jumps_in_a_row_are_followed() {
     // byte 0: far jump to byte 20; byte 20: far jump to byte 40 (s_getpc ends at 24);
     // byte 40: s_endpgm
