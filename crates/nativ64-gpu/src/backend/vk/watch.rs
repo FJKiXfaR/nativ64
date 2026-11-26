@@ -344,6 +344,9 @@ pub(super) fn written(range: (usize, usize), cursor: &mut Cursor) -> Option<bool
 mod tests {
     use super::*;
 
+    /// The watch is process-wide and a test's unmap drops the log of the others: one at a time.
+    static SERIAL: Mutex<()> = Mutex::new(());
+
     fn map(pages: usize) -> usize {
         // SAFETY: a fresh anonymous mapping.
         let p = unsafe {
@@ -378,6 +381,7 @@ mod tests {
 
     #[test]
     fn a_page_is_written_once_per_write() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         let a = map(8);
         let run = (a, a + 8 * PAGE);
         if unavailable(run) {
@@ -408,6 +412,7 @@ mod tests {
 
     #[test]
     fn a_read_by_the_kernel_into_a_page_is_a_write() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         let a = map(2);
         let run = (a, a + 2 * PAGE);
         if unavailable(run) {
@@ -433,6 +438,7 @@ mod tests {
 
     #[test]
     fn memory_mapped_again_is_watched_again() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         let a = map(2);
         let run = (a, a + 2 * PAGE);
         if unavailable(run) {
