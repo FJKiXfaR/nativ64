@@ -220,33 +220,6 @@ fn indirect_jump_and_unknown_encoding_are_typed_errors() {
     // a first dword of no encoding (top bits 111001)
     let e = build(&code(&[0xe400_0000, 0, 0xbf810000]), 0, false, &regs()).unwrap_err();
     assert!(matches!(e.kind, IrErrorKind::Decode(_)), "{e}");
-    // image_load v[0:3], v0, s[0:7] dmask:0xf dim:SQ_RSRC_IMG_1D: decoded, not in the IR yet
-    let e = build(
-        &code(&[0xf000_0f00, 0x0000_0000, 0xbf810000]),
-        0,
-        false,
-        &regs(),
-    )
-    .unwrap_err();
-    assert!(matches!(e.kind, IrErrorKind::UnsupportedEncoding(_)), "{e}");
-    // v_pk_add_f16 v1, v4, v5: decoded, not in the IR yet
-    let e = build(
-        &code(&[0xcc0f_0001, 261 << 9 | 260, 0xbf810000]),
-        0,
-        false,
-        &regs(),
-    )
-    .unwrap_err();
-    assert!(matches!(e.kind, IrErrorKind::UnsupportedEncoding(_)), "{e}");
-    // global_load_dword v1, v[4:5], off: likewise
-    let e = build(
-        &code(&[0xdc30_8000, 0x7d01_0004, 0xbf810000]),
-        0,
-        false,
-        &regs(),
-    )
-    .unwrap_err();
-    assert!(matches!(e.kind, IrErrorKind::UnsupportedEncoding(_)), "{e}");
 }
 
 /// `s_getpc_b64 s[0:1]; s_add_u32 s0, s0, <literal>; s_addc_u32 s1, s1, 0; s_setpc_b64 s[0:1]`
@@ -593,4 +566,227 @@ fn corpus_builds() {
         eprintln!("{n:6}  {k}");
     }
     assert!(unexplained.is_empty(), "{unexplained:#?}");
+}
+
+fn mem_regs() -> EntryRegs {
+    EntryRegs::new().with_sgprs(0..16).with_vgprs(0..16)
+}
+
+/// One memory or packed instruction followed by `s_endpgm`.
+fn one(words: &[u32]) -> Func {
+    let mut w = words.to_vec();
+    w.push(0xbf810000);
+    build(&code(&w), 0, false, &mem_regs()).unwrap()
+}
+
+fn one_err(words: &[u32]) -> IrError {
+    let mut w = words.to_vec();
+    w.push(0xbf810000);
+    build(&code(&w), 0, false, &mem_regs()).unwrap_err()
+}
+
+/// The printed instructions of the program, without the entry values and `s_endpgm`.
+fn body(f: &Func) -> Vec<String> {
+    f.to_string()
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| {
+            !(l.is_empty()
+                || l.contains("= arg")
+                || l.starts_with("wave")
+                || l.starts_with("b0:")
+                || l.starts_with("s_endpgm"))
+        })
+        .collect()
+}
+
+#[track_caller]
+fn expect(words: &[u32], want: &str) {
+    let got = body(&one(words));
+    assert_eq!(got, vec![want.to_string()], "got:\n{got:#?}");
+}
+
+fn reads(f: &Func, r: Reg) -> bool {
+    f.args.iter().any(|(a, _)| *a == r)
+}
+
+#[test]
+fn image_loads_and_samples_write_the_data_dwords() {
+    // image_sample v[0:3], v[4:5], s[8:15], s[0:3] dmask:0xf dim:2D
+    expect(
+        &[0xf0800f08, 0x00020004],
+        "%20:v0, %21:v1, %22:v2, %23:v3 = image_sample {%16, %17}, {%4, %5, %6, %7, %8, %9, %10, %11}, {%0, %1, %2, %3} ; exec_lo=%18, exec_hi=%19, v0=%12, v1=%13, v2=%14, v3=%15",
+    );
+    // the same with dmask:0x7 d16: three channels pack into two dwords
+    expect(
+        &[0xf0800708, 0x80020004],
+        "%18:v0, %19:v1 = image_sample {%14, %15}, {%4, %5, %6, %7, %8, %9, %10, %11}, {%0, %1, %2, %3} ; exec_lo=%16, exec_hi=%17, v0=%12, v1=%13",
+    );
+    // image_load v[0:4], v[4:5], s[8:15] dmask:0xf tfe: the fifth dword is the fail flag
+    expect(
+        &[0xf0010f08, 0x00020004],
+        "%16:v0, %17:v1, %18:v2, %19:v3, %20:v4 = image_load {%12, %13}, {%0, %1, %2, %3, %4, %5, %6, %7} ; exec_lo=%14, exec_hi=%15, v0=%8, v1=%9, v2=%10, v3=%11, v4=%12",
+    );
+}
+
+#[test]
+fn non_sequential_address_lists_name_each_register() {
+    // image_sample v[0:3], [v4, v7], s[8:15], s[0:3]
+    let f = one(&[0xf0800f0a, 0x00020004, 0x00000007]);
+    assert!(reads(&f, Reg::V(7)) && reads(&f, Reg::V(4)), "{f}");
+    assert!(!reads(&f, Reg::V(5)), "{f}");
+    // image_bvh_intersect_ray v[0:3], [v4..v14], s[8:11]: eleven addresses, a 4-dword resource
+    let f = one(&[0xf1989f07, 0x00020004, 0x08070605, 0x0c0b0a09, 0x00000e0d]);
+    let t = f.to_string();
+    assert!(t.contains("= image_bvh_intersect_ray"), "{t}");
+    assert!(reads(&f, Reg::V(14)) && !reads(&f, Reg::V(15)), "{t}");
+    assert!(reads(&f, Reg::S(11)) && !reads(&f, Reg::S(12)), "{t}");
+}
+
+#[test]
+fn image_stores_and_atomics() {
+    // image_store v[0:3], v[4:5], s[8:15] dmask:0xf: no result
+    expect(
+        &[0xf0200f08, 0x00020004],
+        "image_store {%8, %9, %10, %11}, {%12, %13}, {%0, %1, %2, %3, %4, %5, %6, %7} ; exec_lo=%14, exec_hi=%15",
+    );
+    // image_atomic_add v1, ... glc returns the old value; without glc nothing is written
+    expect(
+        &[0xf0442108, 0x00020104],
+        "%13:v1 = image_atomic_add %8, {%9, %10}, {%0, %1, %2, %3, %4, %5, %6, %7} ; exec_lo=%11, exec_hi=%12, v1=%8",
+    );
+    expect(
+        &[0xf0440108, 0x00020104],
+        "image_atomic_add %8, {%9, %10}, {%0, %1, %2, %3, %4, %5, %6, %7} ; exec_lo=%11, exec_hi=%12",
+    );
+    // image_atomic_cmpswap v[1:2] glc: two operands, one result
+    expect(
+        &[0xf0402308, 0x00020104],
+        "%14:v1 = image_atomic_cmpswap {%8, %9}, {%10, %11}, {%0, %1, %2, %3, %4, %5, %6, %7} ; exec_lo=%12, exec_hi=%13, v1=%8",
+    );
+    // a store with tfe is not modelled: image_store v[0:4] ... tfe
+    let e = one_err(&[0xf0210f08, 0x00020004]);
+    assert!(matches!(e.kind, IrErrorKind::Unsupported(_)), "{e}");
+}
+
+#[test]
+fn typed_buffer_loads_and_stores() {
+    // tbuffer_load_format_xyzw v[0:3], v4, s[8:11], 0 idxen
+    expect(
+        &[0xea6b2000, 0x80020004],
+        "%11:v0, %12:v1, %13:v2, %14:v3 = tbuffer_load_format_xyzw %8, {%0, %1, %2, %3}, #0x0 ; exec_lo=%9, exec_hi=%10, v0=%4, v1=%5, v2=%6, v3=%7",
+    );
+    // tbuffer_store_format_d16_xyz v[0:1], v4, s[8:11], 0 offen: two data dwords
+    expect(
+        &[0xea3e1000, 0x80220004],
+        "tbuffer_store_format_d16_xyz {%4, %5}, %6, {%0, %1, %2, %3}, #0x0 ; exec_lo=%7, exec_hi=%8",
+    );
+}
+
+#[test]
+fn ds_reads_writes_and_atomics_need_no_m0_on_lds() {
+    // ds_read_b32 v0, v1
+    expect(
+        &[0xd8d80000, 0x00000001],
+        "%4:v0 = ds_read_b32 %1 ; exec_lo=%2, exec_hi=%3, v0=%0",
+    );
+    // ds_write2_b32 v1, v2, v3 offset1:1
+    expect(
+        &[0xd8380100, 0x00030201],
+        "ds_write2_b32 %0, %1, %2 ; exec_lo=%3, exec_hi=%4",
+    );
+    // ds_add_rtn_u32 v0, v1, v2 returns, ds_add_u32 v1, v2 does not
+    expect(
+        &[0xd8800000, 0x00000201],
+        "%5:v0 = ds_add_rtn_u32 %1, %2 ; exec_lo=%3, exec_hi=%4, v0=%0",
+    );
+    expect(
+        &[0xd8000000, 0x00000201],
+        "ds_add_u32 %0, %1 ; exec_lo=%2, exec_hi=%3",
+    );
+}
+
+#[test]
+fn ds_gds_append_and_addtid_read_m0_and_gws_is_refused() {
+    // ds_append v0, ds_write_addtid_b32 v1, ds_add_u32 v1, v2 gds
+    for w in [
+        &[0xd8f80000u32, 0][..],
+        &[0xdac00000, 0x00000100],
+        &[0xd8020000, 0x00000201],
+    ] {
+        let e = one_err(w);
+        assert_eq!(e.kind, IrErrorKind::UndefinedRead(Reg::M0), "{e}");
+        // with m0 set first (s_mov_b32 m0, 0) the program builds
+        let mut p = vec![0xbefc0380];
+        p.extend(w);
+        p.push(0xbf810000);
+        let f = build(&code(&p), 0, false, &mem_regs()).unwrap();
+        assert!(f.to_string().contains("ds_"), "{f}");
+    }
+    // ds_gws_init v1 gds
+    let e = one_err(&[0xd8660000, 0x00000001]);
+    assert!(matches!(e.kind, IrErrorKind::Unsupported(_)), "{e}");
+}
+
+#[test]
+fn packed_math_reads_its_sources_and_a_literal() {
+    // v_pk_add_f16 v1, v4, v5
+    expect(
+        &[0xcc0f4001, 0x1a020b04],
+        "%5:v1 = v_pk_add_f16 %1, %2 ; exec_lo=%3, exec_hi=%4, v1=%0",
+    );
+    // v_pk_add_f16 v1, v4, 0x40004000
+    expect(
+        &[0xcc0f4001, 0x1a01ff04, 0x40004000],
+        "%4:v1 = v_pk_add_f16 %1, #0x40004000 ; exec_lo=%2, exec_hi=%3, v1=%0",
+    );
+}
+
+#[test]
+fn flat_global_and_scratch_forms() {
+    // global_load_dword v1, v[4:5], off
+    expect(
+        &[0xdc308000, 0x017d0004],
+        "%5:v1 = global_load_dword {%1, %2} ; exec_lo=%3, exec_hi=%4, v1=%0",
+    );
+    // global_store_dword v[4:5], v1, off
+    expect(
+        &[0xdc708000, 0x007d0104],
+        "global_store_dword {%1, %2}, %0 ; exec_lo=%3, exec_hi=%4",
+    );
+    // global_store_dword v4, v1, s[8:9]: a 32-bit offset and the scalar base
+    expect(
+        &[0xdc708000, 0x00080104],
+        "global_store_dword %3, %2, {%0, %1} ; exec_lo=%4, exec_hi=%5",
+    );
+    // global_atomic_add v1, v[4:5], v2, off glc returns; without glc it does not
+    expect(
+        &[0xdcc98000, 0x017d0204],
+        "%6:v1 = global_atomic_add {%2, %3}, %1 ; exec_lo=%4, exec_hi=%5, v1=%0",
+    );
+    expect(
+        &[0xdcc88000, 0x007d0204],
+        "global_atomic_add {%1, %2}, %0 ; exec_lo=%3, exec_hi=%4",
+    );
+    // global_atomic_cmpswap v1, v[4:5], v[2:3], off glc: two operands, one result
+    expect(
+        &[0xdcc58000, 0x017d0204],
+        "%7:v1 = global_atomic_cmpswap {%3, %4}, {%1, %2} ; exec_lo=%5, exec_hi=%6, v1=%0",
+    );
+    // scratch_load_dword v1, off, s2: the scalar offset is the only address
+    expect(
+        &[0xdc304000, 0x01020000],
+        "%4:v1 = scratch_load_dword %0 ; exec_lo=%2, exec_hi=%3, v1=%1",
+    );
+}
+
+#[test]
+fn memory_forms_the_ir_cannot_model_are_typed_errors() {
+    // a 128-bit resource on a sample is not modelled (the decoder reads 8 dwords)
+    // image_sample v[0:3], v[4:5], s[8:15], s[0:3] dmask:0xf r128
+    let e = one_err(&[0xf0808f08, 0x00020004]);
+    assert!(
+        matches!(&e.kind, IrErrorKind::Unsupported(s) if s.contains("r128")),
+        "{e}"
+    );
 }

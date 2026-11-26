@@ -195,6 +195,15 @@ SSA over 32-bit register dwords, one function per program:
   dead phis are removed. `Func` carries `idom` and `rpo` for chunks 4-5. Encodings the decoder
   does not read, and `s_setpc/swappc/rfe/call`, `s_movrel*`, `v_movrel*`, scalar atomics,
   MUBUF-to-LDS are typed `IrError`s.
+  **Chunk 4b** (`ir.rs`): MIMG, MTBUF, DS, VOP3P and FLAT/GLOBAL/SCRATCH are lowered. Data dwords
+  follow the decoder (dmask channels, halved by d16, plus one dword for tfe or lwe, which only
+  loads accept); NSA address lists name each register; resource and sampler are SGPR quads
+  (8 dwords, 4 for a BVH ray). Stores have no `dsts`; an atomic (MIMG, FLAT) defines its old
+  value only with glc, half of the data for compare-and-swap. Every written VGPR keeps its old
+  value as an implicit read. DS reads M0 only for the `gds` bit, `ds_ordered_count`,
+  `ds_append`/`ds_consume` and `*_addtid` (LLVM: `ldsRequiresM0Init` is generation < 9); GWS
+  opcodes, MIMG r128 (outside BVH) and tfe/lwe on a store or atomic, LDS loads (FLAT) are typed
+  errors. The flat-scratch base of FLAT/SCRATCH is hidden state, not an IR register.
   **Chunk 4** (`ir.rs`, `native.rs`, `gfx10/flow.rs`): CS and mesh stage data are decoded like
   the VS/PS ones (`CsData`: `RSRC2` and group size, refused when a dimension is 0 or the group
   over 1024 threads; `MeshData`: outputs, lanes, vertex and primitive maxima, user SGPRs,

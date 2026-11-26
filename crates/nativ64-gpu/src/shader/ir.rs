@@ -653,7 +653,12 @@ fn lower(i: &Instr) -> Result<Option<Lowered>, IrError> {
         | Enc::Vop3
         | Enc::Vintrp
         | Enc::Exp
-        | Enc::Mubuf => {}
+        | Enc::Mubuf
+        | Enc::Mtbuf
+        | Enc::Mimg
+        | Enc::Ds
+        | Enc::Vop3p
+        | Enc::Flat => {}
         e => return Err(bad(i.at, IrErrorKind::UnsupportedEncoding(e.name()))),
     }
     if name.contains("movrel") || name.starts_with("s_set_gpr_idx") {
@@ -705,6 +710,8 @@ fn lower(i: &Instr) -> Result<Option<Lowered>, IrError> {
                 }
             }
             Slot::SDstB(_) | Slot::VDstS(_) => lo.dsts.extend(dst_dwords(op, w, i)?),
+            // an atomic returns its old value only with glc
+            Slot::VDst(_) if i.enc == Enc::Flat && is_flat_atomic(i) && !i.mem.glc => {}
             Slot::VDst(_) => {
                 let regs = dst_dwords(op, w, i)?;
                 lo.olds.extend(&regs);
@@ -766,7 +773,10 @@ fn lower(i: &Instr) -> Result<Option<Lowered>, IrError> {
                 }
             }
         }
-        Enc::Mubuf => lower_mubuf(i, &mut lo)?,
+        Enc::Mubuf | Enc::Mtbuf => lower_mubuf(i, &mut lo)?,
+        Enc::Mimg => lower_mimg(i, &mut lo)?,
+        Enc::Ds => lower_ds(i, &mut lo)?,
+        Enc::Flat => lower_flat(i, &mut lo)?,
         _ => {}
     }
     if vector && !matches!(name, "v_readlane_b32" | "v_writelane_b32") {
@@ -881,6 +891,155 @@ fn lower_mubuf(i: &Instr, lo: &mut Lowered) -> Result<(), IrError> {
         .push((0..4).map(|k| Rd::Reg(Reg::S(r + k))).collect());
     lo.srcs
         .push(vec![operand_dword(m.soffset, 0, false, i.at)?.into_src()]);
+    Ok(())
+}
+
+fn is_flat_atomic(i: &Instr) -> bool {
+    i.info.flags & gfx10::ops::FLAG_FLAT_ATOMIC != 0
+}
+
+fn vgprs(first: u16, n: u16, at: usize) -> Result<Vec<Reg>, IrError> {
+    if first + n > 256 {
+        return Err(bad(at, IrErrorKind::BadOperand("VGPR range past v255")));
+    }
+    Ok((first..first + n).map(Reg::V).collect())
+}
+
+fn sgprs(first: u16, n: u16, at: usize) -> Result<Vec<Rd>, IrError> {
+    (0..n)
+        .map(|k| operand_dword(first + k, 0, false, at))
+        .collect()
+}
+
+fn vec_rd(regs: &[Reg]) -> Vec<Rd> {
+    regs.iter().copied().map(Rd::Reg).collect()
+}
+
+/// The register count of a `Reg` operand, or `None` for `off`.
+fn reg_count(op: &Operand) -> Option<u8> {
+    match op {
+        Operand::Reg { count, .. } => Some(*count),
+        _ => None,
+    }
+}
+
+/// The operand printed for the first slot `f` accepts, if the opcode has one.
+fn slot_operand(i: &Instr, f: impl Fn(&Slot) -> bool) -> Option<&Operand> {
+    i.info
+        .slots
+        .iter()
+        .zip(&i.operands)
+        .find_map(|(s, o)| f(s).then_some(o))
+}
+
+/// MIMG. Data dwords come from the decoder (`ndata`: dmask channels, halved by d16, plus the
+/// tfe dword); `lwe` adds the same extra dword (LLVM sizes the data as `tfe || lwe`). A load
+/// or sample writes them; a store reads them; an atomic reads them and, with glc, writes its
+/// old value (half of the operands for compare-and-swap).
+fn lower_mimg(i: &Instr, lo: &mut Lowered) -> Result<(), IrError> {
+    let name = i.name();
+    let m = i.img;
+    let flags = i.info.flags;
+    let atomic = flags & gfx10::ops::FLAG_IMG_ATOMIC != 0;
+    let store = name.starts_with("image_store");
+    let bvh = flags & gfx10::ops::FLAG_IMG_BVH != 0;
+    if m.r128 && !bvh {
+        return Err(bad(
+            i.at,
+            IrErrorKind::Unsupported(format!("{name}: r128 resource")),
+        ));
+    }
+    if (store || atomic) && (m.tfe || m.lwe) {
+        return Err(bad(
+            i.at,
+            IrErrorKind::Unsupported(format!("{name}: tfe / lwe on a store or atomic")),
+        ));
+    }
+    let ndata = u16::from(m.ndata) + u16::from(m.lwe && !m.tfe);
+    let data = vgprs(u16::from(m.vdata), ndata, i.at)?;
+    let naddr = u16::from(m.naddr);
+    let addr = if m.nsa == 0 {
+        vgprs(u16::from(m.vaddr[0]), naddr, i.at)?
+    } else {
+        m.vaddr[..usize::from(m.naddr)]
+            .iter()
+            .map(|v| Reg::V(u16::from(*v)))
+            .collect()
+    };
+    if store {
+        lo.srcs.push(vec_rd(&data));
+    } else if atomic {
+        lo.srcs.push(vec_rd(&data));
+        if m.glc {
+            let keep = if flags & gfx10::ops::FLAG_IMG_CMPSWAP != 0 {
+                data.len() / 2
+            } else {
+                data.len()
+            };
+            lo.olds.extend(&data[..keep]);
+            lo.dsts.extend(&data[..keep]);
+        }
+    } else {
+        lo.olds.extend(&data);
+        lo.dsts.extend(data);
+    }
+    if !addr.is_empty() {
+        lo.srcs.push(vec_rd(&addr));
+    }
+    let nrsrc = if bvh { 4 } else { 8 };
+    lo.srcs.push(sgprs(u16::from(m.srsrc), nrsrc, i.at)?);
+    if i.info.slots.contains(&Slot::ImgSamp) {
+        lo.srcs.push(sgprs(u16::from(m.ssamp), 4, i.at)?);
+    }
+    Ok(())
+}
+
+/// DS. On GFX9 and later the LDS needs no M0 (LLVM: `ldsRequiresM0Init` is generation < 9);
+/// M0 is still read by the GDS forms (the `gds` bit), `ds_ordered_count`, `ds_append` /
+/// `ds_consume` (M0 is their address) and the `*_addtid` forms (M0 is their base). The GWS
+/// opcodes take their operand from `data0`, which the decoder prints as the address: not
+/// modelled.
+fn lower_ds(i: &Instr, lo: &mut Lowered) -> Result<(), IrError> {
+    let name = i.name();
+    if name.starts_with("ds_gws_") {
+        return Err(bad(
+            i.at,
+            IrErrorKind::Unsupported(format!("{name}: global wave sync")),
+        ));
+    }
+    for (s, o) in i.info.slots.iter().zip(&i.operands) {
+        if matches!(s, Slot::DsAddr | Slot::DsData0(_) | Slot::DsData1(_)) {
+            lo.srcs.push(src_dwords(o, reg_count(o).unwrap_or(1), i)?);
+        }
+    }
+    if i.mem.gds
+        || matches!(name, "ds_ordered_count" | "ds_append" | "ds_consume")
+        || name.ends_with("_addtid_b32")
+    {
+        lo.imps.push(Reg::M0);
+    }
+    Ok(())
+}
+
+/// FLAT / GLOBAL / SCRATCH: address (a pair, a word, or `off`), data, then the scalar base.
+/// The hidden flat-scratch base of the flat and scratch segments is not a register of the IR.
+fn lower_flat(i: &Instr, lo: &mut Lowered) -> Result<(), IrError> {
+    if i.mem.lds {
+        return Err(bad(
+            i.at,
+            IrErrorKind::Unsupported(format!("{}: load to LDS", i.name())),
+        ));
+    }
+    for want in [0, 1, 2] {
+        let o = slot_operand(i, |s| match want {
+            0 => matches!(s, Slot::FlatAddr),
+            1 => matches!(s, Slot::Vdata(_)),
+            _ => matches!(s, Slot::FlatSaddr),
+        });
+        if let Some(n) = o.and_then(reg_count) {
+            lo.srcs.push(src_dwords(o.unwrap(), n, i)?);
+        }
+    }
     Ok(())
 }
 
