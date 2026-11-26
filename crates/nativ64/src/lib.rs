@@ -49,6 +49,7 @@ pub mod chad;
 pub mod com;
 pub mod gameinput;
 pub mod handles;
+pub mod mmdevapi;
 pub mod msvcp140;
 pub mod paths;
 pub mod printf;

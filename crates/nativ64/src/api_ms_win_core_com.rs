@@ -1,6 +1,7 @@
 //! `api-ms-win-core-com` (forwarded to `combase`): the COM runtime entry points.
 //!
-//! There is no class registry: `CoCreateInstance` always reports the class as unregistered.
+//! There is no class registry: `CoCreateInstance` knows `MMDeviceEnumerator` (`mmdevapi.rs`) and
+//! reports any other class as unregistered.
 
 use crate::com::{Guid, E_INVALIDARG, HRESULT, S_FALSE, S_OK};
 use std::cell::Cell;
@@ -81,9 +82,9 @@ win32! {
     }
     Native fn CoCreateInstance(
         clsid: *const Guid,
-        _outer: *mut u8,
+        outer: *mut u8,
         _context: u32,
-        _iid: *const Guid,
+        iid: *const Guid,
         out: *mut *mut u8
     ) -> HRESULT {
         if out.is_null() {
@@ -92,6 +93,9 @@ win32! {
         *out = std::ptr::null_mut();
         if !clsid.is_null() {
             let c = *clsid;
+            if c == crate::mmdevapi::CLSID_MMDEVICE_ENUMERATOR {
+                return crate::mmdevapi::create_enumerator(outer, iid, out.cast());
+            }
             let mut seen = REPORTED.lock().unwrap_or_else(|e| e.into_inner());
             if !seen.contains(&c) {
                 seen.push(c);

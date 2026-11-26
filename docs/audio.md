@@ -81,8 +81,7 @@ shared. "VI" and "XCL" below name them.
 ## Next chunks
 
 - XMA and Opus decoding into the title's buffers.
-- Output through the host. The title also asks COM for `{BCDE0395-E52F-467C-8E3D-C4579291692E}`
-  (MMDeviceEnumerator), currently refused.
+- Output through the host (see "`mmdevapi.rs`" below for the null endpoint that stands in).
 
 ## `chad.dll` (the processor's DSP)
 
@@ -94,3 +93,35 @@ other four take the handle first. Here (`chad.rs`) connect succeeds with a heap-
 (null `&handle` is refused), the other calls accept a live handle and do nothing, and a null,
 unknown or already disconnected handle gets `E_INVALIDARG`. Shortcut: the arguments after the
 handle are not read; nothing is run.
+
+## `mmdevapi.rs` (the audio endpoint, over COM)
+
+The title's audio engine calls `CoCreateInstance(MMDeviceEnumerator {BCDE0395-E52F-467C-8E3D-
+C4579291692E})`; a refusal left its mix queue unallocated and later wedged the audio thread, which
+stopped the command recycler and ended in an assert after ~512 frames. `CoCreateInstance` now
+returns a null endpoint (`mmdevapi.rs`): nothing is played, but every call answers like a working
+device. All objects share one layout (vtable, count, kind) and one `QueryInterface`; a slot not
+implemented is a named trap (`unimplemented IAudioClient slot N (+0xOFF)`, then abort).
+
+- `IMMDeviceEnumerator`: `EnumAudioEndpoints` (collection of one), `GetDefaultAudioEndpoint`
+  (render and capture flows, roles 0-2), `Register`/`UnregisterEndpointNotificationCallback`
+  (S_OK, the callback is never stored). `GetDevice` traps.
+- `IMMDevice`: `Activate` (`IAudioClient`, `ISpatialAudioClient`; other IIDs `E_NOINTERFACE`,
+  `*out` NULL), `OpenPropertyStore`, `GetId` (CoTaskMem string), `GetState` = ACTIVE.
+- `IPropertyStore::GetValue`: the one key the title reads is `{1DA5D803-D492-4EDD-8C23-
+  E0C0FFEE7F0E}` pid 0 = `PKEY_AudioEndpoint_FormFactor` (read from its key table). It compares the
+  value with 3 (Headphones) and 5 (Headset) to choose a downmix; we answer VT_UI4 1 (Speakers).
+  Other keys: VT_EMPTY, S_OK.
+- `IAudioClient`: only `GetMixFormat` (float32, 48 kHz, stereo, mask 3, as WAVEFORMATEXTENSIBLE).
+- `ISpatialAudioClient`: static position (guessed unit vectors per speaker bit), static mask 3,
+  16 dynamic objects, format enumerator (one format, the mix format), `GetMaxFrameCount` 480,
+  `IsAudioObjectFormatSupported` (float32 48 kHz only, else `AUDCLNT_E_UNSUPPORTED_FORMAT`),
+  `ActivateSpatialAudioStream` (the params PROPVARIANT is a VT_BLOB whose block gives max objects
+  at +16 and the event handle at +24; IIDs of the render stream and its base).
+- Render stream: `Start` spawns a clock thread that sets the stream's event every 10 ms until
+  `Stop` or the last release; `BeginUpdatingAudioObjects` answers (max objects, 480 frames);
+  `ActivateSpatialAudioObject` returns an object whose `GetBuffer` is a 480-frame scratch buffer
+  that is never read. Slot orders are from the public headers as remembered; unverified against
+  a real device.
+- Shortcuts: no real clock accuracy (a plain sleep), no object count limit, no call-order errors
+  (Begin without End, buffer after End), `IAudioClient` beyond `GetMixFormat` untested.
