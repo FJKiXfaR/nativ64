@@ -81,14 +81,38 @@ unsafe fn call_handler(
 
 /// Invokes the invalid parameter handler without information (for the `_s` functions of other
 /// modules). Sets nothing; returns when the handler returns or when none is installed.
+#[track_caller]
 pub(crate) fn invalid_parameter() {
+    log_invalid_parameter();
     unsafe {
         call_handler(std::ptr::null(), std::ptr::null(), std::ptr::null(), 0, 0);
     }
 }
 
+/// `NATIV64_CRT_LOG=1`: print each invalid parameter the C runtime rejects, with the nativ64
+/// function that rejected it and whether a handler is installed. A title that installs a
+/// crash-reporting invalid-parameter handler then shows which call triggered it.
+fn log_invalid_parameter() {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ENABLED
+        .get_or_init(|| std::env::var("NATIV64_CRT_LOG").is_ok_and(|v| !v.is_empty() && v != "0"))
+    {
+        return;
+    }
+    eprintln!(
+        "nativ64: invalid parameter at {} (handler {})",
+        std::panic::Location::caller(),
+        if current_handler() != 0 {
+            "installed"
+        } else {
+            "none"
+        }
+    );
+}
+
 /// Sets `errno` to `err`, invokes the handler, and returns `err` (the `_VALIDATE_RETURN_ERRCODE`
 /// pattern).
+#[track_caller]
 pub(crate) fn invalid_parameter_err(err: i32) -> i32 {
     set_errno(err);
     invalid_parameter();
