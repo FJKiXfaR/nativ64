@@ -7,6 +7,7 @@
 //! text summary; `nativ64-shader <blob>` prints the same summary for a file.
 
 pub mod container;
+pub mod gfx10;
 pub mod native;
 
 use std::collections::HashSet;

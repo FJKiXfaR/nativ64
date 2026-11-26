@@ -1,0 +1,308 @@
+//! The GFX10 (RDNA) instruction decoder: machine code bytes to `Instr`, flow following and an
+//! LLVM-syntax disassembly (`docs/shaders.md`, Decoding; chunk 2 of the G4 plan).
+//!
+//! `table.rs` is generated from `llvm-mc` output by `tools/gen_gfx10_table.py` (LLVM's AMDGPU
+//! tables are facts; nothing is linked). It lists the opcodes of gfx1013 (the title's
+//! target: it still has `v_mad_f32`, `v_mac_f32`) plus the ones only gfx1030 has (`FLAG_G30`).
+//! Encodings not decoded yet (VOP3P, DS, FLAT, MTBUF, MIMG, 64-bit
+//! shapes of the later chunks) come back as a typed `DecodeError`, never a panic.
+
+mod decode;
+mod disasm;
+mod flow;
+pub mod ops;
+#[rustfmt::skip]
+mod table;
+
+use std::fmt;
+
+pub use decode::{decode, decode_wave};
+pub use disasm::{disasm, disasm_instr};
+pub use flow::{follow, Program};
+pub use ops::{OpInfo, Slot};
+
+/// Byte offset where a program's instructions start: every program of the corpus begins with a
+/// 24-byte marker (six dwords that are not instructions; the code proper starts with
+/// `s_inst_prefetch`).
+pub const ENTRY: usize = 24;
+
+/// The instruction encodings of this chunk.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Enc {
+    Sop1,
+    Sop2,
+    Sopc,
+    Sopk,
+    Sopp,
+    Smem,
+    Vop1,
+    Vop2,
+    Vopc,
+    Vop3,
+    Vintrp,
+    Exp,
+    Mubuf,
+}
+
+impl Enc {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Sop1 => "SOP1",
+            Self::Sop2 => "SOP2",
+            Self::Sopc => "SOPC",
+            Self::Sopk => "SOPK",
+            Self::Sopp => "SOPP",
+            Self::Smem => "SMEM",
+            Self::Vop1 => "VOP1",
+            Self::Vop2 => "VOP2",
+            Self::Vopc => "VOPC",
+            Self::Vop3 => "VOP3",
+            Self::Vintrp => "VINTRP",
+            Self::Exp => "EXP",
+            Self::Mubuf => "MUBUF",
+        }
+    }
+}
+
+/// One operand in print order (`Instr::info.slots` names the field each came from).
+///
+/// Register operands use the hardware source code space: 0..=105 SGPR, 106/107 VCC, 108..=123
+/// TTMP, 124 M0, 125 NULL, 126/127 EXEC, 128..=192 inline 0..64, 193..=208 inline -1..-16,
+/// 240..=248 inline floats, 251..=253 vccz/execz/scc, 256..=511 VGPR. `count` is the width in
+/// dwords (a lane mask is resolved to 1 or 2 by the wave size).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Operand {
+    Reg {
+        code: u16,
+        count: u8,
+    },
+    /// The instruction's literal dword.
+    Literal(u32),
+    /// A plain field value (16-bit immediate, SMEM data field).
+    Imm(u32),
+    /// An implicit operand (`vcc`).
+    Fixed(&'static str),
+}
+
+/// VOP3 / SDWA / DPP source and result modifiers. `abs`, `neg` and `opsel` are bit masks over
+/// the sources (bit 0 = source 0); `opsel` bit 3 is the destination.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Mods {
+    pub abs: u8,
+    pub neg: u8,
+    pub opsel: u8,
+    pub clamp: bool,
+    /// 0 none, 1 `mul:2`, 2 `mul:4`, 3 `div:2`.
+    pub omod: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DppKind {
+    Dpp16,
+    Dpp8,
+    Dpp8Fi,
+}
+
+/// The DPP dword that follows a VOP1/VOP2/VOPC whose source 0 is 250 (DPP16) or 233/234 (DPP8).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Dpp {
+    pub kind: DppKind,
+    /// DPP16 control (quad perm, row shift, ...).
+    pub ctrl: u16,
+    pub bound_ctrl: bool,
+    pub fi: bool,
+    pub src0_neg: bool,
+    pub src0_abs: bool,
+    pub src1_neg: bool,
+    pub src1_abs: bool,
+    pub bank_mask: u8,
+    pub row_mask: u8,
+    /// DPP8 lane selects.
+    pub sel: [u8; 8],
+}
+
+/// The SDWA dword that follows a VOP1/VOP2/VOPC whose source 0 is 249.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Sdwa {
+    pub dst_sel: u8,
+    pub dst_unused: u8,
+    pub clamp: bool,
+    pub omod: u8,
+    pub src0_sel: u8,
+    pub src0_sext: bool,
+    pub src0_neg: bool,
+    pub src0_abs: bool,
+    /// Source 0 is an SGPR.
+    pub s0: bool,
+    pub src1_sel: u8,
+    pub src1_sext: bool,
+    pub src1_neg: bool,
+    pub src1_abs: bool,
+    pub s1: bool,
+    /// VOPC: scalar destination code and whether it is used (`sd`).
+    pub sdst: u8,
+    pub sd: bool,
+}
+
+/// Memory instruction fields (SMEM and MUBUF).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Mem {
+    /// SMEM: signed 21-bit byte offset; MUBUF: 12-bit offset.
+    pub offset: i32,
+    /// SMEM `soffset` (7-bit scalar code) or MUBUF `soffset` (8-bit code).
+    pub soffset: u16,
+    /// MUBUF VGPR address (first register) and resource (first SGPR).
+    pub vaddr: u8,
+    pub srsrc: u8,
+    pub glc: bool,
+    pub slc: bool,
+    pub dlc: bool,
+    pub offen: bool,
+    pub idxen: bool,
+    pub lds: bool,
+    pub tfe: bool,
+}
+
+/// EXP fields.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Exp {
+    pub en: u8,
+    pub target: u8,
+    pub compr: bool,
+    pub done: bool,
+    pub vm: bool,
+    pub vsrc: [u8; 4],
+}
+
+/// VINTRP fields.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Intrp {
+    pub vdst: u8,
+    pub vsrc: u8,
+    pub attr: u8,
+    pub chan: u8,
+}
+
+/// One decoded instruction.
+#[derive(Clone, Debug)]
+pub struct Instr {
+    /// Byte offset in the code.
+    pub at: usize,
+    /// Size in bytes, literal and DPP/SDWA dword included.
+    pub len: usize,
+    pub enc: Enc,
+    pub opcode: u16,
+    pub info: &'static OpInfo,
+    /// One per `info.slots` entry, in order.
+    pub operands: Vec<Operand>,
+    /// The raw dwords of the instruction (first, second when 8-byte, literal or extension).
+    pub words: [u32; 3],
+    pub nwords: u8,
+    pub mods: Mods,
+    pub dpp: Option<Dpp>,
+    pub sdwa: Option<Sdwa>,
+    pub mem: Mem,
+    pub exp: Exp,
+    pub intrp: Intrp,
+    /// The wave size the lane-mask operands were resolved for.
+    pub wave32: bool,
+}
+
+impl Instr {
+    pub fn name(&self) -> &'static str {
+        self.info.name
+    }
+
+    /// The literal dword, when the instruction carries one.
+    pub fn literal(&self) -> Option<u32> {
+        self.operands.iter().find_map(|o| match o {
+            Operand::Literal(v) => Some(*v),
+            _ => None,
+        })
+    }
+
+    /// The raw 16-bit immediate of a SOPP / SOPK instruction.
+    pub fn simm16(&self) -> u16 {
+        self.words[0] as u16
+    }
+
+    /// Byte offset of the branch target of `s_branch` / `s_cbranch_*` (and `s_call_b64`).
+    pub fn branch_target(&self) -> Option<i64> {
+        let relative = matches!(
+            (self.enc, self.opcode),
+            (Enc::Sopp, 2 | 4..=9) | (Enc::Sopk, 22)
+        );
+        relative.then(|| self.at as i64 + 4 + 4 * i64::from(self.simm16() as i16))
+    }
+
+    /// True for `s_endpgm`.
+    pub fn is_endpgm(&self) -> bool {
+        self.enc == Enc::Sopp && self.opcode == 1
+    }
+
+    /// True for `s_branch`.
+    pub fn is_branch(&self) -> bool {
+        self.enc == Enc::Sopp && self.opcode == 2
+    }
+
+    /// True for the conditional branches (`s_cbranch_scc0` .. `s_cbranch_execnz`).
+    pub fn is_cbranch(&self) -> bool {
+        self.enc == Enc::Sopp && (4..=9).contains(&self.opcode)
+    }
+
+    /// True for the jumps through a register (`s_setpc_b64`, `s_swappc_b64`, `s_rfe_b64`) and
+    /// `s_call_b64`: control leaves to an address the decoder cannot follow.
+    pub fn is_indirect(&self) -> bool {
+        matches!(
+            (self.enc, self.opcode),
+            (Enc::Sop1, 32..=34) | (Enc::Sopk, 22)
+        )
+    }
+}
+
+/// Why decoding stopped.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DecodeError {
+    /// Byte offset of the instruction.
+    pub at: usize,
+    pub kind: ErrorKind,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ErrorKind {
+    /// The code ends inside an instruction.
+    Truncated,
+    /// No opcode of this encoding in the table.
+    UnknownOpcode { enc: Enc, opcode: u32 },
+    /// An encoding this decoder does not read (yet): the first dword.
+    UnknownEncoding { name: &'static str, word: u32 },
+    /// A field value the encoding does not allow.
+    BadField(&'static str),
+    /// A branch to outside the code, or into the middle of an instruction.
+    BadTarget(i64),
+}
+
+impl fmt::Display for DecodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let at = self.at;
+        match &self.kind {
+            ErrorKind::Truncated => write!(f, "GFX10 code ends inside an instruction at +{at:#x}"),
+            ErrorKind::UnknownOpcode { enc, opcode } => write!(
+                f,
+                "unknown GFX10 {} opcode {opcode:#x} at +{at:#x}",
+                enc.name()
+            ),
+            ErrorKind::UnknownEncoding { name, word } => write!(
+                f,
+                "unknown GFX10 encoding {name} (word {word:#010x}) at +{at:#x}"
+            ),
+            ErrorKind::BadField(what) => write!(f, "bad GFX10 field {what} at +{at:#x}"),
+            ErrorKind::BadTarget(t) => write!(f, "GFX10 branch target {t:#x} bad at +{at:#x}"),
+        }
+    }
+}
+
+impl std::error::Error for DecodeError {}
+
+#[cfg(test)]
+mod tests;

@@ -279,6 +279,21 @@ impl NativeProgram {
         })
     }
 
+    /// The code of every slot with a record, `(slot name, bytes)`; records of stages other than
+    /// VS and PS are read only as far as their code range.
+    pub fn slot_codes(&self) -> Vec<(&'static str, &[u8])> {
+        let p = &self.payload;
+        self.present
+            .iter()
+            .filter_map(|&(name, at)| {
+                let at = at as usize;
+                let o = u64_at(p, at)? as usize;
+                let n = u64_at(p, at + 8)? as usize;
+                Some((name, p.get(o..o.checked_add(n)?)?))
+            })
+            .collect()
+    }
+
     /// A record's code bytes.
     pub fn code(&self, r: &Record) -> &[u8] {
         let (o, n) = (r.code_offset as usize, r.code_size as usize);

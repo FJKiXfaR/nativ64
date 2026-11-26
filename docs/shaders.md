@@ -25,7 +25,11 @@ confirm.
   (the URL answers a plain `curl` with an empty page: read it in a browser). Machine-checkable
   oracle: `llvm-mc -arch=amdgcn -mcpu=gfx1030 -disassemble` (installed here, Apache-2.0 with
   LLVM exception; run as a tool, never linked). LLVM's `AMDGPUAsmGFX1030.rst` lists every form.
-  Xbox2Windows calls the target gfx1013 **[unverified]**; both LLVM targets decode the corpus the same.
+  Xbox2Windows calls the target gfx1013 **[unverified]**. The 10 embedded blobs decode the same
+  under both LLVM targets, but a title run's 8634 blobs do not: they use `v_mad_f32`, `v_mac_f32`,
+  `v_madak_f32` (gfx10.1 opcodes that gfx1030 lacks), and the same opcode can have another name
+  (VOP3 0x140: `v_mad_legacy_f32` on gfx1013, `v_fma_legacy_f32` on gfx1030). **[llvm, seen]**
+  The decoder's oracle is therefore `-mcpu=gfx1013`.
 - **VIctory** (`../VIctory-mirror/crates/victory-shader`, GPL-3, targets DXIL): container
   offsets, stage data, root layout tables, the per-lane structuring argument. Facts only: no
   code, no module split, no names copied.
@@ -409,6 +413,15 @@ SGPRs **[VIctory]**), merged stages and NGG (decode their layouts first), mesh, 
   first chunks need merged-stage stage data, not decoded yet. Chunk 1's dump answers it.
 - Wave32 bit (record +0x14 bit 5) and the VS system VGPR layout are VIctory's readings, not
   confirmed by the corpus (all wave64, VS reads only v0).
+- Stages seen in a title run (8634 distinct blobs): 3297 pixel, 2734 compute, 1569 mesh, 1034
+  vertex. Mesh shaders are common, so mesh (and compute) stage data and merged layouts are not
+  optional later work: the plan's "Later" list needs reordering. Of these, 1705 programs
+  (233315 instructions) decode fully with chunk 2; the rest stop at MIMG (4250 programs), MTBUF
+  (1567), DS (640), VOP3P (427), FLAT (45): chunks 7 and 9 come first. 332 programs contain
+  `s_setpc`/`s_swappc`/`s_call` (indirect jumps).
+- Root-layout and used-resource tables have up to a few hundred entries (the chunk 1 cap of 64
+  refused 2486 vertex/pixel blobs; now 512, bounds-checked against the payload).
+- VOP3 interpolation (`v_interp_*_e64`) decodes; the f16 forms print `high`, not decoded.
 - `s0..s7` of the hardware VS/PS: content unknown; a read stops translation.
 - Kind 0x12 XDAT entry, `PRIV` part (12 bytes), program-record bytes not listed: meaning unknown,
   ignored.
