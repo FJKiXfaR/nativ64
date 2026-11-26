@@ -23,6 +23,11 @@ use ash::{Device, vk};
 use std::collections::{HashMap, HashSet};
 use std::mem::Discriminant;
 
+/// Whether `size` bytes at `at` are committed pages of the title's memory.
+fn committed(at: usize, size: usize) -> bool {
+    size == 0 || nativ64::api_ms_win_core_memory::is_committed(at, size)
+}
+
 /// `D3D12_RESOURCE_DIMENSION_BUFFER` and `..._TEXTURE2D`.
 const BUFFER: u32 = 1;
 const TEXTURE1D: u32 = 2;
@@ -763,9 +768,43 @@ impl<'g> VkBackend<'g> {
             | C::RootTable { .. }
             | C::RootConstants { .. }
             | C::RootView { .. } => {}
+            C::CopyMemory { dst, src, len, .. } => {
+                let (Ok(d), Ok(s), Ok(n)) = (
+                    usize::try_from(*dst),
+                    usize::try_from(*src),
+                    usize::try_from(*len),
+                ) else {
+                    return self.skip(c, "an address out of range");
+                };
+                if !committed(d, n) || !committed(s, n) {
+                    return self.skip(c, "memory that is not committed");
+                }
+                // SAFETY: both ranges lie in committed title memory (checked above).
+                unsafe { std::ptr::copy(s as *const u8, d as *mut u8, n) };
+                self.stats.copies += 1;
+            }
+            C::FillMemory {
+                address,
+                size,
+                pattern,
+                width,
+            } => {
+                let (Ok(a), Ok(n)) = (usize::try_from(*address), usize::try_from(*size)) else {
+                    return self.skip(c, "an address out of range");
+                };
+                let w = usize::from(*width).clamp(1, 16);
+                if !committed(a, n) {
+                    return self.skip(c, "memory that is not committed");
+                }
+                // SAFETY: the range lies in committed title memory (checked above).
+                let dst = unsafe { std::slice::from_raw_parts_mut(a as *mut u8, n) };
+                for chunk in dst.chunks_mut(w) {
+                    let k = chunk.len();
+                    chunk.copy_from_slice(&pattern[..k]);
+                }
+                self.stats.copies += 1;
+            }
             C::ResolveSubresource { .. }
-            | C::CopyMemory { .. }
-            | C::FillMemory { .. }
             | C::WriteBottom { .. }
             | C::WaitValue { .. }
             | C::ClearUav { .. }
@@ -1250,6 +1289,45 @@ pub(super) mod tests {
         b.execute(&[vec![clear([0.0, 1.0, 0.0, 1.0])]]);
         let r = b.read_back(res).unwrap();
         assert!(r.bytes.chunks(4).all(|p| p == [0, 255, 0, 255]));
+    }
+
+    #[test]
+    fn memory_copies_and_fills_run_on_committed_memory() {
+        use nativ64::api_ms_win_core_memory as table;
+        let Some(g) = gpu_or_skip() else { return };
+        let mut b = VkBackend::new(&g);
+        let a = table::alloc(0, 0x1000, table::MEM_RESERVE | table::MEM_COMMIT, 0x04, None)
+            .unwrap();
+        // SAFETY: the page was just committed read-write.
+        let page = unsafe { std::slice::from_raw_parts_mut(a as *mut u8, 0x1000) };
+        page[..8].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
+        let mut p = [0u8; 16];
+        p[..4].copy_from_slice(&[9, 8, 7, 6]);
+        b.execute(&[vec![
+            Command::CopyMemory {
+                dst: a as u64 + 0x100,
+                src: a as u64,
+                len: 8,
+                flags: 0,
+            },
+            Command::FillMemory {
+                address: a as u64 + 0x200,
+                size: 10,
+                pattern: p,
+                width: 4,
+            },
+            // not committed: skipped, not a crash
+            Command::CopyMemory {
+                dst: 0x1000,
+                src: a as u64,
+                len: 8,
+                flags: 0,
+            },
+        ]]);
+        assert_eq!(&page[0x100..0x108], &[1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(&page[0x200..0x20a], &[9, 8, 7, 6, 9, 8, 7, 6, 9, 8]);
+        assert_eq!(b.stats.copies, 2);
+        assert_eq!(b.stats.skipped, 1);
     }
 
     #[test]
