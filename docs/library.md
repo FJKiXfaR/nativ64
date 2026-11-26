@@ -53,9 +53,12 @@ The game runtime (`xgameruntime.rs`) serves its APIs from `QueryApiImpl(api, iid
 API, the user provider (`xuser.rs`: one offline local user "Player", signed in, every privilege)
 and the task queue / async provider (`xasync.rs`: queues with manual, thread-pool, serialized and
 immediate ports, async blocks completed through the block's queue; the minimum the user path
-needs). Their objects are `Table<N>`s of untyped slots built with `table!`; a slot with no method
-is `slot_trap::<AREA, SLOT>` which logs the area and slot once and answers `E_NOTIMPL`. Every
-other API is refused and logged.
+needs). The user and task queue objects are `Table<N>`s of untyped slots built with `table!`; a
+slot with no method is `slot_trap::<AREA, SLOT>` which logs the area and slot once and answers
+`E_NOTIMPL`. The system API answers the console id (38 characters plus the terminator, the size
+a title allocates) and the sandbox id (`RETAIL`); its other slots are traps that name the slot
+and stop the run, so every run reports the next one to implement. Every other API is refused and
+logged.
 
 `GameInput.dll` is imported by ordinal: `src/gameinput.rs` has an `ORDINALS` table like
 `ws2_32`, wired in `lookup_ordinal`. It exposes an `IGameInput` with one virtual gamepad (always
@@ -89,8 +92,12 @@ environment variable `NATIV64_PACKAGE_DIRS` (colon-separated, empty entries igno
 directory where the path exists wins (each component is matched ignoring case when the exact name
 is missing); when none has it, the package-root mapping is returned. A path starting with `/` as
 written is a host path. The package directories are never written: writes go to
-`$XDG_DATA_HOME/nativ64/<exe stem>` (default `~/.local/share`). `nativ64::paths` implements the
-read side (`map_read_path`, `package_dirs`), plus `package_root` and `write_dir`.
+`$XDG_DATA_HOME/nativ64/<exe stem>` (default `~/.local/share`), and the parent directories of a
+written file are created. `nativ64::paths` implements the read side (`map_read_path`,
+`package_dirs`), plus `package_root`, `write_dir` and `map_write_path`/`map_write_path_in`. The
+CRT's `fopen` / `_wfopen` take the same mapping: `w` and `a` write under the write directory
+(the console's `t:` scratch drive included), `r` prefers an earlier write and otherwise searches
+the package directories.
 
 Guest DLLs the base mapped are registered with `nativ64::process::register_module` (name, base,
 export lookup): `GetModuleHandle*` returns their real base and `GetProcAddress` resolves their
