@@ -33,6 +33,7 @@ pub fn string_words(s: &str) -> Vec<u32> {
 pub struct Module {
     next_id: u32,
     caps: Vec<u32>,
+    exts: Vec<String>,
     imports: Vec<Vec<u32>>,
     addressing: AddressingModel,
     memory: MemoryModel,
@@ -57,6 +58,7 @@ impl Module {
         Self {
             next_id: 1,
             caps: Vec::new(),
+            exts: Vec::new(),
             imports: Vec::new(),
             addressing: AddressingModel::Logical,
             memory: MemoryModel::GLSL450,
@@ -79,6 +81,13 @@ impl Module {
     pub fn capability(&mut self, c: Capability) {
         if !self.caps.contains(&(c as u32)) {
             self.caps.push(c as u32);
+        }
+    }
+
+    /// `OpExtension`, once per name.
+    pub fn extension(&mut self, name: &str) {
+        if !self.exts.iter().any(|e| e == name) {
+            self.exts.push(name.to_string());
         }
     }
 
@@ -168,6 +177,9 @@ impl Module {
         let mut out = vec![spirv::MAGIC_NUMBER, VERSION_1_5, 0, self.next_id, 0];
         for c in &self.caps {
             out.extend(inst(Op::Capability, &[*c]));
+        }
+        for e in &self.exts {
+            out.extend(inst(Op::Extension, &string_words(e)));
         }
         for i in &self.imports {
             out.extend(i);

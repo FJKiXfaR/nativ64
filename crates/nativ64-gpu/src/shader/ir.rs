@@ -212,7 +212,25 @@ pub struct EntryRegs {
 
 /// Dwords each `SPI_PS_INPUT_ADDR` bit takes, in bit order: the barycentric pairs (the pull
 /// model's takes three), then the single-dword system values.
-const PS_INPUT_DWORDS: [u16; 16] = [2, 2, 2, 3, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+pub const PS_INPUT_DWORDS: [u16; 16] = [2, 2, 2, 3, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+
+/// The SGPRs that hold user data for a stage: from the lowest `first_user_dword` of its root
+/// layout to the end of the last entry, at least s8 (`docs/shaders.md`, Inputs and outputs).
+pub fn user_range(rec: &super::native::Record) -> Range<u16> {
+    let lo = rec
+        .layout
+        .iter()
+        .map(|l| u16::from(l.first_user_dword))
+        .min()
+        .unwrap_or(8);
+    let hi = rec
+        .layout
+        .iter()
+        .map(|l| u16::from(l.first_user_dword) + l.user_sgprs as u16)
+        .max()
+        .unwrap_or(0);
+    lo..hi.max(8)
+}
 
 impl EntryRegs {
     pub fn new() -> Self {
@@ -245,21 +263,7 @@ impl EntryRegs {
     /// * Mesh: s3 (merged wave info), the user SGPRs from s8, v5 (group id times group size).
     pub fn from_stage(rec: &super::native::Record) -> Self {
         use super::native::StageData;
-        let user = || {
-            let lo = rec
-                .layout
-                .iter()
-                .map(|l| u16::from(l.first_user_dword))
-                .min()
-                .unwrap_or(8);
-            let hi = rec
-                .layout
-                .iter()
-                .map(|l| u16::from(l.first_user_dword) + l.user_sgprs as u16)
-                .max()
-                .unwrap_or(0);
-            lo..hi.max(8)
-        };
+        let user = || user_range(rec);
         let mut r = Self::new();
         match &rec.data {
             StageData::Vertex(d) => {
