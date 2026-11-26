@@ -47,23 +47,53 @@ struct Placement {
     size: u64,
 }
 
-/// Zeroed memory, 64-byte aligned, freed on drop.
+/// Zeroed memory the heap owns, page aligned and a whole number of pages (the GPU backend
+/// imports it as it imports title memory), freed on drop. Listed in [`heap_ranges`].
 struct Memory {
     at: *mut u8,
     layout: Layout,
 }
 
+/// Page size the heaps' own memory is aligned and rounded to.
+const HEAP_PAGE: usize = 4096;
+
+/// `(address, length)` of the memory of every live heap that allocated its own.
+static HEAP_RANGES: std::sync::Mutex<Vec<(usize, usize)>> = std::sync::Mutex::new(Vec::new());
+
+/// The memory of the live descriptor heaps that own theirs (heaps placed in title memory are
+/// in the title's memory table, not here): what a shader may read that is not title memory.
+pub fn heap_ranges() -> Vec<(usize, usize)> {
+    HEAP_RANGES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
 impl Memory {
     fn zeroed(size: usize) -> Option<Memory> {
-        let layout = Layout::from_size_align(size.max(64), 64).ok()?;
+        let layout =
+            Layout::from_size_align(size.max(1).next_multiple_of(HEAP_PAGE), HEAP_PAGE).ok()?;
         // SAFETY: a non-zero size.
         let at = unsafe { std::alloc::alloc_zeroed(layout) };
-        (!at.is_null()).then_some(Memory { at, layout })
+        if at.is_null() {
+            return None;
+        }
+        HEAP_RANGES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push((at as usize, layout.size()));
+        Some(Memory { at, layout })
     }
 }
 
 impl Drop for Memory {
     fn drop(&mut self) {
+        let range = (self.at as usize, self.layout.size());
+        HEAP_RANGES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|r| *r != range);
+        nativ64::api_ms_win_core_memory::note_change(range.0, range.1);
         // SAFETY: allocated with this layout.
         unsafe { std::alloc::dealloc(self.at, self.layout) };
     }
@@ -201,6 +231,17 @@ fn record(handle: u64, view: View) {
     };
     // SAFETY: the handle is a descriptor slot of at least 16 bytes the title owns.
     unsafe { (handle as *mut [u32; 2]).write_unaligned([VIEW_TAG, index as u32]) };
+}
+
+/// How many views are recorded: registry indices are below it.
+pub fn view_count() -> usize {
+    VIEWS.lock().unwrap_or_else(|e| e.into_inner()).len()
+}
+
+/// The recorded views from registry index `first` on.
+pub fn views_from(first: usize) -> Vec<View> {
+    let v = VIEWS.lock().unwrap_or_else(|e| e.into_inner());
+    v.get(first..).map(<[View]>::to_vec).unwrap_or_default()
 }
 
 /// The view recorded at `handle`, if one is.

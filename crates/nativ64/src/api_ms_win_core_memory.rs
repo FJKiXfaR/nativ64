@@ -92,6 +92,36 @@ fn table() -> MutexGuard<'static, Table> {
     T.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Ranges the GPU backend must forget (see [`take_gpu_changes`]).
+static CHANGES: Mutex<Vec<(usize, usize)>> = Mutex::new(Vec::new());
+/// Whether anything watches [`CHANGES`]: nothing is recorded before the first `watch`.
+static WATCHED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Starts recording the ranges that are decommitted, released, remapped or replaced, for
+/// [`take_gpu_changes`]. Idempotent; the GPU backend calls it when it is made.
+pub fn watch_gpu_changes() {
+    WATCHED.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Records that the memory at `addr..addr + len` changed under whatever the GPU imported
+/// (a no-op until [`watch_gpu_changes`]). Also used by owners of memory outside the table.
+pub fn note_change(addr: usize, len: usize) {
+    if len != 0 && WATCHED.load(std::sync::atomic::Ordering::Relaxed) {
+        CHANGES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push((addr, len));
+    }
+}
+
+/// The `(address, length)` ranges recorded since the last call; empty (and cheap) mostly.
+pub fn take_gpu_changes() -> Vec<(usize, usize)> {
+    if !WATCHED.load(std::sync::atomic::Ordering::Relaxed) {
+        return Vec::new();
+    }
+    std::mem::take(&mut *CHANGES.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
 fn align_up(v: usize, a: usize) -> usize {
     (v + a - 1) & !(a - 1)
 }
@@ -274,6 +304,8 @@ pub fn replace_placeholder(base: usize, size: usize, protect: u32) -> Result<usi
     } else {
         PAGE_NOACCESS
     };
+    drop(t);
+    note_change(base, size);
     Ok(base)
 }
 
@@ -288,6 +320,8 @@ pub fn mark_mapped(addr: usize, len: usize, protect: u32) -> Result<(), u32> {
         return Err(ERROR_INVALID_ADDRESS);
     }
     region.pages[(addr - b) / PAGE..(end - b) / PAGE].fill(protect as u16);
+    drop(t);
+    note_change(addr, len);
     Ok(())
 }
 
@@ -297,6 +331,8 @@ pub fn release(base: usize) -> Result<(), u32> {
     let r = t.regions.remove(&base).ok_or(ERROR_INVALID_ADDRESS)?;
     // SAFETY: the whole mapping `alloc` made.
     unsafe { libc::munmap(base as *mut c_void, r.size) };
+    drop(t);
+    note_change(base, r.size);
     Ok(())
 }
 
@@ -330,6 +366,8 @@ pub fn free(addr: usize, size: usize, kind: u32) -> Result<(), u32> {
                 return Err(ERROR_NOT_ENOUGH_MEMORY);
             }
             region.pages[(start - b) / PAGE..(end - b) / PAGE].fill(0);
+            drop(t);
+            note_change(start, end - start);
             Ok(())
         }
         _ => Err(ERROR_INVALID_PARAMETER),
@@ -379,7 +417,32 @@ fn placeholder(addr: usize, size: usize) -> Result<(), u32> {
             },
         );
     }
+    drop(t);
+    note_change(addr, size);
     Ok(())
+}
+
+/// The run of committed, accessible pages of an allocation of the table around `addr`:
+/// `start..end` (page aligned). None when `addr` is not in an allocation of the table or its
+/// page is reserved or `PAGE_NOACCESS`. What the GPU backend imports.
+pub fn committed_run(addr: usize) -> Option<(usize, usize)> {
+    let t = table();
+    let b = find(&t, addr & !(PAGE - 1))?;
+    let r = &t.regions[&b];
+    let usable = |p: u16| p != 0 && p & 0xff != PAGE_NOACCESS as u16;
+    let i = (addr - b) / PAGE;
+    if !usable(r.pages[i]) {
+        return None;
+    }
+    let first = r.pages[..i]
+        .iter()
+        .rposition(|&p| !usable(p))
+        .map_or(0, |k| k + 1);
+    let last = r.pages[i..]
+        .iter()
+        .position(|&p| !usable(p))
+        .map_or(r.pages.len(), |k| i + k);
+    Some((b + first * PAGE, b + last * PAGE))
 }
 
 /// One host mapping from `/proc/self/maps`: start, end, readable, writable, executable.
@@ -742,6 +805,23 @@ mod tests {
             assert_eq!(VirtualFreeEx(0, p, 0, MEM_RELEASE), 0);
             assert_eq!(err(), ERROR_INVALID_HANDLE);
         }
+    }
+
+    #[test]
+    fn committed_runs_and_recorded_changes() {
+        watch_gpu_changes();
+        let a = alloc(0, 0x10000, MEM_RESERVE, 0x04, None).unwrap();
+        assert_eq!(committed_run(a), None);
+        alloc(a + 0x1000, 0x3000, MEM_COMMIT, 0x04, None).unwrap();
+        assert_eq!(committed_run(a + 0x2000), Some((a + 0x1000, a + 0x4000)));
+        assert_eq!(committed_run(a), None);
+        assert_eq!(committed_run(a + 0x4000), None);
+        free(a + 0x2000, 0x1000, MEM_DECOMMIT).unwrap();
+        assert_eq!(committed_run(a + 0x1000), Some((a + 0x1000, a + 0x2000)));
+        let ch = take_gpu_changes();
+        assert!(ch.contains(&(a + 0x2000, 0x1000)), "{ch:x?}");
+        release(a).unwrap();
+        assert!(take_gpu_changes().contains(&(a, 0x10000)));
     }
 
     #[test]
