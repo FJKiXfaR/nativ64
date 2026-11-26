@@ -44,9 +44,17 @@ pub fn write_png(path: &Path, w: u32, h: u32, rgba: &[u8]) -> std::io::Result<()
 }
 
 /// Which presented frames are dumped: 1, 2, 4, 8, ... and every 60th, so a long run does not
-/// fill the disk with 4K PNGs.
+/// fill the disk with 4K PNGs. `NATIV64_DUMP_FROM=<n>` skips the frames before `n` (a late frame
+/// is then reached without paying for the dumps of the early ones).
 pub fn dump_wanted(frame: u64) -> bool {
-    frame.is_power_of_two() || frame.is_multiple_of(60)
+    static FROM: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    let from = *FROM.get_or_init(|| {
+        std::env::var("NATIV64_DUMP_FROM")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0)
+    });
+    frame >= from && (frame.is_power_of_two() || frame.is_multiple_of(60))
 }
 
 impl<'g> VkBackend<'g> {

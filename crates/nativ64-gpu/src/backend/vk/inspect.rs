@@ -49,6 +49,31 @@ impl VkBackend<'_> {
         dir().is_some() && super::present::dump_wanted(self.frames)
     }
 
+    /// `NATIV64_DRAW_ONLY=<a>-<b>` (with `NATIV64_DUMP_TARGETS`): in the frames being described,
+    /// only the draws numbered `a..=b` in the frame (counted from 0, replayed ones) are
+    /// recorded, to see what each part of a frame writes. True when this draw is left out.
+    pub(super) fn skipped_by_filter(&self) -> bool {
+        static RANGE: std::sync::OnceLock<Option<(u32, u32)>> = std::sync::OnceLock::new();
+        static COUNT: std::sync::Mutex<(u64, u32)> = std::sync::Mutex::new((0, 0));
+        let Some((a, b)) = *RANGE.get_or_init(|| {
+            let v = std::env::var("NATIV64_DRAW_ONLY").ok()?;
+            let (a, b) = v.split_once('-')?;
+            Some((a.parse().ok()?, b.parse().ok()?))
+        }) else {
+            return false;
+        };
+        if !self.inspecting() {
+            return false;
+        }
+        let mut c = COUNT.lock().unwrap_or_else(|e| e.into_inner());
+        if c.0 != self.frames + 1 {
+            *c = (self.frames + 1, 0);
+        }
+        let n = c.1;
+        c.1 += 1;
+        !(a..=b).contains(&n)
+    }
+
     /// One `inspect:` line per command of the frame, cut at 300 characters.
     pub(super) fn inspect_command(&self, c: &Command) {
         let t = format!("{c:?}");
@@ -72,7 +97,8 @@ impl VkBackend<'_> {
             .and_then(|g| fixed_state(g).ok())
             .map(|f| {
                 format!(
-                    "cull {} ccw {} depth {:?} blend {:?} mask {:#x}",
+                    "fill {} cull {} ccw {} depth {:?} blend {:?} mask {:#x}",
+                    f.fill,
                     f.cull,
                     f.front_ccw,
                     f.depth,

@@ -663,6 +663,9 @@ impl<'g> VkBackend<'g> {
         if self.inspecting() {
             self.inspect_draw(c, pd, &resources, extent, rects);
         }
+        if self.skipped_by_filter() {
+            return Ok(());
+        }
 
         // Rendering.
         let want = Open {
