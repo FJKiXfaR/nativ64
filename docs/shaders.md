@@ -309,13 +309,100 @@ irreducible):
   (`s_and_b32 exec_lo, exec_lo, s5`) is not cross-lane: lane n reads bit n of the scalar
   (`n` = the console lane index, below). Only reading a whole mask as data (`v_mov_b32 v, s_mask`,
   `s_bcnt1`, `s_ff1` of a mask) needs a ballot.
-- **Wave ops are on the main path** (chunk 7, right after the SPIR-V builder): `v_readfirstlane`
-  (1924 CS, 945 PS, 270 VS, all mesh), `v_mbcnt` (all mesh), `v_readlane/writelane`,
-  `v_permlanex16`, DPP, `ds_swizzle`. Console lane index = `SubgroupLocalInvocationId` when the
-  host runs 64-wide subgroups (`VK_EXT_subgroup_size_control`, RADV); on 32-wide hosts (NVIDIA,
-  most Intel) compute and mesh emulate the 64-lane wave through workgroup memory (XCL's
-  approach), PS limits itself to quad ops (DPP quad permutes and `ds_swizzle` in quad mode are
-  within 4 lanes on any host) and refuses the rest by name.
+- **Wave ops are on the main path** (chunk 7, right after the SPIR-V builder). Revised by the
+  wave survey below: no workgroup-memory emulation of the 64-lane wave for now.
+
+**Chunk 7 design (Opus, after the wave survey).** `nativ64-shader --structure --waves` classifies
+every cross-lane instruction of the corpus (8610 programs with IR). Programs with a cross-lane
+use: cs 2023, ps 1687, vs 270, mesh 1569. With the survey's first, strict uniformity test, the
+programs whose uses are all size-agnostic were cs 270, ps 1116, vs 226, mesh 0. What the uses
+are:
+
+- **SGPR spills into VGPR lanes**: `v_writelane v, s, k` / `v_readlane s, v, k` with a constant
+  `k` on a VGPR that nothing else touches (cs: writelane in 775 programs, readlane at a constant
+  lane < 32 in 1047, seen on a sample). Not a lane exchange at all.
+- **`v_readfirstlane` of a value that is uniform over the active lanes** (cs 1691 programs, ps
+  877, vs 232, mesh 426 by the strict test). The mesh "other" cases seen on a sample are uniform
+  too, but the strict test misses them: a system entry VGPR, a `buffer_load` whose address is
+  an SGPR, a `v_cndmask` on a mask `scc ? exec : 0`.
+- **Waterfall loops** (`v_readfirstlane` → `v_cmp_eq` with the same VGPR; cs 1137, ps 135, vs
+  25, mesh 34).
+- **Lane index**: `v_mbcnt_lo/hi(-1, ·)` (all 1569 mesh, cs 270).
+- **Whole-wave sections** (`s_or_saveexec -1` … restore): cs 923 programs, ps 284. They hold
+  the DPP row ops, `v_permlanex16`, DPP8 and the final `v_readlane` of HLSL wave reductions and
+  prefix sums: 37.6 k cross-lane instructions in cs, 4.7 k in ps.
+- **Quad ops** in pixel shaders: `ds_swizzle` quad mode (916), DPP `quad_perm` (124).
+- **Masks as data**: `s_ff1` (cs 787), `s_bcnt1`, a few moves and compares; `mbcnt` of a real
+  mask (cs 100); `ds_bpermute` (cs 6). No `row_bcast`, `wave_*` DPP or `v_permlane16` anywhere.
+
+Decision: **keep the per-lane model of chunk 5** (one invocation per console lane, structured
+per-lane flow) and give each use a meaning that does not depend on the host's subgroup size.
+XCL's split form (two wave32 halves meeting through groupshared, uniform flow per console wave)
+would need a second translation model and costs 1.1–4× on its benchmark, while the survey shows
+that almost every use has a size-independent reading:
+
+1. **Uniformity** (`structure/uniform.rs`): a value is *uniform* when it is the same in every
+   active lane. Constants, SGPRs (scalar code is uniform by construction once speculation, below,
+   is in), `v_readfirstlane` results, VALU of uniform operands, `v_cndmask` whose mask is EXEC or
+   0 chosen by a uniform condition (and whose values are uniform), vector loads (MUBUF, MTBUF,
+   GLOBAL, MIMG without derivatives) whose every address and resource operand is uniform (not
+   atomics, not after a store to the same resource in the same block: refused as not uniform),
+   and system entry VGPRs that the stage table marks wave-uniform (mesh `v5` and the like, from
+   Inputs and outputs; an unknown one is not uniform). `v_readfirstlane` / `v_readlane` of a
+   uniform value is a copy: no subgroup op.
+2. **Spill slots**: a VGPR whose every definition is `v_writelane` at a constant lane and whose
+   every read is `v_readlane` at a constant lane becomes one scalar variable per lane used.
+   Exact. A slot read before any write reads `undef`, as on the console.
+3. **Waterfall**: `v_readfirstlane` in a waterfall loop takes this lane's own value; the
+   compare is then true, the body runs once per lane, and the resource index it feeds is marked
+   `NonUniform` (Resources). Exact per lane.
+4. **Console lane index**: `v_mbcnt_lo(-1, x)` = `min(lane, 32) + x`, `v_mbcnt_hi(-1, x)` =
+   `max(lane - 32, 0) + x`, where `lane` = the console lane index: in compute and mesh
+   `LocalInvocationIndex % 64` (wave64; `% 32` in wave32), never the host's subgroup id. In PS
+   and VS the console lane is not observable; lane-index uses there are refused by name.
+5. **Whole-wave sections** are raised to one subgroup operation (VIctory's approach, read from
+   `emit/wave.rs`, no code copied): simulate the section on 64 symbolic lanes; a value it
+   leaves that turns out to be the reduction, inclusive or exclusive prefix of one associative
+   operation over the lanes' masked inputs becomes `OpGroupNonUniform{IAdd,FAdd,UMin,...}`
+   `Reduce` / `InclusiveScan` / `ExclusiveScan` over the host's active invocations. That is the
+   HLSL meaning (`WaveActiveSum`, `WavePrefixSum`), which a size-agnostic program accepts; any
+   step the simulation does not model leaves its values unknown and the program refused by
+   name.
+6. **Quad ops** (`ds_swizzle` quad mode, DPP `quad_perm`): `OpGroupNonUniformQuadBroadcast` /
+   `QuadSwap`, or `Shuffle` to `(id & ~3) | sel` with `subgroupQuadOperationsInAllStages`
+   unset. Exact on any host (quads are 4 lanes everywhere). Helper lanes stay active for them.
+7. **Masks as data**: the ballot of the lane's bits over the host's active invocations
+   (`OpGroupNonUniformBallot`). Allowed where the meaning is size-agnostic: `s_bcnt1` (count),
+   `s_ff1` (first active lane, then only fed to `v_readlane`, which becomes `BroadcastFirst`),
+   `mbcnt` of a mask (`BallotExclusiveBitCount`), comparing a mask with 0 or with EXEC. Lane
+   numbers from a ballot are host lanes: they must never meet a console lane index (item 4)
+   in the same program; refused by name if they do.
+8. **The rest is refused by name**: `v_readlane` at a computed lane outside 7, `v_writelane`
+   outside 2, `ds_bpermute`, DPP or `v_permlanex16` outside a whole-wave section. If the corpus
+   count after items 1–7 shows such programs on the first screen's path, the split form (XCL) is
+   the fallback, for compute and mesh only.
+
+Requirements: SPIR-V `GroupNonUniform`, `…Ballot`, `…Arithmetic`, `…Quad`, `…Shuffle`, and
+`SPV_KHR_maximal_reconvergence` (`MaximallyReconvergesKHR`) on every program with a subgroup
+op, so the host's active set at the op is the set of lanes whose structured flow reached it
+(NVIDIA, ANV and llvmpipe here all have `shaderMaximalReconvergence`). A subgroup op sits
+inside `if (active)` where its guard is not `Proved`, so lanes whose EXEC bit is clear do not
+take part.
+
+Tests: the probe runs one lane; chunk 7 adds a **wave evaluator** that runs the `Cpu` backend
+over 64 lanes (and over a host width of 8, 32 or 64, the subgroup ops computed over that host
+width) so a test checks both "console-exact on a 64-wide host" and "same result on narrower
+hosts" for size-agnostic programs. On a device (`NATIV64_SPIRV_RUN=1`) the probe gets a
+`LocalSize` of 64 and compares per lane (llvmpipe: 8-wide subgroups, so only size-agnostic
+cases run there).
+
+Sub-chunks, each with its corpus count (`--structure --waves` and `--structure --stats`):
+- **7a — IR and structure, no wave op**: `s_andn1/andn2_wrexec_*` write EXEC in the IR; far
+  jumps resolved in one pass; speculated scalar regions (`OpGroupNonUniformAny` select at the
+  join) replacing `DivergentScalar`; scalar bits as masks.
+- **7b — uniformity, spill slots, waterfall, lane index** (items 1–4), with the wave evaluator.
+- **7c — whole-wave sections, quad ops, ballots** (items 5–7), then the refusals of item 8 and
+  the corpus count that decides on the split form.
 - **Far jumps** resolve in one pass over the code before building (one program chains more than
   16: the per-build loop of chunk 4 is quadratic there).
 
@@ -579,11 +666,10 @@ it says otherwise.
      write EXEC but the IR lists only their SGPR destination: they are `Unsupported` chunk 7
      until `ir.rs` models the EXEC write (`exec = sdst = src & ~exec`, `andn1`: `~src & exec`,
      per the ISA text, unverified).
-7. **Wave ops and speculation** (`structure.rs`, `spirv/`): the decisions after chunk 5 above
-   (speculated scalar regions, scalar bits as masks, far jumps in one pass), then the cross-lane
-   instructions by corpus count: `v_readfirstlane`, `v_mbcnt`, `v_readlane/writelane`, DPP,
-   `ds_swizzle`, `v_permlanex16`, ballots; wave64 emulation for CS and mesh on 32-wide hosts.
-   Acceptance: `--structure --stats` near the IR count.
+7. **Wave ops and speculation** (`structure.rs`, `structure/`, `spirv/`): "Chunk 7 design"
+   above, in three sub-chunks (7a IR and speculation, 7b uniformity / spill slots / waterfall /
+   lane index, 7c whole-wave sections / quad ops / ballots). Acceptance: `--structure --stats`
+   near the IR count, the remaining refusals named by `--structure --waves`.
 8. **I/O** (`io.rs`): user SGPRs and root block; VS system VGPRs and vertex attributes; PS
    input VGPRs and `v_interp` raising; exports and linking by semantic; CS (`GLCompute`,
    `LocalSize` from the group size, thread id VGPRs, group id SGPRs); mesh (`MeshEXT`, one

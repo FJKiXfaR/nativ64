@@ -4,7 +4,10 @@
 //! instruction per line of hex bytes (for diffing against `llvm-mc`). `--stats` counts the
 //! programs that decode and why the others do not; `--ir --stats` counts the programs whose IR
 //! builds, per stage, and the errors by kind; `--structure --stats` does the same for the
-//! structuring (cross-lane uses by instruction name included). `--spirv --stats` translates the
+//! structuring (cross-lane uses by instruction name included); `--structure --waves` classifies
+//! every cross-lane use (lane id, uniform or waterfall `readfirstlane`, DPP by control kind,
+//! swizzles, masks read as data...), per stage in instructions and programs, counts the
+//! programs whose uses are all size-agnostic and the ones in a whole-wave section. `--spirv --stats` translates the
 //! structured programs to the probe module (chunk 6) and validates them with `spirv-val` when it
 //! is in PATH, listing the others by first unsupported op; `--spirv --alu-stats` counts the
 //! programs whose every ALU instruction translates; `--spirv <blob> -o out.spv` writes one
@@ -41,7 +44,10 @@ fn main() -> ExitCode {
         if args.first().is_some_and(|a| a == "--stats") {
             return structure_stats(&args[1..]);
         }
-        eprintln!("usage: nativ64-shader --structure --stats <blob.dxbc>...");
+        if args.first().is_some_and(|a| a == "--waves") {
+            return wave_survey(&args[1..]);
+        }
+        eprintln!("usage: nativ64-shader --structure (--stats | --waves) <blob.dxbc>...");
         return ExitCode::from(2);
     }
     if args.first().is_some_and(|a| a == "--stats") {
@@ -403,6 +409,329 @@ fn structure_stats(files: &[String]) -> ExitCode {
     println!("cross-lane instructions (programs that have one):");
     for ((s, k), n) in sorted(names) {
         println!("{n:6}  {s}: {k}");
+    }
+    ExitCode::SUCCESS
+}
+
+/// Whether the VGPR value `v` is the same in every lane (see `wave_survey`).
+fn wave_uniform(
+    f: &shader::ir::Func,
+    m: &shader::structure::Masks,
+    v: shader::ir::Val,
+    seen: &mut std::collections::HashSet<shader::ir::Val>,
+) -> bool {
+    use shader::gfx10::Enc;
+    use shader::ir::{Reg, Src, ValDef};
+    if !seen.insert(v) {
+        return true;
+    }
+    if m.is_mask(v) {
+        return false;
+    }
+    let info = f.vals[v.0 as usize];
+    if !matches!(info.reg, Reg::V(_)) {
+        return matches!(info.reg, Reg::S(_) | Reg::T(_) | Reg::M0);
+    }
+    let src_ok = |s: &Src, seen: &mut std::collections::HashSet<_>| match s {
+        Src::Val(x) => wave_uniform(f, m, *x, seen),
+        _ => true,
+    };
+    match info.def {
+        ValDef::Arg => false,
+        ValDef::Phi { block, index } => {
+            let phi = &f.blocks[block].phis[index];
+            phi.args.iter().all(|(_, s)| src_ok(s, seen))
+        }
+        ValDef::Inst { block, index } => {
+            let inst = &f.blocks[block].insts[index];
+            let i = &inst.instr;
+            let n = i.name();
+            if n.starts_with("v_readfirstlane") || n.starts_with("v_readlane") {
+                return true;
+            }
+            let alu = matches!(
+                i.enc,
+                Enc::Vop1 | Enc::Vop2 | Enc::Vop3 | Enc::Vop3p | Enc::Vopc
+            );
+            if !alu
+                || i.dpp.is_some()
+                || n.starts_with("v_mbcnt")
+                || n.starts_with("v_permlane")
+                || n.starts_with("v_writelane")
+            {
+                return false;
+            }
+            inst.srcs.iter().flatten().all(|s| src_ok(s, seen))
+        }
+    }
+}
+
+/// The category of one cross-lane use (`wave_survey`).
+fn wave_category(
+    f: &shader::ir::Func,
+    m: &shader::structure::Masks,
+    inst: &shader::ir::Inst,
+    eq_cmps: &[Vec<shader::ir::Src>],
+) -> String {
+    use shader::ir::Src;
+    let i = &inst.instr;
+    let n = i.name();
+    if let Some(d) = &i.dpp {
+        let c = d.ctrl;
+        return match d.kind {
+            gfx10::DppKind::Dpp8 | gfx10::DppKind::Dpp8Fi => "dpp8",
+            _ => match c {
+                0..=0xff => "dpp_quad_perm",
+                0x101..=0x12f | 0x140 | 0x141 | 0x150..=0x16f => "dpp_row",
+                0x142 | 0x143 => "dpp_row_bcast",
+                0x130..=0x13f => "dpp_wave",
+                _ => "other:dpp_ctrl",
+            },
+        }
+        .to_string();
+    }
+    let src = |k: usize| inst.srcs.get(k).and_then(|v| v.first()).copied();
+    if n.starts_with("v_mbcnt") {
+        return match src(0) {
+            Some(Src::Const(u32::MAX)) => "mbcnt_lane_id",
+            _ => "mbcnt_mask",
+        }
+        .to_string();
+    }
+    if n.starts_with("v_readfirstlane") {
+        let Some(Src::Val(v)) = src(0) else {
+            return "readfirstlane_uniform".into();
+        };
+        if wave_uniform(f, m, v, &mut Default::default()) {
+            return "readfirstlane_uniform".into();
+        }
+        let res = inst.dsts.first().map(|d| d.1);
+        let waterfall = eq_cmps.iter().any(|srcs| {
+            srcs.contains(&Src::Val(v)) && res.is_some_and(|r| srcs.contains(&Src::Val(r)))
+        });
+        return if waterfall {
+            "readfirstlane_waterfall"
+        } else {
+            "readfirstlane_other"
+        }
+        .to_string();
+    }
+    for (p, base) in [("v_readlane", "readlane"), ("v_writelane", "writelane")] {
+        if n.starts_with(p) {
+            return match src(1) {
+                Some(Src::Const(c)) if c < 32 => format!("{base}_const_lo"),
+                Some(Src::Const(_)) => format!("{base}_const_hi"),
+                _ => format!("{base}_sgpr"),
+            };
+        }
+    }
+    if n.starts_with("v_permlanex16") {
+        return "permlanex16".into();
+    }
+    if n.starts_with("v_permlane16") {
+        return "permlane16".into();
+    }
+    if n.starts_with("ds_swizzle") {
+        return if i.mem.offset & 0x8000 != 0 {
+            "ds_swizzle_quad"
+        } else {
+            "ds_swizzle_bitmask"
+        }
+        .to_string();
+    }
+    if n.starts_with("ds_permute") || n.starts_with("ds_bpermute") {
+        return n.to_string();
+    }
+    if shader::structure::cross_lane_by_nature(i) {
+        return format!("other:{n}");
+    }
+    let scalar_mask_op = [
+        "s_and",
+        "s_or",
+        "s_xor",
+        "s_not",
+        "s_nand",
+        "s_nor",
+        "s_xnor",
+        "s_mov",
+        "s_cselect",
+        "s_wqm",
+    ]
+    .iter()
+    .any(|p| n.starts_with(p));
+    if scalar_mask_op {
+        "mask_with_scalar".into()
+    } else {
+        format!("mask_data:{n}")
+    }
+}
+
+/// The survey behind the wave-operations decision (chunk 7): classifies every cross-lane use of
+/// the programs whose IR builds. Per stage, per category, the instructions and the programs;
+/// then the programs whose uses are all size-agnostic (lane id, uniform or waterfall
+/// `readfirstlane`, quad-perm DPP, quad swizzle, mask with a uniform scalar) against those that
+/// need a 64-wide wave. A whole-wave section starts at `s_or_saveexec x, -1` (or
+/// `s_nand_saveexec x, 0`) and runs to the next EXEC write: the rest of its block, then the
+/// blocks it dominates (depth first from its successors) up to their first EXEC write.
+fn wave_survey(files: &[String]) -> ExitCode {
+    use shader::ir::{self, Reg, Src};
+    use shader::structure;
+    use std::collections::{BTreeMap, BTreeSet};
+    const AGNOSTIC: [&str; 6] = [
+        "mbcnt_lane_id",
+        "readfirstlane_uniform",
+        "readfirstlane_waterfall",
+        "dpp_quad_perm",
+        "ds_swizzle_quad",
+        "mask_with_scalar",
+    ];
+    #[derive(Default)]
+    struct Stage {
+        progs: u32,
+        any: u32,
+        agnostic: u32,
+        whole: u32,
+        whole_uses: u32,
+        whole_cross_progs: u32,
+        cats: BTreeMap<String, (u32, u32)>,
+    }
+    let writes_exec = |i: &ir::Inst| {
+        i.dsts
+            .iter()
+            .any(|(r, _)| matches!(r, Reg::ExecLo | Reg::ExecHi))
+    };
+    let whole_wave = |i: &ir::Inst| {
+        let n = i.instr.name();
+        let s = i.srcs.first().and_then(|v| v.first());
+        (n.starts_with("s_or_saveexec") && matches!(s, Some(Src::Const(u32::MAX))))
+            || (n.starts_with("s_nand_saveexec") && matches!(s, Some(Src::Const(0))))
+    };
+    let mut stages: BTreeMap<String, Stage> = BTreeMap::new();
+    for file in files {
+        let Ok(bytes) = std::fs::read(file) else {
+            continue;
+        };
+        let Ok(p) = shader::parse(&bytes) else {
+            continue;
+        };
+        for (name, rec) in p.native.records() {
+            let code = p.native.code(rec);
+            let regs = ir::EntryRegs::from_stage(rec);
+            let Ok(f) = ir::build(code, gfx10::ENTRY, rec.wave32(), &regs) else {
+                continue;
+            };
+            let m = structure::type_masks(&f);
+            let eq_cmps: Vec<Vec<Src>> = f
+                .blocks
+                .iter()
+                .flat_map(|b| &b.insts)
+                .filter(|u| {
+                    let n = u.instr.name();
+                    n.starts_with("v_cmp_eq") || n.starts_with("v_cmpx_eq")
+                })
+                .map(|u| u.srcs.iter().flatten().copied().collect())
+                .collect();
+            let st = stages.entry(name.to_string()).or_default();
+            st.progs += 1;
+            let mut counts: BTreeMap<String, u32> = BTreeMap::new();
+            let mut inside: BTreeSet<usize> = BTreeSet::new();
+            let mut has_whole = false;
+            for (b, blk) in f.blocks.iter().enumerate() {
+                for (k, inst) in blk.insts.iter().enumerate() {
+                    if structure::cross_lane_use(&m, inst).is_some() {
+                        *counts
+                            .entry(wave_category(&f, &m, inst, &eq_cmps))
+                            .or_default() += 1;
+                    }
+                    if !whole_wave(inst) {
+                        continue;
+                    }
+                    has_whole = true;
+                    let mut stop = false;
+                    for x in &blk.insts[k + 1..] {
+                        if writes_exec(x) {
+                            stop = true;
+                            break;
+                        }
+                        inside.insert(x.instr.at);
+                    }
+                    if stop {
+                        continue;
+                    }
+                    let dominated = |mut c: usize| loop {
+                        if c == b {
+                            return true;
+                        }
+                        match f.idom[c] {
+                            Some(d) => c = d,
+                            None => return false,
+                        }
+                    };
+                    let mut seen = BTreeSet::new();
+                    let mut work = blk.succs();
+                    while let Some(c) = work.pop() {
+                        if c == b || !dominated(c) || !seen.insert(c) {
+                            continue;
+                        }
+                        let mut stop = false;
+                        for x in &f.blocks[c].insts {
+                            if writes_exec(x) {
+                                stop = true;
+                                break;
+                            }
+                            inside.insert(x.instr.at);
+                        }
+                        if !stop {
+                            work.extend(f.blocks[c].succs());
+                        }
+                    }
+                }
+            }
+            let mut in_whole = 0;
+            for blk in &f.blocks {
+                for inst in &blk.insts {
+                    if structure::cross_lane_use(&m, inst).is_some()
+                        && inside.contains(&inst.instr.at)
+                    {
+                        in_whole += 1;
+                    }
+                }
+            }
+            st.whole += u32::from(has_whole);
+            st.whole_uses += in_whole;
+            st.whole_cross_progs += u32::from(in_whole > 0);
+            if counts.is_empty() {
+                continue;
+            }
+            st.any += 1;
+            if counts.keys().all(|c| AGNOSTIC.contains(&c.as_str())) {
+                st.agnostic += 1;
+            }
+            for (c, n) in counts {
+                let e = st.cats.entry(c).or_default();
+                e.0 += n;
+                e.1 += 1;
+            }
+        }
+    }
+    for (s, st) in &stages {
+        println!("== {s}: {} programs with IR", st.progs);
+        println!("{:>8} {:>8}  category", "insts", "programs");
+        let mut v: Vec<_> = st.cats.iter().collect();
+        v.sort_by_key(|(_, c)| std::cmp::Reverse(c.1));
+        for (c, (n, pr)) in v {
+            println!("{n:8} {pr:8}  {c}");
+        }
+        println!(
+            "any cross-lane use: {}; size-agnostic only: {}; needing a 64-wide wave: {}",
+            st.any,
+            st.agnostic,
+            st.any - st.agnostic
+        );
+        println!(
+            "whole-wave sections: {} programs; cross-lane instructions inside: {} in {} programs",
+            st.whole, st.whole_uses, st.whole_cross_progs
+        );
     }
     ExitCode::SUCCESS
 }

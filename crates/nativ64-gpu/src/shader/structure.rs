@@ -164,7 +164,7 @@ fn takes_lane_mask(name: &str) -> bool {
 }
 
 /// Instructions whose result depends on other lanes, whatever their operands.
-fn cross_lane_by_nature(i: &Instr) -> bool {
+pub fn cross_lane_by_nature(i: &Instr) -> bool {
     let n = i.name();
     i.dpp.is_some()
         || n.starts_with("v_readlane")
@@ -409,7 +409,7 @@ fn uniform_masks(f: &Func, m: &mut Masks) {
 }
 
 /// The name under which `inst` crosses lanes, when it does.
-fn cross_lane_use(m: &Masks, inst: &Inst) -> Option<String> {
+pub fn cross_lane_use(m: &Masks, inst: &Inst) -> Option<String> {
     let i = &inst.instr;
     if i.dpp.is_some() {
         return Some(format!("{} (dpp)", i.name()));
