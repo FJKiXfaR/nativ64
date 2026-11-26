@@ -270,6 +270,25 @@ fn mask_typing_follows_the_allowed_uses() {
 }
 
 #[test]
+fn wrexec_types_like_the_saveexec_family() {
+    let words = [
+        0x7c020300, // v_cmp_lt_f32 vcc, v0, v1
+        0xbe823a6a, // s_andn2_wrexec_b64 s[2:3], vcc
+        0xbe84396a, // s_andn1_wrexec_b64 s[4:5], vcc
+        0xbf810000, // s_endpgm
+    ];
+    let f = func(&words);
+    let m = type_masks(&f);
+    assert!(m.cross_lane.is_empty(), "{:?}", m.cross_lane);
+    for (k, i) in f.vals.iter().enumerate() {
+        let sgpr = matches!(i.reg, Reg::S(2..=5) | Reg::ExecLo | Reg::ExecHi);
+        if sgpr && matches!(i.def, ValDef::Inst { .. }) {
+            assert!(m.is_mask(Val(k as u32)), "{} should be a mask", i.reg);
+        }
+    }
+}
+
+#[test]
 fn loop_carried_masks_type_optimistically() {
     // s[2:3] = 0 ; L: v_cmp_lt_f32 vcc ; s_or_b64 s[2:3], s[2:3], vcc ; s_cbranch_vccnz L
     let words = [

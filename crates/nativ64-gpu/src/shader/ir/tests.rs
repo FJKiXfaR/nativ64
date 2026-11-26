@@ -48,6 +48,27 @@ fn straight_line_folds_scalar_constants() {
 }
 
 #[test]
+fn wrexec_writes_the_sgpr_then_exec() {
+    let f = ir(&[
+        0x7c020300, // v_cmp_lt_f32 vcc, v0, v1
+        0xbe823a6a, // s_andn2_wrexec_b64 s[2:3], vcc
+        0xbf810000, // s_endpgm
+    ]);
+    check(
+        &f,
+        "wave64
+         %0:v0 = arg
+         %1:v1 = arg
+         %2:exec_lo = arg
+         %3:exec_hi = arg
+         b0: ; +0x0 preds []
+           %4:vcc_lo, %5:vcc_hi = v_cmp_lt_f32 %0, %1 ; exec_lo=%2, exec_hi=%3
+           %6:s2, %7:s3, %8:exec_lo, %9:exec_hi, %10:scc = s_andn2_wrexec_b64 {%4, %5} ; exec_lo=%2, exec_hi=%3
+           s_endpgm",
+    );
+}
+
+#[test]
 fn if_else_through_execz_gets_a_phi() {
     let f = ir(&[
         0x7c020300, // v_cmp_lt_f32 vcc, v0, v1

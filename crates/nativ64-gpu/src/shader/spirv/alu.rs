@@ -188,7 +188,6 @@ pub fn non_alu_chunk(i: &Instr) -> Option<u8> {
         || n.starts_with("ds_swizzle")
         || n.starts_with("ds_permute")
         || n.starts_with("ds_bpermute")
-        || n.contains("wrexec")
     {
         return Some(7);
     }
@@ -1320,8 +1319,12 @@ impl<K: Backend> X<'_, K> {
         let n = self.name;
         let (op, tail) = n
             .strip_prefix("s_")
-            .and_then(|r| r.split_once("_saveexec_"))
+            .and_then(|r| {
+                r.split_once("_saveexec_")
+                    .or_else(|| r.split_once("_wrexec_"))
+            })
             .ok_or_else(|| self.un())?;
+        let wr = n.contains("_wrexec_");
         let bit = bit_named(op).ok_or_else(|| self.un())?;
         let w = if tail == "b64" { 2 } else { 1 };
         let mut old = Vec::new();
@@ -1335,6 +1338,19 @@ impl<K: Backend> X<'_, K> {
             new.push(self.bit(bit, s, Some(e), want_b));
         }
         let scc = self.scc_nz(&new);
+        if wr {
+            // The SGPR gets the new EXEC too. ISA text, not verified on hardware:
+            // `s_andn1_wrexec`: `exec = sdst = ~src & exec`; `s_andn2_wrexec`:
+            // `exec = sdst = src & ~exec`; SCC = result != 0.
+            let mut data = Vec::new();
+            for (k, &e) in old.iter().enumerate() {
+                let s = self.src(0, k)?;
+                let want_b = self.c.dst_mask.get(k).copied().unwrap_or(false);
+                data.push(self.bit(bit, s, Some(e), want_b));
+            }
+            data.extend(new);
+            return Ok(Res { data, scc });
+        }
         old.extend(new);
         Ok(Res { data: old, scc })
     }
@@ -1363,7 +1379,7 @@ impl<K: Backend> X<'_, K> {
 
     fn scalar(&mut self) -> R<Res<K>> {
         let name = self.name;
-        if name.contains("saveexec") {
+        if name.contains("saveexec") || name.contains("wrexec") {
             return self.saveexec();
         }
         if let Some(rest) = name.strip_prefix("s_") {

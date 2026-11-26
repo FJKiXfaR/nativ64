@@ -255,3 +255,7 @@ f902060600062616	v_add_f32_sdwa v3, |v0|, -v1 dst_sel:DWORD dst_unused:UNUSED_PA
 001682be	[w64] s_flbit_i32_b64 s2, s[0:1]
 0003227c	[w64] v_cmpx_lt_f32 v0, v1
 060706bf	[w64] s_cmp_eq_u32 s6, s7
+6a4682be	s_andn1_wrexec_b32 s2, vcc_lo
+034782be	s_andn2_wrexec_b32 s2, s3
+6a3982be	[w64] s_andn1_wrexec_b64 s[2:3], vcc
+6a3c83be	s_and_saveexec_b32 s3, vcc_lo

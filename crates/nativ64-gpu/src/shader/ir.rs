@@ -616,6 +616,7 @@ fn writes_scc(i: &Instr) -> bool {
                 || n.starts_with("s_quadmask")
                 || n.starts_with("s_abs_")
                 || n.contains("saveexec")
+                || n.contains("wrexec")
         }
         Enc::Sopc => true,
         Enc::Sopk => n.starts_with("s_cmpk") || n == "s_addk_i32",
@@ -797,7 +798,7 @@ fn lower(i: &Instr) -> Result<Option<Lowered>, IrError> {
     if name.starts_with("s_sendmsg") {
         lo.imps.push(Reg::M0);
     }
-    if name.contains("saveexec") {
+    if name.contains("saveexec") || name.contains("wrexec") {
         lo.imps.extend(mask_regs(i.wave32));
         lo.dsts.extend(mask_regs(i.wave32));
     }

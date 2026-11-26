@@ -76,6 +76,7 @@ enum Bit {
     Or,
     Xor,
     Andn2,
+    Andn1,
     Orn2,
     Nand,
     Nor,
@@ -89,8 +90,11 @@ enum Bit {
 #[derive(Clone, Copy)]
 struct MaskOp {
     bit: Bit,
-    /// `s_*_saveexec`: writes the old EXEC, then EXEC.
+    /// `s_*_saveexec` and `s_*_wrexec`: reads EXEC and writes it.
     save: bool,
+    /// `s_*_wrexec`: the destinations are the new EXEC twice (the SGPR, then EXEC), not the
+    /// old EXEC then the new one.
+    wr: bool,
 }
 
 /// The wave-sized scalar operation `i` is, when it is one of the mask operations.
@@ -101,15 +105,17 @@ fn mask_op(i: &Instr) -> Option<MaskOp> {
     let n = i
         .name()
         .strip_suffix(if i.wave32 { "_b32" } else { "_b64" })?;
-    let (n, save) = match n.strip_suffix("_saveexec") {
-        Some(b) => (b, true),
-        None => (n, false),
+    let (n, save, wr) = match (n.strip_suffix("_saveexec"), n.strip_suffix("_wrexec")) {
+        (Some(b), _) => (b, true, false),
+        (_, Some(b)) => (b, true, true),
+        _ => (n, false, false),
     };
     let bit = match n {
         "s_and" => Bit::And,
         "s_or" => Bit::Or,
         "s_xor" => Bit::Xor,
         "s_andn2" => Bit::Andn2,
+        "s_andn1" if save => Bit::Andn1,
         "s_orn2" => Bit::Orn2,
         "s_nand" => Bit::Nand,
         "s_nor" => Bit::Nor,
@@ -123,7 +129,10 @@ fn mask_op(i: &Instr) -> Option<MaskOp> {
     if save && matches!(bit, Bit::Not | Bit::Mov | Bit::Cselect | Bit::Wqm) {
         return None;
     }
-    Some(MaskOp { bit, save })
+    if wr && !matches!(bit, Bit::Andn1 | Bit::Andn2) {
+        return None;
+    }
+    Some(MaskOp { bit, save, wr })
 }
 
 fn is_exec(r: Reg) -> bool {
@@ -372,7 +381,8 @@ fn uniform_masks(f: &Func, m: &mut Masks) {
                 *r == Reg::Scc && matches!(s, Src::Val(v) if m.scc_of.contains_key(v))
             });
             let n = if op.save { execs.len() } else { dsts.len() };
-            for k in 0..n {
+            // `wrexec`: no destination is the old EXEC; the new one is handled above
+            for k in 0..if op.wr { 0 } else { n } {
                 let d = dsts[k];
                 if !m.masks.contains(&d) || m.uniform.contains_key(&d) || !scc_ok {
                     continue;
@@ -599,6 +609,7 @@ fn bit_fn(bit: Bit, a: Option<bool>, b: Option<bool>) -> Option<bool> {
         Bit::And => and(a, b),
         Bit::Or => or(a, b),
         Bit::Andn2 => and(a, not(b)),
+        Bit::Andn1 => and(not(a), b),
         Bit::Orn2 => or(a, not(b)),
         Bit::Nand => not(and(a, b)),
         Bit::Nor => not(or(a, b)),
@@ -638,8 +649,12 @@ fn transfer(inst: &Inst, facts: &mut Facts, m: &Masks) {
         }
         for k in 0..n {
             let old = truth(facts, &execs[k]);
-            out.push((dsts[k], old));
-            let new = bit_fn(op.bit, old, src(0, k).and_then(|s| truth(facts, s)));
+            let new = bit_fn(op.bit, src(0, k).and_then(|s| truth(facts, s)), old);
+            if op.wr {
+                out.push((dsts[k], new));
+            } else {
+                out.push((dsts[k], old));
+            }
             out.push((dsts[n + k], new));
         }
     } else {

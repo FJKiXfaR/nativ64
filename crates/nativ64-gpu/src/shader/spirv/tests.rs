@@ -1668,6 +1668,39 @@ fn mask_ops_in_wave32_and_wave64() {
             ),
         ],
     );
+    // s_andn1_wrexec: exec = sdst = ~src & exec (ISA text); SCC = result != 0
+    check(
+        &[
+            "v_cmp_lt_f32 vcc_lo, v0, v1",
+            "s_andn1_wrexec_b32 s2, vcc_lo",
+        ],
+        &[
+            (ab(f1, f2), &[(S2, 0), (EXEC, 0), (SCC, 0)][..]),
+            (ab(f2, f1), &[(S2, 1), (EXEC, 1), (SCC, 1)][..]),
+        ],
+    );
+    // s_andn2_wrexec: exec = sdst = src & ~exec
+    check(
+        &[
+            "v_cmp_lt_f32 vcc_lo, v0, v1",
+            "s_and_saveexec_b32 s3, vcc_lo",
+            "s_andn2_wrexec_b32 s2, s3",
+        ],
+        &[
+            (ab(f1, f2), &[(S2, 0), (EXEC, 0), (SCC, 0)][..]),
+            (ab(f2, f1), &[(S2, 1), (EXEC, 1), (SCC, 1)][..]),
+        ],
+    );
+    check(
+        &[
+            "[w64] v_cmp_lt_f32 vcc, v0, v1",
+            "[w64] s_andn1_wrexec_b64 s[2:3], vcc",
+        ],
+        &[(
+            ab(f2, f1),
+            &[(S2, 1), (S3, 1), (EXEC, 1), (Reg::ExecHi, 1), (SCC, 1)][..],
+        )],
+    );
     let cmp = "[w64] v_cmp_lt_f32 vcc, v0, v1";
     check(
         &[cmp, "[w64] s_and_b64 s[2:3], exec, vcc"],
