@@ -1843,8 +1843,12 @@ fn simplify_phis(f: &mut Func) {
 
 /// The outcome of a branch whose condition registers all folded to constants: `Some(true)` when
 /// it is taken. A condition is "zero" when every register is the constant 0 and "non-zero" when
-/// one is a non-zero constant (the other half of a wave64 mask may be unknown).
+/// one is a non-zero constant (the other half of a wave64 mask may be unknown). A branch with no
+/// condition register (`s_cbranch_cdbg*`) is never constant.
 fn constant_branch(op: &str, cond: &[(Reg, Src)]) -> Option<bool> {
+    if cond.is_empty() {
+        return None;
+    }
     let konst = |s: &Src| match s {
         Src::Const(c) => Some(*c),
         _ => None,
