@@ -1300,6 +1300,17 @@ it says otherwise.
     gather/compare/derivatives, FLAT/SCRATCH stores and atomics, ray queries, merged stages if a
     title uses them (none in this corpus: its stages are VS, PS, CS, mesh only).
 
+   **As built (chunk 10b, part 5)** (`backend/vk/{format,pipeline,draw,replay}.rs`; first setup screens).
+   * `A8_UNORM` (DXGI 65, the small-text glyph atlas) is an `R8_UNORM` image whose views read it
+     as alpha: the view's own mapping is composed with `(0, 0, 0, r)` (`a8_swizzle`).
+   * A pipeline is keyed by its target formats too: when the bound target is the sRGB (or UNORM)
+     twin of the format the pipeline was made for, a variant for the bound format is built
+     instead of skipping the draw.
+   * `CopyMemory` and `FillMemory` are replayed as CPU copies at record time on committed title
+     memory (`table::is_committed`), like `CopyBufferRegion`; the title builds glyph data with them.
+   * Still without a Vulkan format: DXGI 3, 13, 17, 30, 36, 42, 50, 51, 57, 62, 67, 86, 115, 118
+     and a view in format 21 (depth of D32S8). No test yet for the sRGB pipeline variant.
+
 ## Open questions
 
 - Unverified ALU semantics (no hardware data, the table follows the ISA text / LLVM): sign of
