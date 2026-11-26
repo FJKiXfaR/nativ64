@@ -15,8 +15,11 @@
 //!   provider and ends the call; a call that fails or has no result ends at completion.
 //!   [`finished`] starts a call that is already over (what most host methods need).
 //!
-//! Not done (traps log the slot and answer `E_NOTIMPL`): composite queues, ports, termination,
-//! monitors, wait handles, `XAsyncRun`, thread time-sensitivity. No Wine oracle exists.
+//! - Ports: `XTaskQueueGetPort` hands out a port (a reference we never take back) and a composite
+//!   queue is made from a work port and a completion port.
+//!
+//! Not done (traps log the slot and answer `E_NOTIMPL`): termination, monitors, wait handles,
+//! `XAsyncRun`, thread time-sensitivity. No Wine oracle exists.
 //! The slot order is that of the public GDK header as read through another loader's table.
 #![allow(clippy::not_unsafe_ptr_arg_deref, non_snake_case)]
 
@@ -107,7 +110,7 @@ impl Task {
     }
 }
 
-struct Port {
+pub struct Port {
     mode: Mode,
     tasks: Mutex<VecDeque<Task>>,
     ready: Condvar,
@@ -543,6 +546,46 @@ pub extern "win64" fn XTaskQueueCreate(
     S_OK
 }
 
+/// The work (0) or completion (1) port of a queue, as a handle we never reclaim.
+pub extern "win64" fn XTaskQueueGetPort(
+    handle: *const Queue,
+    port: u32,
+    out: *mut *const Port,
+) -> HRESULT {
+    if out.is_null() || handle.is_null() {
+        return E_INVALIDARG;
+    }
+    let Some(port) = queue(handle).ports.get(port as usize).cloned() else {
+        return E_INVALIDARG;
+    };
+    // SAFETY: checked non-null.
+    unsafe { out.write(Arc::into_raw(port)) };
+    S_OK
+}
+
+/// A queue made of the work port of one queue and the completion port of another.
+pub extern "win64" fn XTaskQueueCreateComposite(
+    work: *const Port,
+    completion: *const Port,
+    out: *mut *const Queue,
+) -> HRESULT {
+    if work.is_null() || completion.is_null() || out.is_null() {
+        return E_INVALIDARG;
+    }
+    // SAFETY: handles from `XTaskQueueGetPort`, whose references are never dropped.
+    let (work, completion) = unsafe {
+        Arc::increment_strong_count(work);
+        Arc::increment_strong_count(completion);
+        (Arc::from_raw(work), Arc::from_raw(completion))
+    };
+    let composite = Arc::new(Queue {
+        ports: [work, completion],
+    });
+    // SAFETY: checked non-null.
+    unsafe { out.write(Arc::into_raw(composite)) };
+    S_OK
+}
+
 pub extern "win64" fn XTaskQueueDuplicateHandle(
     handle: *const Queue,
     out: *mut *const Queue,
@@ -644,6 +687,22 @@ extern "win64" fn m_get_result(
 extern "win64" fn m_create(_: This, work: u32, completion: u32, out: *mut *const Queue) -> HRESULT {
     XTaskQueueCreate(work, completion, out)
 }
+extern "win64" fn m_create_composite(
+    _: This,
+    work: *const Port,
+    completion: *const Port,
+    out: *mut *const Queue,
+) -> HRESULT {
+    XTaskQueueCreateComposite(work, completion, out)
+}
+extern "win64" fn m_get_port(
+    _: This,
+    q: *const Queue,
+    port: u32,
+    out: *mut *const Port,
+) -> HRESULT {
+    XTaskQueueGetPort(q, port, out)
+}
 extern "win64" fn m_duplicate(_: This, q: *const Queue, out: *mut *const Queue) -> HRESULT {
     XTaskQueueDuplicateHandle(q, out)
 }
@@ -698,8 +757,8 @@ static VTBL: Table<SLOTS> = table!(SLOTS;
     m_complete,          // 10
     m_get_result,        // 11
     m_create,            // 12
-    t::<13>(),           // create composite
-    t::<14>(),           // get port
+    m_create_composite,  // 13
+    m_get_port,          // 14
     m_duplicate,         // 15
     m_dispatch,          // 16
     m_close,             // 17
@@ -783,6 +842,40 @@ mod tests {
             close(o, copy);
             close(o, q);
             release(o as *mut ComObject<Table<SLOTS>, ()>);
+        }
+    }
+
+    #[test]
+    fn composite_queues_share_ports() {
+        let (mut a, mut b, mut c) = (std::ptr::null(), std::ptr::null(), std::ptr::null());
+        assert_eq!(XTaskQueueCreate(0, 0, &mut a), S_OK);
+        assert_eq!(XTaskQueueCreate(0, 0, &mut b), S_OK);
+        let (mut work, mut done) = (std::ptr::null(), std::ptr::null());
+        assert_eq!(XTaskQueueGetPort(a, WORK, &mut work), S_OK);
+        assert_eq!(XTaskQueueGetPort(b, COMPLETION, &mut done), S_OK);
+        assert_eq!(XTaskQueueGetPort(a, 2, &mut done), E_INVALIDARG);
+        assert_eq!(XTaskQueueCreateComposite(work, done, &mut c), S_OK);
+        let before = RAN.load(Ordering::SeqCst);
+        // Work submitted to the composite is dispatched from a's work port.
+        assert_eq!(
+            XTaskQueueSubmitDelayedCallback(c, WORK, 0, 3 as *mut c_void, Some(count)),
+            S_OK
+        );
+        assert!(XTaskQueueDispatch(a, WORK, 0));
+        assert_eq!(RAN.load(Ordering::SeqCst) - before, 3);
+        assert_eq!(
+            XTaskQueueSubmitDelayedCallback(c, COMPLETION, 0, 4 as *mut c_void, Some(count)),
+            S_OK
+        );
+        assert!(!XTaskQueueDispatch(a, COMPLETION, 0));
+        assert!(XTaskQueueDispatch(b, COMPLETION, 0));
+        assert_eq!(RAN.load(Ordering::SeqCst) - before, 7);
+        assert_eq!(
+            XTaskQueueCreateComposite(std::ptr::null(), done, &mut c),
+            E_INVALIDARG
+        );
+        for q in [a, b, c] {
+            XTaskQueueCloseHandle(q);
         }
     }
 
