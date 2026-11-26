@@ -749,12 +749,49 @@ fn dispatcher(f: &Frame, target_ip: usize, context: *mut u8) -> DispatcherContex
 /// execution; false when nobody took the exception (a handler that takes it by unwinding never
 /// returns).
 unsafe fn search(rec: *mut ExceptionRecord, ctx: *mut u8) -> bool {
+    log_exception(rec, ctx);
     ACTIVE.with(|a| a.borrow_mut().push(ctx as usize));
     let r = search_frames(rec, ctx);
     ACTIVE.with(|a| {
         a.borrow_mut().pop();
     });
     r
+}
+
+/// `NATIV64_SEH_LOG=1`: print each exception as it starts being dispatched - its code, the
+/// instruction that raised it and the record's two information words - so a run shows why a
+/// title's own crash handler ran, and where.
+fn log_exception(rec: *const ExceptionRecord, ctx: *const u8) {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ENABLED
+        .get_or_init(|| std::env::var("NATIV64_SEH_LOG").is_ok_and(|v| !v.is_empty() && v != "0"))
+    {
+        return;
+    }
+    // SAFETY: the dispatcher only passes records it built.
+    let Some(r) = (unsafe { rec.as_ref() }) else {
+        return;
+    };
+    fn at(a: usize) -> String {
+        match crate::process::image_base_of(a) {
+            Some(b) => format!("image+{:#x}", a - b),
+            None => format!("{a:#x}"),
+        }
+    }
+    let rip = if ctx.is_null() {
+        0
+    } else {
+        // SAFETY: a non-NULL context is a valid CONTEXT (see `dispatch_fault`).
+        unsafe { Ctx(ctx as *mut u8).get(CONTEXT_RIP_OFF) as usize }
+    };
+    eprintln!(
+        "nativ64: exception {:#x} at {} rip {} info {:#x} {:#x}",
+        r.code,
+        at(r.address),
+        at(rip),
+        r.info[0],
+        r.info[1]
+    );
 }
 
 unsafe fn search_frames(rec: *mut ExceptionRecord, ctx: *mut u8) -> bool {
