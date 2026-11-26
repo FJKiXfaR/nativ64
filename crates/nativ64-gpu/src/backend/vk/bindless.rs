@@ -191,6 +191,9 @@ impl<'g> Bindless<'g> {
             .into_iter()
             .min()
             .unwrap_or(0)
+            // room for the static samplers of a pipeline's own set, which count against the
+            // same per-stage and per-set limits (validation: 1048577 > 1048576)
+            .saturating_sub(STATIC_SAMPLERS)
             .min(MAX_BINDLESS);
             if n == 0 {
                 return Err(VkError::Invalid("no update-after-bind descriptors"));
