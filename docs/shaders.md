@@ -194,13 +194,24 @@ SSA over 32-bit register dwords, one function per program:
   the iterated dominance frontier of the registers that are read somewhere, then trivial and
   dead phis are removed. `Func` carries `idom` and `rpo` for chunks 4-5. Encodings the decoder
   does not read, and `s_setpc/swappc/rfe/call`, `s_movrel*`, `v_movrel*`, scalar atomics,
-  MUBUF-to-LDS are typed `IrError`s. To add (start of chunk 4): `s_setpc_b64` of a `CodeLo` /
-  `CodeHi` pair is a direct jump (the far jump folds through `s_getpc` already); the entry
-  `s_swappc_b64` of a VS becomes an `Inst` marking the fetch point, with the attribute VGPRs as
-  its results; any other register jump stays an error. `EntryRegs` names the entry SGPR/VGPR
-  ranges (EXEC is always one); `from_record` is a first guess from the root layout, replaced in
-  chunk 4 by the per-stage table of Inputs and outputs. `nativ64-shader --ir`
-  prints the IR.
+  MUBUF-to-LDS are typed `IrError`s.
+  **Chunk 4** (`ir.rs`, `native.rs`, `gfx10/flow.rs`): CS and mesh stage data are decoded like
+  the VS/PS ones (`CsData`: `RSRC2` and group size, refused when a dimension is 0 or the group
+  over 1024 threads; `MeshData`: outputs, lanes, vertex and primitive maxima, user SGPRs,
+  topology). `EntryRegs::from_stage(record)` replaces the root-layout guess with the table of
+  Inputs and outputs. `s_setpc_b64` of a `CodeLo` / `CodeHi` pair is a direct jump: `build`
+  follows the code, folds, and when a `s_setpc_b64` folds to byte `t` follows `t` and builds
+  again (`gfx10::follow_with`), so the far-jump targets need no separate analysis. A VS whose
+  stage data lists attributes and whose first instruction is `s_swappc_b64 s[4:5], s[4:5]`
+  gets that call as an `Inst` reading `s[4:5]` (entry values) and defining the attribute VGPRs
+  (first VGPR + channel), then `s4`, `s5`; any other jump through a register, and the same call
+  without attributes, is `IrErrorKind::Indirect`. Scalar compares of constants (`s_cmp_*`)
+  fold their SCC. After SSA, `prune` turns an `s_cbranch_*` whose condition folded to a
+  constant into a jump (a wave64 mask is decided when either half is a non-zero constant),
+  drops the blocks only it reached, removes the dead phi inputs (the phis left with one value
+  fold, which can decide more branches), recomputes `idom` / `rpo` and drops the arguments
+  nothing reads any more. `nativ64-shader --ir --stats` reports, per stage, the programs that
+  build and the errors by kind. `nativ64-shader --ir` prints the IR.
 - **Analyses on SSA**: constant folding of scalar values (literals, `s_getpc` + offset, loads
   from appended constant data), lane-mask typing, resource tracing, uniform/lane classification.
   Emission does not need phis (below).

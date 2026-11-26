@@ -67,11 +67,13 @@ pub struct ParsedShader {
 }
 
 impl ParsedShader {
-    /// The record of the blob's own stage (vertex or pixel).
+    /// The record of the blob's own stage (vertex, pixel, compute or mesh).
     pub fn record(&self) -> Option<&Record> {
         match self.kind {
             ProgramKind::Vertex => self.native.vs.as_ref(),
             ProgramKind::Pixel => self.native.ps.as_ref(),
+            ProgramKind::Compute => self.native.cs.as_ref(),
+            ProgramKind::Mesh => self.native.mesh.as_ref(),
             _ => None,
         }
     }
@@ -79,8 +81,8 @@ impl ParsedShader {
 
 /// Parses a blob: container, signatures, `DXIL` header, native program. A vertex blob may carry
 /// two native programs (with and without a geometry stage): the first with a record for the
-/// blob's stage is taken. Stages other than vertex and pixel parse as far as the container and
-/// list their slots, with no record.
+/// blob's stage is taken. Stages other than vertex, pixel, compute and mesh parse as far as the
+/// container and list their slots, with no record.
 pub fn parse(bytes: &[u8]) -> Result<ParsedShader, ShaderError> {
     let c = Container::parse(bytes)?;
     let dxil: Dxil = c.dxil()?;
@@ -92,6 +94,8 @@ pub fn parse(bytes: &[u8]) -> Result<ParsedShader, ShaderError> {
     let wanted = |n: &NativeProgram| match dxil.kind {
         ProgramKind::Vertex => n.vs.is_some(),
         ProgramKind::Pixel => n.ps.is_some(),
+        ProgramKind::Compute => n.cs.is_some(),
+        ProgramKind::Mesh => n.mesh.is_some(),
         _ => true,
     };
     let native = programs
@@ -225,6 +229,31 @@ impl ParsedShader {
                     );
                 }
             }
+            StageData::Compute(d) => {
+                let _ = writeln!(
+                    o,
+                    "cs RSRC2 {:#x} user sgprs {} group {}x{}x{}",
+                    d.rsrc2,
+                    d.user_sgprs(),
+                    d.group[0],
+                    d.group[1],
+                    d.group[2]
+                );
+            }
+            StageData::Mesh(d) => {
+                for x in &d.outputs {
+                    let _ = writeln!(
+                        o,
+                        "mesh output usage {} row {} param {:#x} row2 {} slot {} flags {:#x}",
+                        x.usage, x.row, x.param, x.row2, x.slot, x.flags
+                    );
+                }
+                let _ = writeln!(
+                    o,
+                    "mesh group {} lanes, {} vertices, {} primitives, user sgprs {}, topology {}",
+                    d.group_lanes, d.max_vertices, d.max_primitives, d.user_sgprs, d.topology
+                );
+            }
             StageData::Pixel(d) => {
                 for i in &d.inputs {
                     let _ = writeln!(
@@ -333,7 +362,7 @@ pub fn note_pipeline(stages: &[(&str, &[u8])], targets: &[u32]) {
 #[cfg(test)]
 mod tests {
     use super::container::tests::{container, dxil, sig};
-    use super::native::tests::{payload, xbch};
+    use super::native::tests::{payload, payload_all, xbch};
     use super::*;
 
     fn blob(kind: u16, programs: &[Vec<u8>]) -> Vec<u8> {
@@ -392,11 +421,34 @@ mod tests {
     #[test]
     fn other_stage_kinds_parse_without_a_record() {
         let mut pl = payload(false, false);
-        pl[0x60..0x68].copy_from_slice(&0x400u64.to_le_bytes());
-        let p = parse(&blob(5, &[xbch(&pl)])).unwrap();
-        assert_eq!(p.kind, ProgramKind::Compute);
+        pl[0x20..0x28].copy_from_slice(&0x400u64.to_le_bytes()); // a geometry slot
+        let p = parse(&blob(2, &[xbch(&pl)])).unwrap();
+        assert_eq!(p.kind, ProgramKind::Geometry);
         assert!(p.record().is_none());
         assert!(p.summary().contains("no record decoded"));
+    }
+
+    #[test]
+    fn compute_and_mesh_blobs_have_records() {
+        let p = parse(&blob(5, &[xbch(&payload_all(false, false, true, false))])).unwrap();
+        assert_eq!(p.kind, ProgramKind::Compute);
+        assert!(matches!(p.record().unwrap().data, StageData::Compute(_)));
+        let s = p.summary();
+        assert!(
+            s.contains("cs RSRC2 0x") && s.contains("group 8x4x2"),
+            "{s}"
+        );
+        let p = parse(&blob(13, &[xbch(&payload_all(false, false, false, true))])).unwrap();
+        assert_eq!(p.kind, ProgramKind::Mesh);
+        assert!(matches!(p.record().unwrap().data, StageData::Mesh(_)));
+        assert!(
+            p.summary().contains("mesh group 128 lanes"),
+            "{}",
+            p.summary()
+        );
+        // A compute blob whose native program lacks the compute record is refused.
+        let wrong = blob(5, &[xbch(&payload(true, false))]);
+        assert!(matches!(parse(&wrong), Err(ShaderError::Missing(_))));
     }
 
     #[test]

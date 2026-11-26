@@ -15,10 +15,30 @@ pub struct Program {
     pub indirect: Vec<usize>,
 }
 
+/// What the caller knows about an indirect instruction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Resolved {
+    /// A jump (`s_setpc_b64`) to this byte offset.
+    Jump(usize),
+    /// A call that returns to the next instruction (the vertex fetch routine).
+    Call,
+}
+
 /// Follows control flow from byte offset `entry`: fall-through, `s_branch`, `s_cbranch_*`
 /// (both edges); `s_endpgm` ends a path. A target outside `code`, or inside an instruction
 /// already decoded, is an error; so is any undecodable reachable instruction.
 pub fn follow(code: &[u8], entry: usize, wave32: bool) -> Result<Program, DecodeError> {
+    follow_with(code, entry, wave32, &BTreeMap::new())
+}
+
+/// Like `follow`, with the indirect instructions at the offsets of `resolved` followed as the
+/// jump or call they were found to be (they no longer appear in `indirect`).
+pub fn follow_with(
+    code: &[u8],
+    entry: usize,
+    wave32: bool,
+    resolved: &BTreeMap<usize, Resolved>,
+) -> Result<Program, DecodeError> {
     let mut seen: BTreeMap<usize, Instr> = BTreeMap::new();
     let mut leaders = vec![entry];
     let mut indirect = Vec::new();
@@ -32,11 +52,21 @@ pub fn follow(code: &[u8], entry: usize, wave32: bool) -> Result<Program, Decode
             let i = decode_wave(code, at, wave32)?;
             let next = at + i.len;
             let mut stop = i.is_endpgm();
+            let mut target = i.branch_target().filter(|_| !i.is_indirect());
             if i.is_indirect() {
-                indirect.push(at);
-                stop = true;
+                match resolved.get(&at) {
+                    Some(Resolved::Call) => {}
+                    Some(Resolved::Jump(t)) => {
+                        target = Some(*t as i64);
+                        stop = true;
+                    }
+                    None => {
+                        indirect.push(at);
+                        stop = true;
+                    }
+                }
             }
-            if let Some(t) = i.branch_target().filter(|_| !i.is_indirect()) {
+            if let Some(t) = target {
                 if t < 0 || t as usize >= code.len() || t % 4 != 0 {
                     return Err(DecodeError {
                         at,
@@ -45,7 +75,7 @@ pub fn follow(code: &[u8], entry: usize, wave32: bool) -> Result<Program, Decode
                 }
                 leaders.push(t as usize);
                 work.push(t as usize);
-                if i.is_branch() {
+                if i.is_branch() || i.is_indirect() {
                     stop = true;
                 } else if i.is_cbranch() {
                     leaders.push(next);

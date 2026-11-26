@@ -1,8 +1,10 @@
 //! Prints the parsed container of shader blobs (the files `NATIV64_DUMP_SHADERS` writes):
 //! `nativ64-shader [--disasm | --ir] <blob>...`. With `--disasm` each program's code is followed
 //! from its entry and printed in LLVM syntax; with `--ir` it is printed as the SSA IR. `nativ64-shader --hex <file>` disassembles one
-//! instruction per line of hex bytes (for diffing against `llvm-mc`). Exit status 1 if any
-//! blob is refused or any code fails to decode.
+//! instruction per line of hex bytes (for diffing against `llvm-mc`). `--stats` counts the
+//! programs that decode and why the others do not; `--ir --stats` counts the programs whose IR
+//! builds, per stage, and the errors by kind. Exit status 1 if any blob is refused or any code
+//! fails to decode.
 
 use nativ64_gpu::shader::{self, gfx10};
 use std::process::ExitCode;
@@ -15,7 +17,11 @@ fn main() -> ExitCode {
         args.remove(0);
     }
     if args.first().is_some_and(|a| a == "--stats") {
-        return stats(&args[1..]);
+        return if ir {
+            ir_stats(&args[1..])
+        } else {
+            stats(&args[1..])
+        };
     }
     if args.first().is_some_and(|a| a == "--hex") {
         return match args.get(1) {
@@ -64,13 +70,13 @@ fn main() -> ExitCode {
     }
 }
 
-/// Prints the SSA IR of the program's VS or PS record.
+/// Prints the SSA IR of the program's own stage record.
 fn print_ir(p: &shader::ParsedShader) -> bool {
     let Some(rec) = p.record() else {
         return true;
     };
     let code = p.native.code(rec);
-    let regs = shader::ir::EntryRegs::from_record(rec);
+    let regs = shader::ir::EntryRegs::from_stage(rec);
     match shader::ir::build(code, gfx10::ENTRY, rec.wave32(), &regs) {
         Ok(f) => {
             print!("{f}");
@@ -162,6 +168,100 @@ fn stats(files: &[String]) -> ExitCode {
     v.sort_by_key(|a| std::cmp::Reverse(a.1));
     for (k, n) in v.iter().take(40) {
         println!("{n:6}  first failure: {k}");
+    }
+    ExitCode::SUCCESS
+}
+
+/// Builds the IR of every program with a decoded record (vertex, pixel, mesh, compute) and
+/// reports, per stage, how many build and the errors by kind. A read of a register the entry
+/// table does not explain is listed with the first reading instruction and a sample blob.
+fn ir_stats(files: &[String]) -> ExitCode {
+    use shader::ir::{self, IrErrorKind};
+    use std::collections::BTreeMap;
+    let mut stage: BTreeMap<&str, (u32, u32)> = BTreeMap::new();
+    let mut errs: BTreeMap<(String, String), u32> = BTreeMap::new();
+    let mut live_ins: BTreeMap<(String, String), (u64, String)> = BTreeMap::new();
+    // vertex programs: (has attributes, opens with the fetch call) -> count
+    let mut fetch: BTreeMap<(bool, bool), u32> = BTreeMap::new();
+    let (mut refused, mut blocks, mut insts, mut phis) = (0, 0usize, 0usize, 0usize);
+    for f in files {
+        let Ok(bytes) = std::fs::read(f) else {
+            continue;
+        };
+        let Ok(p) = shader::parse(&bytes) else {
+            refused += 1;
+            continue;
+        };
+        for (name, rec) in p.native.records() {
+            let code = p.native.code(rec);
+            let regs = ir::EntryRegs::from_stage(rec);
+            let e = stage.entry(name).or_default();
+            e.0 += 1;
+            if name == "vs" {
+                let call = gfx10::decode_wave(code, gfx10::ENTRY, rec.wave32())
+                    .is_ok_and(|i| i.name() == "s_swappc_b64");
+                *fetch.entry((regs.fetch.is_some(), call)).or_default() += 1;
+            }
+            match ir::build(code, gfx10::ENTRY, rec.wave32(), &regs) {
+                Ok(func) => {
+                    e.1 += 1;
+                    blocks += func.blocks.len();
+                    insts += func.blocks.iter().map(|b| b.insts.len()).sum::<usize>();
+                    phis += func.blocks.iter().map(|b| b.phis.len()).sum::<usize>();
+                }
+                Err(err) => {
+                    let kind = match &err.kind {
+                        IrErrorKind::Decode(d) => match d.kind {
+                            gfx10::ErrorKind::UnknownOpcode { enc, opcode } => {
+                                format!("decode: {} opcode {opcode:#x}", enc.name())
+                            }
+                            gfx10::ErrorKind::UnknownEncoding { name, .. } => {
+                                format!("decode: encoding {name}")
+                            }
+                            ref k => format!("decode: {k:?}"),
+                        },
+                        IrErrorKind::Indirect => "register jump".to_string(),
+                        IrErrorKind::UnsupportedEncoding(n) => format!("encoding {n}"),
+                        IrErrorKind::Unsupported(s) => format!("unsupported: {s}"),
+                        IrErrorKind::UndefinedRead(r) => {
+                            let at = gfx10::decode_wave(code, err.at, rec.wave32())
+                                .map(|i| gfx10::disasm_instr(&i))
+                                .unwrap_or_default();
+                            live_ins
+                                .entry((name.to_string(), r.to_string()))
+                                .or_insert((
+                                    shader::fnv1a64(&bytes),
+                                    format!("+{:#x}: {at}", err.at),
+                                ));
+                            format!("live-in {r} not explained")
+                        }
+                        IrErrorKind::BadOperand(s) => format!("bad operand: {s}"),
+                    };
+                    *errs.entry((name.to_string(), kind)).or_default() += 1;
+                }
+            }
+        }
+    }
+    println!("blobs refused by the container parser: {refused}");
+    let (programs, built) = stage.values().fold((0, 0), |a, v| (a.0 + v.0, a.1 + v.1));
+    println!("IR built: {built}/{programs} programs ({blocks} blocks, {insts} instructions, {phis} phis)");
+    for (s, (n, ok)) in &stage {
+        println!("  {s}: {ok}/{n} build");
+    }
+    let mut v: Vec<_> = errs.into_iter().collect();
+    v.sort_by_key(|a| std::cmp::Reverse(a.1));
+    for ((s, k), n) in &v {
+        println!("{n:6}  {s}: {k}");
+    }
+    for ((s, r), (hash, at)) in &live_ins {
+        println!("live-in {s} {r}: first read {at} (blob hash {hash:016x})");
+    }
+    for ((attrs, call), n) in &fetch {
+        println!(
+            "vs {n}: {} attributes in the stage data, {} fetch call",
+            if *attrs { "with" } else { "no" },
+            if *call { "opens with a" } else { "no" }
+        );
     }
     ExitCode::SUCCESS
 }

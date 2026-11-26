@@ -21,7 +21,7 @@ use std::fmt;
 
 pub use decode::{decode, decode_wave};
 pub use disasm::{disasm, disasm_instr};
-pub use flow::{follow, Program};
+pub use flow::{follow, follow_with, Program, Resolved};
 pub use ops::{OpInfo, Slot};
 
 /// Byte offset where a program's instructions start: every program of the corpus begins with a

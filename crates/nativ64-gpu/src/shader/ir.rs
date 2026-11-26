@@ -20,7 +20,7 @@ use std::fmt::{self, Write as _};
 use std::ops::Range;
 
 use super::gfx10::ops::Slot;
-use super::gfx10::{self, DecodeError, Enc, Instr, Operand};
+use super::gfx10::{self, DecodeError, Enc, Instr, Operand, Resolved};
 
 /// One 32-bit register.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -204,7 +204,15 @@ impl Func {
 pub struct EntryRegs {
     pub sgprs: Vec<Range<u16>>,
     pub vgprs: Vec<Range<u16>>,
+    /// A vertex program's attribute VGPRs. When the program opens with the call to the fetch
+    /// routine (`s_swappc_b64 s[4:5], s[4:5]`) the call becomes an instruction that defines
+    /// them; otherwise they are not entry registers.
+    pub fetch: Option<Vec<u16>>,
 }
+
+/// Dwords each `SPI_PS_INPUT_ADDR` bit takes, in bit order: the barycentric pairs (the pull
+/// model's takes three), then the single-dword system values.
+const PS_INPUT_DWORDS: [u16; 16] = [2, 2, 2, 3, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1];
 
 impl EntryRegs {
     pub fn new() -> Self {
@@ -221,23 +229,84 @@ impl EntryRegs {
         self
     }
 
-    /// A first reading of a stage's entry state from its record (`docs/shaders.md`, Inputs and
-    /// outputs): the user SGPRs its root layout names, one more for the pixel primitive mask,
-    /// and the first 16 VGPRs (system and input VGPRs; refined by the I/O chunk).
-    pub fn from_record(rec: &super::native::Record) -> Self {
-        let mut r = Self::new().with_vgprs(0..16);
-        let lo = rec
-            .layout
-            .iter()
-            .map(|l| u16::from(l.first_user_dword))
-            .min();
-        let hi = rec
-            .layout
-            .iter()
-            .map(|l| u16::from(l.first_user_dword) + l.user_sgprs as u16)
-            .max();
-        if let (Some(lo), Some(hi)) = (lo, hi) {
-            r = r.with_sgprs(lo..hi + 1);
+    pub fn with_fetch(mut self, vgprs: Vec<u16>) -> Self {
+        self.fetch = Some(vgprs);
+        self
+    }
+
+    /// The entry state of a stage, from its stage data (`docs/shaders.md`, Inputs and outputs).
+    ///
+    /// * VS: the user SGPRs its root layout names (from s8); v0 vertex id, v2 primitive id, v3
+    ///   instance id; the attribute VGPRs of its inputs come from the fetch call.
+    /// * PS: the user SGPRs, then the primitive mask and the ordered-section id; the VGPRs
+    ///   `SPI_PS_INPUT_ADDR` enables, in bit order.
+    /// * CS: user SGPRs from s0, then the enabled group id and info SGPRs and the scratch
+    ///   offset (`COMPUTE_PGM_RSRC2`); thread ids in v0...
+    /// * Mesh: s3 (merged wave info), the user SGPRs from s8, v5 (group id times group size).
+    pub fn from_stage(rec: &super::native::Record) -> Self {
+        use super::native::StageData;
+        let user = || {
+            let lo = rec
+                .layout
+                .iter()
+                .map(|l| u16::from(l.first_user_dword))
+                .min()
+                .unwrap_or(8);
+            let hi = rec
+                .layout
+                .iter()
+                .map(|l| u16::from(l.first_user_dword) + l.user_sgprs as u16)
+                .max()
+                .unwrap_or(0);
+            lo..hi.max(8)
+        };
+        let mut r = Self::new();
+        match &rec.data {
+            StageData::Vertex(d) => {
+                r = r.with_sgprs(user()).with_vgprs(0..1).with_vgprs(2..4);
+                let mut attrs: Vec<u16> = d
+                    .inputs
+                    .iter()
+                    .flat_map(|i| {
+                        (0..4)
+                            .filter(move |c| i.mask >> c & 1 != 0)
+                            .map(move |c| u16::from(i.first_vgpr) + c)
+                    })
+                    .collect();
+                attrs.sort_unstable();
+                attrs.dedup();
+                if !attrs.is_empty() {
+                    r = r.with_fetch(attrs);
+                }
+            }
+            StageData::Pixel(d) => {
+                let u = user();
+                r = r.with_sgprs(u.start..u.end + 2);
+                let mut next = 0;
+                for (bit, n) in PS_INPUT_DWORDS.iter().enumerate() {
+                    if d.spi_ps_input_addr >> bit & 1 != 0 {
+                        r = r.with_vgprs(next..next + n);
+                        next += n;
+                    }
+                }
+            }
+            StageData::Compute(d) => {
+                let top = d
+                    .system_sgprs()
+                    .last()
+                    .map_or(d.user_sgprs(), |&l| l + 1)
+                    .max(d.user_sgprs());
+                if top > 0 {
+                    r = r.with_sgprs(0..top);
+                }
+                r = r.with_vgprs(0..d.thread_id_vgprs());
+            }
+            StageData::Mesh(d) => {
+                r = r
+                    .with_sgprs(3..4)
+                    .with_sgprs(8..8 + u16::from(d.user_sgprs))
+                    .with_vgprs(5..6);
+            }
         }
         r
     }
@@ -870,6 +939,9 @@ fn fold(i: &Instr, srcs: &[Vec<Src>], scc_in: Option<Src>, code: &[u8]) -> Optio
     if name.starts_with("s_load_dword") {
         return fold_load(i, srcs, code);
     }
+    if i.enc == Enc::Sopc {
+        return fold_compare(name, srcs);
+    }
     if i.enc != Enc::Sop1 && i.enc != Enc::Sop2 {
         return None;
     }
@@ -974,6 +1046,51 @@ fn fold(i: &Instr, srcs: &[Vec<Src>], scc_in: Option<Src>, code: &[u8]) -> Optio
     }
 }
 
+/// The SCC of a scalar compare of constants.
+fn fold_compare(name: &str, srcs: &[Vec<Src>]) -> Option<Folded> {
+    let (a, b) = (srcs.first()?, srcs.get(1)?);
+    let konst = |s: &[Src]| -> Option<Vec<u32>> {
+        s.iter()
+            .map(|x| match x {
+                Src::Const(c) => Some(*c),
+                _ => None,
+            })
+            .collect()
+    };
+    let (a, b) = (konst(a)?, konst(b)?);
+    let rest = name.strip_prefix("s_cmp_")?;
+    let (op, ty) = rest.rsplit_once('_')?;
+    let scc = match (ty, a.len(), b.len()) {
+        ("u32", 1, 1) | ("i32", 1, 1) => {
+            let (x, y) = (a[0], b[0]);
+            let ord = if ty == "i32" {
+                (x as i32).cmp(&(y as i32))
+            } else {
+                x.cmp(&y)
+            };
+            match op {
+                "eq" => ord.is_eq(),
+                "lg" => ord.is_ne(),
+                "gt" => ord.is_gt(),
+                "ge" => ord.is_ge(),
+                "lt" => ord.is_lt(),
+                "le" => ord.is_le(),
+                _ => return None,
+            }
+        }
+        ("u64", 2, 2) => match op {
+            "eq" => a == b,
+            "lg" => a != b,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    Some(Folded {
+        vals: vec![],
+        scc: bool_src(scc),
+    })
+}
+
 /// `s_load_dword*` from `code` itself (constant data after the instructions).
 fn fold_load(i: &Instr, srcs: &[Vec<Src>], code: &[u8]) -> Option<Folded> {
     let base = srcs.first()?;
@@ -1020,6 +1137,12 @@ enum RawTerm {
         taken: BlockId,
         fall: BlockId,
     },
+    /// `s_setpc_b64` of `regs`; `target` once a build found where it goes.
+    SetPc {
+        at: usize,
+        regs: [Reg; 2],
+        target: Option<BlockId>,
+    },
     End,
 }
 
@@ -1029,24 +1152,84 @@ struct RawBlock {
     term: RawTerm,
 }
 
-/// Follows the code from `entry` and builds its SSA IR.
-pub fn build(code: &[u8], entry: usize, wave32: bool, regs: &EntryRegs) -> Result<Func, IrError> {
-    let prog = gfx10::follow(code, entry, wave32)?;
-    if let Some(&at) = prog.indirect.first() {
-        return Err(bad(at, IrErrorKind::Indirect));
-    }
-    let raw = split_blocks(&prog)?;
-    let mut b = Builder {
-        code,
-        wave32,
-        regs,
-        vals: Vec::new(),
-        args: BTreeMap::new(),
-    };
-    b.run(raw, entry)
+/// Most `s_setpc_b64` targets resolved per program (the corpus has one).
+const MAX_JUMPS: usize = 16;
+
+/// What one build attempt found.
+enum Step {
+    Done(Func),
+    /// An `s_setpc_b64` at `at` whose address folded to byte `target`: follow it and build again.
+    Jump {
+        at: usize,
+        target: usize,
+    },
 }
 
-fn split_blocks(prog: &gfx10::Program) -> Result<Vec<RawBlock>, IrError> {
+/// True when the instruction at `entry` is the call to the vertex fetch routine,
+/// `s_swappc_b64 s[4:5], s[4:5]`.
+fn opens_with_fetch_call(code: &[u8], entry: usize, wave32: bool) -> bool {
+    let Ok(i) = gfx10::decode_wave(code, entry, wave32) else {
+        return false;
+    };
+    i.name() == "s_swappc_b64"
+        && matches!(
+            &i.operands[..],
+            [
+                Operand::Reg { code: 4, count: 2 },
+                Operand::Reg { code: 4, count: 2 }
+            ]
+        )
+}
+
+/// Follows the code from `entry` and builds its SSA IR.
+///
+/// `s_setpc_b64` of a folded `CodeLo` / `CodeHi` pair is a direct jump, followed as such. When
+/// `regs.fetch` is set and the program opens with the fetch call, the call is an instruction
+/// defining the attribute VGPRs. Any other jump through a register is `IrErrorKind::Indirect`.
+/// Branches whose condition folded to a constant are then pruned (`prune`).
+pub fn build(code: &[u8], entry: usize, wave32: bool, regs: &EntryRegs) -> Result<Func, IrError> {
+    let mut resolved: BTreeMap<usize, Resolved> = BTreeMap::new();
+    if regs.fetch.is_some() && opens_with_fetch_call(code, entry, wave32) {
+        resolved.insert(entry, Resolved::Call);
+    }
+    for _ in 0..MAX_JUMPS {
+        let prog = gfx10::follow_with(code, entry, wave32, &resolved)?;
+        for &at in &prog.indirect {
+            let setpc = prog
+                .instrs
+                .binary_search_by_key(&at, |i| i.at)
+                .is_ok_and(|k| prog.instrs[k].name() == "s_setpc_b64");
+            if !setpc {
+                return Err(bad(at, IrErrorKind::Indirect));
+            }
+        }
+        let raw = split_blocks(&prog, &resolved, regs)?;
+        let mut b = Builder {
+            code,
+            wave32,
+            regs,
+            fetch_at: resolved
+                .iter()
+                .find_map(|(at, r)| (*r == Resolved::Call).then_some(*at)),
+            vals: Vec::new(),
+            args: BTreeMap::new(),
+        };
+        match b.run(raw, entry)? {
+            Step::Done(f) => return Ok(f),
+            Step::Jump { at, target } => {
+                resolved.insert(at, Resolved::Jump(target));
+            }
+        }
+    }
+    let at = resolved.keys().next_back().copied().unwrap_or(entry);
+    Err(bad(at, IrErrorKind::Indirect))
+}
+
+fn split_blocks(
+    prog: &gfx10::Program,
+    resolved: &BTreeMap<usize, Resolved>,
+    regs: &EntryRegs,
+) -> Result<Vec<RawBlock>, IrError> {
     let ids: HashMap<usize, BlockId> = prog
         .leaders
         .iter()
@@ -1065,6 +1248,8 @@ fn split_blocks(prog: &gfx10::Program) -> Result<Vec<RawBlock>, IrError> {
         let next = prog.instrs.get(k + 1);
         let falls = next.filter(|x| x.at == i.at + i.len);
         let target = |t: i64| ids[&(t as usize)];
+        let fetch_call = i.is_indirect() && resolved.get(&i.at) == Some(&Resolved::Call);
+        let jump_through_register = i.is_indirect() && !fetch_call;
         let mut term = None;
         if i.is_endpgm() {
             term = Some(RawTerm::End);
@@ -1097,6 +1282,31 @@ fn split_blocks(prog: &gfx10::Program) -> Result<Vec<RawBlock>, IrError> {
                 taken: target(i.branch_target().unwrap_or(0)),
                 fall: ids[&fall.at],
             });
+        } else if jump_through_register {
+            let pair = match &i.operands[..] {
+                [Operand::Reg { code, count: 2 }] => {
+                    match (
+                        operand_dword(*code, 0, false, i.at)?,
+                        operand_dword(*code, 1, false, i.at)?,
+                    ) {
+                        (Rd::Reg(lo), Rd::Reg(hi)) => Some([lo, hi]),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            let Some(regs) = pair else {
+                return Err(bad(i.at, IrErrorKind::Indirect));
+            };
+            let target = match resolved.get(&i.at) {
+                Some(Resolved::Jump(t)) => Some(ids[t]),
+                _ => None,
+            };
+            term = Some(RawTerm::SetPc {
+                at: i.at,
+                regs,
+                target,
+            });
         } else if let Some(nx) = falls.filter(|x| ids.contains_key(&x.at)) {
             term = Some(RawTerm::Jump(ids[&nx.at]));
         } else if k + 1 == n || falls.is_none() {
@@ -1108,7 +1318,9 @@ fn split_blocks(prog: &gfx10::Program) -> Result<Vec<RawBlock>, IrError> {
                 }),
             ));
         }
-        if !(i.is_endpgm() || i.is_branch() || i.is_cbranch()) {
+        if fetch_call {
+            b.insts.push((i.clone(), fetch_lowered(i, regs)));
+        } else if !(i.is_endpgm() || i.is_branch() || i.is_cbranch() || jump_through_register) {
             if let Some(l) = lower(i)? {
                 b.insts.push((i.clone(), l));
             }
@@ -1126,10 +1338,28 @@ fn split_blocks(prog: &gfx10::Program) -> Result<Vec<RawBlock>, IrError> {
     Ok(blocks)
 }
 
+/// The fetch call as an instruction: it reads the routine's address (`s[4:5]`), writes the
+/// return address back there and the attribute VGPRs, under EXEC.
+fn fetch_lowered(i: &Instr, regs: &EntryRegs) -> Lowered {
+    let attrs = regs.fetch.as_deref().unwrap_or_default();
+    Lowered {
+        dsts: attrs
+            .iter()
+            .map(|&v| Reg::V(v))
+            .chain([Reg::S(4), Reg::S(5)])
+            .collect(),
+        srcs: vec![vec![Rd::Reg(Reg::S(4)), Rd::Reg(Reg::S(5))]],
+        imps: mask_regs(i.wave32),
+        olds: Vec::new(),
+    }
+}
+
 struct Builder<'a> {
     code: &'a [u8],
     wave32: bool,
     regs: &'a EntryRegs,
+    /// Offset of the fetch call, whose `s[4:5]` read is an entry value.
+    fetch_at: Option<usize>,
     vals: Vec<ValInfo>,
     args: BTreeMap<Reg, Val>,
 }
@@ -1166,7 +1396,7 @@ impl Builder<'_> {
         }
     }
 
-    fn run(&mut self, raw: Vec<RawBlock>, entry: usize) -> Result<Func, IrError> {
+    fn run(&mut self, raw: Vec<RawBlock>, entry: usize) -> Result<Step, IrError> {
         let n = raw.len();
         let entry_id = raw.iter().position(|b| b.at == entry).unwrap_or(0);
         let succs: Vec<Vec<BlockId>> = raw
@@ -1180,6 +1410,7 @@ impl Builder<'_> {
                         vec![*taken, *fall]
                     }
                 }
+                RawTerm::SetPc { target, .. } => target.iter().copied().collect(),
                 RawTerm::End => vec![],
             })
             .collect();
@@ -1206,8 +1437,10 @@ impl Builder<'_> {
                     defs.entry(*d).or_default().insert(b);
                 }
             }
-            if let RawTerm::Branch { regs, .. } = &rb.term {
-                used.extend(regs);
+            match &rb.term {
+                RawTerm::Branch { regs, .. } => used.extend(regs),
+                RawTerm::SetPc { regs, .. } => used.extend(regs),
+                _ => {}
             }
         }
         let df = dominance_frontier(n, entry_id, &idom, &preds);
@@ -1264,6 +1497,22 @@ impl Builder<'_> {
             blocks[b].term = match &raw[b].term {
                 RawTerm::Jump(t) => Term::Jump(*t),
                 RawTerm::End => Term::End,
+                RawTerm::SetPc { at, regs, target } => {
+                    let lo = self.read(&st, regs[0], *at, false)?;
+                    let hi = self.read(&st, regs[1], *at, false)?;
+                    match (lo, hi, target) {
+                        (Src::CodeLo(t), Src::CodeHi, Some(tb)) if raw[*tb].at == t as usize => {
+                            Term::Jump(*tb)
+                        }
+                        (Src::CodeLo(t), Src::CodeHi, None) => {
+                            return Ok(Step::Jump {
+                                at: *at,
+                                target: t as usize,
+                            })
+                        }
+                        _ => return Err(bad(*at, IrErrorKind::Indirect)),
+                    }
+                }
                 RawTerm::Branch {
                     op,
                     regs,
@@ -1314,8 +1563,9 @@ impl Builder<'_> {
             rpo,
         };
         simplify_phis(&mut f);
+        prune(&mut f);
         renumber(&mut f);
-        Ok(f)
+        Ok(Step::Done(f))
     }
 
     fn rename(
@@ -1327,6 +1577,12 @@ impl Builder<'_> {
         bid: BlockId,
     ) -> Result<(), IrError> {
         let at = instr.at;
+        if self.fetch_at == Some(at) {
+            for r in [Reg::S(4), Reg::S(5)] {
+                let a = self.arg(r);
+                st.entry(r).or_insert(a);
+            }
+        }
         let mut srcs = Vec::with_capacity(l.srcs.len());
         for s in &l.srcs {
             let mut v = Vec::with_capacity(s.len());
@@ -1583,6 +1839,160 @@ fn simplify_phis(f: &mut Func) {
             break;
         }
     }
+}
+
+/// The outcome of a branch whose condition registers all folded to constants: `Some(true)` when
+/// it is taken. A condition is "zero" when every register is the constant 0 and "non-zero" when
+/// one is a non-zero constant (the other half of a wave64 mask may be unknown).
+fn constant_branch(op: &str, cond: &[(Reg, Src)]) -> Option<bool> {
+    let konst = |s: &Src| match s {
+        Src::Const(c) => Some(*c),
+        _ => None,
+    };
+    let nonzero = cond.iter().any(|(_, s)| konst(s).is_some_and(|c| c != 0));
+    let zero = cond.iter().all(|(_, s)| konst(s) == Some(0));
+    let want_zero = matches!(op, "s_cbranch_scc0" | "s_cbranch_vccz" | "s_cbranch_execz");
+    match (nonzero, zero) {
+        (true, _) => Some(!want_zero),
+        (_, true) => Some(want_zero),
+        _ => None,
+    }
+}
+
+/// Constant-branch pruning: an `s_cbranch_*` whose condition folded to a constant becomes a
+/// jump, the blocks only it reached go, phis lose their inputs from the dead edges (and the
+/// ones left with one value fold away, which may fold more branches), then the dominators
+/// and the reverse post-order are recomputed. Arguments nothing reads any more are dropped.
+fn prune(f: &mut Func) {
+    let mut any = false;
+    loop {
+        let mut cut: Vec<(BlockId, BlockId)> = Vec::new();
+        for (b, blk) in f.blocks.iter_mut().enumerate() {
+            if let Term::Branch {
+                op,
+                cond,
+                taken,
+                fall,
+            } = &blk.term
+            {
+                if let Some(t) = constant_branch(op, cond) {
+                    let (go, dead) = if t { (*taken, *fall) } else { (*fall, *taken) };
+                    if go != dead {
+                        cut.push((b, dead));
+                    }
+                    blk.term = Term::Jump(go);
+                    any = true;
+                }
+            }
+        }
+        if cut.is_empty() {
+            // Same-target branches were turned into jumps: nothing else changes.
+            break;
+        }
+        for (b, dead) in cut {
+            let blk = &mut f.blocks[dead];
+            blk.preds.retain(|&p| p != b);
+            for phi in &mut blk.phis {
+                phi.args.retain(|(p, _)| *p != b);
+            }
+        }
+        remove_unreachable(f);
+        simplify_phis(f);
+    }
+    if !any {
+        return;
+    }
+    let n = f.blocks.len();
+    let succs: Vec<Vec<BlockId>> = f.blocks.iter().map(Block::succs).collect();
+    let preds: Vec<Vec<BlockId>> = f.blocks.iter().map(|b| b.preds.clone()).collect();
+    let (rpo, idom) = dominators(n, f.entry, &succs, &preds);
+    f.idom = (0..n)
+        .map(|b| if b == f.entry { None } else { idom[b] })
+        .collect();
+    f.rpo = rpo;
+    let mut used: HashSet<Val> = HashSet::new();
+    let mut note = |s: &Src| {
+        if let Src::Val(v) = s {
+            used.insert(*v);
+        }
+    };
+    for b in &f.blocks {
+        for p in &b.phis {
+            p.args.iter().for_each(|(_, s)| note(s));
+        }
+        for i in &b.insts {
+            i.srcs.iter().flatten().for_each(&mut note);
+            i.imps.iter().for_each(|(_, s)| note(s));
+        }
+        if let Term::Branch { cond, .. } = &b.term {
+            cond.iter().for_each(|(_, s)| note(s));
+        }
+    }
+    f.args.retain(|(_, v)| used.contains(v));
+}
+
+/// Drops the blocks the entry cannot reach, renumbering the others in order.
+fn remove_unreachable(f: &mut Func) {
+    let n = f.blocks.len();
+    let mut seen = vec![false; n];
+    let mut work = vec![f.entry];
+    seen[f.entry] = true;
+    while let Some(b) = work.pop() {
+        for s in f.blocks[b].succs() {
+            if !seen[s] {
+                seen[s] = true;
+                work.push(s);
+            }
+        }
+    }
+    if seen.iter().all(|&s| s) {
+        return;
+    }
+    let mut map = vec![usize::MAX; n];
+    let mut next = 0;
+    for (b, &s) in seen.iter().enumerate() {
+        if s {
+            map[b] = next;
+            next += 1;
+        }
+    }
+    let old = std::mem::take(&mut f.blocks);
+    for (b, mut blk) in old.into_iter().enumerate() {
+        if !seen[b] {
+            continue;
+        }
+        blk.preds = blk
+            .preds
+            .iter()
+            .filter(|&&p| seen[p])
+            .map(|&p| map[p])
+            .collect();
+        for phi in &mut blk.phis {
+            phi.args = phi
+                .args
+                .iter()
+                .filter(|(p, _)| seen[*p])
+                .map(|&(p, s)| (map[p], s))
+                .collect();
+        }
+        blk.term = match blk.term {
+            Term::Jump(t) => Term::Jump(map[t]),
+            Term::Branch {
+                op,
+                cond,
+                taken,
+                fall,
+            } => Term::Branch {
+                op,
+                cond,
+                taken: map[taken],
+                fall: map[fall],
+            },
+            Term::End => Term::End,
+        };
+        f.blocks.push(blk);
+    }
+    f.entry = map[f.entry];
 }
 
 /// Numbers the values in print order: arguments, then each block's phis and instructions.

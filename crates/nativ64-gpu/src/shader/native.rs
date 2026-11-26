@@ -2,8 +2,8 @@
 //! per-stage records (code range, root layout and used-resource tables, register counts, stage
 //! data). Layouts and what was checked on real blobs: `docs/shaders.md`, section Container.
 //!
-//! Only the vertex and pixel records are decoded; other slots are reported as present. Any
-//! offset or count outside the payload is an error, never a panic.
+//! The vertex, pixel, compute and mesh records are decoded; other slots are reported as
+//! present. Any offset or count outside the payload is an error, never a panic.
 
 use super::container::u32_at;
 use super::ShaderError;
@@ -139,10 +139,63 @@ pub struct PsData {
     pub patches: Vec<PsPatch>,
 }
 
+/// A compute program's dispatch settings (`docs/shaders.md`, Inputs and outputs).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CsData {
+    /// `COMPUTE_PGM_RSRC2`: scratch (bit 0), user SGPR count (5:1), thread-group id x/y/z
+    /// (bits 7-9) and info (bit 10) SGPRs, thread-id VGPR count - 1 (12:11).
+    pub rsrc2: u32,
+    /// Thread-group size (`numthreads`).
+    pub group: [u32; 3],
+}
+
+impl CsData {
+    /// SGPRs the user data fills, from s0.
+    pub fn user_sgprs(&self) -> u16 {
+        (self.rsrc2 >> 1 & 0x1f) as u16
+    }
+
+    /// The SGPRs after the user data, in order: the enabled thread-group ids (x, y, z), the
+    /// thread-group info, then the scratch wave offset.
+    pub fn system_sgprs(&self) -> Vec<u16> {
+        let mut next = self.user_sgprs();
+        let mut out = Vec::new();
+        for bit in [7, 8, 9, 10, 0] {
+            if self.rsrc2 >> bit & 1 != 0 {
+                out.push(next);
+                next += 1;
+            }
+        }
+        out
+    }
+
+    /// Thread-id VGPRs, v0.. (1 to 3).
+    pub fn thread_id_vgprs(&self) -> u16 {
+        (self.rsrc2 >> 11 & 3) as u16 + 1
+    }
+}
+
+/// A mesh program's stage data: its outputs read as a vertex shader's (the parameter byte's
+/// bit 7 marks a per-primitive output) and its group settings.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MeshData {
+    pub outputs: Vec<VsOutput>,
+    /// Thread-group size in lanes.
+    pub group_lanes: u16,
+    pub max_vertices: u16,
+    pub max_primitives: u16,
+    /// User SGPRs, from s8.
+    pub user_sgprs: u8,
+    /// Output topology (2 triangles).
+    pub topology: u8,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StageData {
     Vertex(VsData),
     Pixel(PsData),
+    Compute(CsData),
+    Mesh(MeshData),
 }
 
 /// A decoded stage record.
@@ -176,6 +229,8 @@ pub struct NativeProgram {
     pub present: Vec<(&'static str, u64)>,
     pub vs: Option<Record>,
     pub ps: Option<Record>,
+    pub cs: Option<Record>,
+    pub mesh: Option<Record>,
 }
 
 impl NativeProgram {
@@ -258,7 +313,7 @@ impl NativeProgram {
                 "FSSM payload starts with {kinds}, expected 6"
             )));
         }
-        let (mut vs, mut ps) = (None, None);
+        let (mut vs, mut ps, mut cs, mut mesh) = (None, None, None, None);
         let mut present = Vec::new();
         for (name, slot) in SLOTS {
             let Some(o) = u64_at(&payload, slot).filter(|&o| o != ABSENT) else {
@@ -266,8 +321,10 @@ impl NativeProgram {
             };
             present.push((name, o));
             match name {
-                "vs" => vs = Some(decode_record(&payload, o, true)?),
-                "ps" => ps = Some(decode_record(&payload, o, false)?),
+                "vs" => vs = Some(decode_record(&payload, o, Stage::Vertex)?),
+                "ps" => ps = Some(decode_record(&payload, o, Stage::Pixel)?),
+                "cs" => cs = Some(decode_record(&payload, o, Stage::Compute)?),
+                "mesh" => mesh = Some(decode_record(&payload, o, Stage::Mesh)?),
                 _ => {}
             }
         }
@@ -276,11 +333,26 @@ impl NativeProgram {
             present,
             vs,
             ps,
+            cs,
+            mesh,
         })
     }
 
-    /// The code of every slot with a record, `(slot name, bytes)`; records of stages other than
-    /// VS and PS are read only as far as their code range.
+    /// The decoded records, `(slot name, record)`, in slot order.
+    pub fn records(&self) -> Vec<(&'static str, &Record)> {
+        [
+            ("vs", &self.vs),
+            ("ps", &self.ps),
+            ("mesh", &self.mesh),
+            ("cs", &self.cs),
+        ]
+        .into_iter()
+        .filter_map(|(n, r)| r.as_ref().map(|r| (n, r)))
+        .collect()
+    }
+
+    /// The code of every slot with a record, `(slot name, bytes)`; records of stages without a
+    /// decoder (geometry, hull...) are read only as far as their code range.
     pub fn slot_codes(&self) -> Vec<(&'static str, &[u8])> {
         let p = &self.payload;
         self.present
@@ -312,7 +384,15 @@ fn range(p: &[u8], at: u64, len: u64, what: &str) -> Result<usize, ShaderError> 
     }
 }
 
-fn decode_record(p: &[u8], at: u64, vertex: bool) -> Result<Record, ShaderError> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Stage {
+    Vertex,
+    Pixel,
+    Compute,
+    Mesh,
+}
+
+fn decode_record(p: &[u8], at: u64, stage: Stage) -> Result<Record, ShaderError> {
     let r = range(p, at, STAGE_DATA as u64, "record")?;
     let w = |o: usize| u32_at(p, r + o).ok_or_else(|| short("record", r + o, p.len()));
     let q = |o: usize| u64_at(p, r + o).ok_or_else(|| short("record", r + o, p.len()));
@@ -368,10 +448,11 @@ fn decode_record(p: &[u8], at: u64, vertex: bool) -> Result<Record, ShaderError>
         .collect();
     let regs = w(0x50)?;
     let e = r + STAGE_DATA;
-    let data = if vertex {
-        StageData::Vertex(decode_vs(p, e)?)
-    } else {
-        StageData::Pixel(decode_ps(p, e)?)
+    let data = match stage {
+        Stage::Vertex => StageData::Vertex(decode_vs(p, e)?),
+        Stage::Pixel => StageData::Pixel(decode_ps(p, e)?),
+        Stage::Compute => StageData::Compute(decode_cs(p, e)?),
+        Stage::Mesh => StageData::Mesh(decode_mesh(p, e)?),
     };
     Ok(Record {
         at: r,
@@ -396,10 +477,7 @@ fn count(p: &[u8], at: usize, what: &str) -> Result<usize, ShaderError> {
 }
 
 fn decode_vs(p: &[u8], e: usize) -> Result<VsData, ShaderError> {
-    let (n_in, n_out) = (
-        count(p, e + 0xc4, "VS inputs")?,
-        count(p, e + 0x188, "VS outputs")?,
-    );
+    let n_in = count(p, e + 0xc4, "VS inputs")?;
     let inputs = (0..n_in)
         .map(|i| {
             let b = p.get(e + 0x24 + 5 * i..e + 0x24 + 5 * i + 5)?;
@@ -413,7 +491,14 @@ fn decode_vs(p: &[u8], e: usize) -> Result<VsData, ShaderError> {
         })
         .collect::<Option<_>>()
         .ok_or_else(|| short("VS inputs", e + 0x24, p.len()))?;
-    let outputs = (0..n_out)
+    let outputs = decode_outputs(p, e, "VS outputs")?;
+    Ok(VsData { inputs, outputs })
+}
+
+/// The 6-byte output entries at E+0xc8 (count at E+0x188), shared by vertex and mesh programs.
+fn decode_outputs(p: &[u8], e: usize, what: &str) -> Result<Vec<VsOutput>, ShaderError> {
+    let n = count(p, e + 0x188, what)?;
+    (0..n)
         .map(|i| {
             let b = p.get(e + 0xc8 + 6 * i..e + 0xc8 + 6 * i + 6)?;
             Some(VsOutput {
@@ -426,8 +511,49 @@ fn decode_vs(p: &[u8], e: usize) -> Result<VsData, ShaderError> {
             })
         })
         .collect::<Option<_>>()
-        .ok_or_else(|| short("VS outputs", e + 0xc8, p.len()))?;
-    Ok(VsData { inputs, outputs })
+        .ok_or_else(|| short(what, e + 0xc8, p.len()))
+}
+
+/// Most threads in a compute group (Direct3D 12).
+const MAX_GROUP_THREADS: u64 = 1024;
+
+fn decode_cs(p: &[u8], e: usize) -> Result<CsData, ShaderError> {
+    let w = |o: usize| u32_at(p, e + o).ok_or_else(|| short("CS data", e + o, p.len()));
+    let group = [w(0x28)?, w(0x2c)?, w(0x30)?];
+    let threads: u64 = group.iter().map(|&g| u64::from(g)).product();
+    if group.contains(&0) || threads > MAX_GROUP_THREADS {
+        return Err(ShaderError::Unsupported(format!(
+            "thread group {}x{}x{} (1 to {MAX_GROUP_THREADS} threads)",
+            group[0], group[1], group[2]
+        )));
+    }
+    Ok(CsData {
+        rsrc2: w(0x24)?,
+        group,
+    })
+}
+
+fn decode_mesh(p: &[u8], e: usize) -> Result<MeshData, ShaderError> {
+    let outputs = decode_outputs(p, e, "mesh outputs")?;
+    let info = p
+        .get(e + 0x448..e + 0x450)
+        .ok_or_else(|| short("mesh data", e + 0x448, p.len()))?;
+    let half = |at: usize| u16::from_le_bytes([info[at], info[at + 1]]);
+    let m = MeshData {
+        outputs,
+        group_lanes: half(0),
+        max_vertices: half(2),
+        max_primitives: half(4),
+        user_sgprs: info[6],
+        topology: info[7],
+    };
+    if m.group_lanes == 0 || u64::from(m.group_lanes) > MAX_GROUP_THREADS {
+        return Err(ShaderError::Unsupported(format!(
+            "mesh group of {} lanes (1 to {MAX_GROUP_THREADS})",
+            m.group_lanes
+        )));
+    }
+    Ok(m)
 }
 
 fn decode_ps(p: &[u8], e: usize) -> Result<PsData, ShaderError> {
@@ -504,8 +630,18 @@ pub(super) mod tests {
         p[at..at + 4].copy_from_slice(&v.to_le_bytes());
     }
 
+    fn put_u16(p: &mut [u8], at: usize, v: u16) {
+        p[at..at + 2].copy_from_slice(&v.to_le_bytes());
+    }
+
     /// A payload with a VS record (`vs`) and/or a PS record (`ps`), 0x2000 bytes.
     pub fn payload(vs: bool, ps: bool) -> Vec<u8> {
+        payload_all(vs, ps, false, false)
+    }
+
+    /// Records at 0x300 (VS), 0x700 (PS), 0x1500 (CS) and 0x1600 (mesh); the PS patch table
+    /// runs to 0x1440, so every combination fits.
+    pub fn payload_all(vs: bool, ps: bool, cs: bool, mesh: bool) -> Vec<u8> {
         let mut p = vec![0u8; 0x2000];
         put_u64(&mut p, 0, 6);
         for (_, o) in SLOTS {
@@ -521,7 +657,13 @@ pub(super) mod tests {
         p[0x231] = 1;
         put_u32(&mut p, 0x238, 5); // lower bound
         p[0x240] = 4;
-        for (on, slot, at) in [(vs, 0x28, 0x300usize), (ps, 0x30, 0x700)] {
+        let all = [
+            (vs, 0x28, 0x300usize),
+            (ps, 0x30, 0x700),
+            (cs, 0x60, 0x1500),
+            (mesh, 0x48, 0x1600),
+        ];
+        for (on, slot, at) in all {
             if !on {
                 continue;
             }
@@ -536,7 +678,21 @@ pub(super) mod tests {
             put_u32(&mut p, at + 0x4c, 64);
             put_u32(&mut p, at + 0x50, 0xc00008);
             let e = at + STAGE_DATA;
-            if slot == 0x28 {
+            if slot == 0x60 {
+                // scratch, 6 user SGPRs, group id x and y, group info, 2 thread-id VGPRs
+                put_u32(
+                    &mut p,
+                    e + 0x24,
+                    1 | 6 << 1 | 0x80 | 0x100 | 0x400 | 1 << 11,
+                );
+                for (k, g) in [8u32, 4, 2].into_iter().enumerate() {
+                    put_u32(&mut p, e + 0x28 + 4 * k, g);
+                }
+            } else if slot == 0x48 {
+                p[e + 0xc8..e + 0xce].copy_from_slice(&[7, 2, 0x80, 2, 1, 3]);
+                put_u32(&mut p, e + 0x188, 1);
+                p[e + 0x448..e + 0x450].copy_from_slice(&[128, 0, 64, 0, 126, 0, 5, 2]);
+            } else if slot == 0x28 {
                 p[e + 0x24..e + 0x29].copy_from_slice(&[1, 2, 3, 4, 5]);
                 put_u32(&mut p, e + 0xc4, 1);
                 p[e + 0xc8..e + 0xce].copy_from_slice(&[6, 1, 0, 0, 0, 9]);
@@ -633,10 +789,46 @@ pub(super) mod tests {
     #[test]
     fn absent_stages_and_other_slots() {
         let mut p = payload(false, true);
-        put_u64(&mut p, 0x60, 0x400); // a compute slot: reported, not decoded
+        put_u64(&mut p, 0x20, 0x400); // a geometry slot: reported, not decoded
         let n = NativeProgram::parse(&xbch(&p)).unwrap();
-        assert!(n.vs.is_none());
-        assert_eq!(n.present, [("ps", 0x700), ("cs", 0x400)]);
+        assert!(n.vs.is_none() && n.cs.is_none() && n.mesh.is_none());
+        assert_eq!(n.present, [("gs", 0x400), ("ps", 0x700)]);
+    }
+
+    #[test]
+    fn parses_compute_and_mesh_records() {
+        let n = NativeProgram::parse(&xbch(&payload_all(false, false, true, true))).unwrap();
+        assert_eq!(n.present, [("mesh", 0x1600), ("cs", 0x1500)]);
+        assert_eq!(
+            n.records().iter().map(|r| r.0).collect::<Vec<_>>(),
+            ["mesh", "cs"]
+        );
+        let StageData::Compute(c) = &n.cs.as_ref().unwrap().data else {
+            panic!("not a CS")
+        };
+        assert_eq!(c.group, [8, 4, 2]);
+        assert_eq!(c.user_sgprs(), 6);
+        // x and y ids at s6 and s7, info at s8, scratch offset at s9.
+        assert_eq!(c.system_sgprs(), [6, 7, 8, 9]);
+        assert_eq!(c.thread_id_vgprs(), 2);
+        let plain = CsData {
+            rsrc2: 0,
+            group: [1; 3],
+        };
+        assert_eq!(plain.system_sgprs(), Vec::<u16>::new());
+        assert_eq!((plain.user_sgprs(), plain.thread_id_vgprs()), (0, 1));
+        let m = n.mesh.as_ref().unwrap();
+        assert_eq!((m.code_offset, m.code_size), (0x200, 8));
+        let StageData::Mesh(d) = &m.data else {
+            panic!("not a mesh")
+        };
+        assert_eq!(
+            (d.group_lanes, d.max_vertices, d.max_primitives),
+            (128, 64, 126)
+        );
+        assert_eq!((d.user_sgprs, d.topology), (5, 2));
+        assert_eq!(d.outputs.len(), 1);
+        assert_eq!((d.outputs[0].usage, d.outputs[0].param), (7, 0x80));
     }
 
     #[test]
@@ -795,6 +987,52 @@ pub(super) mod tests {
         assert!(matches!(
             bad(&|p| put_u32(p, ps_at + STAGE_DATA + 0x124, 33), true),
             Some(ShaderError::Unsupported(_))
+        ));
+        // Compute: a group of no thread, of too many, and stage data past the payload.
+        let (cs_at, ms_at) = (0x1500, 0x1600);
+        let bad_all = |edit: &dyn Fn(&mut Vec<u8>)| {
+            let mut p = payload_all(false, false, true, true);
+            edit(&mut p);
+            NativeProgram::parse(&xbch(&p)).err()
+        };
+        assert!(bad_all(&|_| {}).is_none());
+        assert!(matches!(
+            bad_all(&|p| put_u32(p, cs_at + STAGE_DATA + 0x2c, 0)),
+            Some(ShaderError::Unsupported(_))
+        ));
+        assert!(matches!(
+            bad_all(&|p| put_u32(p, cs_at + STAGE_DATA + 0x28, 1025)),
+            Some(ShaderError::Unsupported(_))
+        ));
+        assert!(matches!(
+            bad_all(&|p| {
+                // A record whose stage data ends inside the payload but whose group size
+                // dwords do not: the record moves to the very end.
+                put_u64(p, 0x60, 0x2000 - STAGE_DATA as u64 - 8);
+                let at = 0x2000 - STAGE_DATA - 8;
+                p.copy_within(cs_at..cs_at + STAGE_DATA, at);
+            }),
+            Some(ShaderError::BadOffset(_))
+        ));
+        // Mesh: too many outputs, no lanes, too many lanes, info past the payload.
+        assert!(matches!(
+            bad_all(&|p| put_u32(p, ms_at + STAGE_DATA + 0x188, 33)),
+            Some(ShaderError::Unsupported(_))
+        ));
+        assert!(matches!(
+            bad_all(&|p| put_u16(p, ms_at + STAGE_DATA + 0x448, 0)),
+            Some(ShaderError::Unsupported(_))
+        ));
+        assert!(matches!(
+            bad_all(&|p| put_u16(p, ms_at + STAGE_DATA + 0x448, 1025)),
+            Some(ShaderError::Unsupported(_))
+        ));
+        assert!(matches!(
+            bad_all(&|p| {
+                put_u64(p, 0x48, 0x1c00);
+                p.copy_within(ms_at..ms_at + STAGE_DATA, 0x1c00);
+            }),
+            Some(ShaderError::BadOffset(_))
         ));
         // Patch size, and a patch table running past the payload.
         assert!(matches!(
