@@ -7,6 +7,11 @@
 //! modes `r w a` with `+`, `b`, `t` (other letters are ignored); `fclose` of a standard stream
 //! only flags it closed. `_get_stream_buffer_pointers` reports an empty buffer.
 //!
+//! `fopen` / `_wfopen` resolve their path like the Windows file APIs do (`docs/library.md`,
+//! File paths): a path written with `/` is a host path; a title path is written under the
+//! title's write directory (a `t:` or `C:` prefix dropped, missing parent directories created)
+//! and read from an earlier write first, then from the package directories.
+//!
 //! Printf: see `printf.rs` for the format and its deviations. Return conventions of the
 //! `__stdio_common_*` functions follow the UCRT: the character count, or -1 for an invalid
 //! format (the invalid parameter handler runs, `errno` = `EINVAL`) or, in the legacy
@@ -22,6 +27,8 @@ use crate::api_ms_win_crt_runtime::{invalid_parameter_err, set_errno};
 use crate::printf::{self, read_units, Unit, VaList};
 use crate::scanf;
 use std::ffi::{c_char, c_void};
+use std::os::unix::ffi::OsStrExt;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 
 const EINVAL: i32 = 22;
@@ -260,6 +267,37 @@ unsafe fn sscanf_impl<T: Unit>(
     scanf::scan(&inp, &f, T::WIDE, opts, &mut va)
 }
 
+/// Host path of a stdio open, under an explicit write root: a path written with `/` is a host
+/// path (as for reads elsewhere); a title path is written under `write_root` (parent
+/// directories created) and read from an earlier write first, then from the package directories.
+fn open_host_path_in(write_root: &Path, path: &[u8], write: bool) -> Option<PathBuf> {
+    let text = String::from_utf8_lossy(path);
+    if text.is_empty() {
+        return None;
+    }
+    if text.starts_with('/') {
+        return Some(PathBuf::from(text.replace('\\', "/")));
+    }
+    if write {
+        let out = crate::paths::map_write_path_in(write_root, &text)?;
+        if let Some(parent) = out.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        Some(out)
+    } else {
+        Some(
+            crate::paths::map_write_path_in(write_root, &text)
+                .filter(|p| p.exists())
+                .unwrap_or_else(|| crate::paths::map_read_path(&text)),
+        )
+    }
+}
+
+/// [`open_host_path_in`] under the title's own write directory.
+fn open_host_path(path: &[u8], write: bool) -> Option<PathBuf> {
+    open_host_path_in(&crate::paths::write_dir(), path, write)
+}
+
 unsafe fn open_file(path: &[u8], mode: &[u8]) -> *mut File {
     let plus = mode.contains(&b'+');
     let flags = match mode.first() {
@@ -281,10 +319,14 @@ unsafe fn open_file(path: &[u8], mode: &[u8]) -> *mut File {
             return std::ptr::null_mut();
         }
     };
-    let mut p: Vec<u8> = path
-        .iter()
-        .map(|&c| if c == b'\\' { b'/' } else { c })
-        .collect();
+    // `w` and `a` create a file, which goes under the write directory; `r+` opens an existing
+    // one, found the way reads are.
+    let write = !matches!(mode.first(), Some(b'r'));
+    let Some(host) = open_host_path(path, write) else {
+        invalid();
+        return std::ptr::null_mut();
+    };
+    let mut p = host.as_os_str().as_bytes().to_vec();
     p.push(0);
     let fd = libc::open(p.as_ptr() as *const c_char, flags | libc::O_CLOEXEC, 0o666);
     if fd < 0 {
@@ -1153,6 +1195,32 @@ mod tests {
 
     fn f_null() -> *mut File {
         std::ptr::null_mut()
+    }
+
+    #[test]
+    fn stdio_paths_follow_the_file_api_mapping() {
+        let root = std::env::temp_dir().join(format!("nativ64-stdio-map-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        // A title path (here the console's `t:` scratch drive): the drive is dropped and the
+        // missing parent directories are created under the write directory.
+        let p = open_host_path_in(&root, br"t:\wer\crash-1.log", true).unwrap();
+        assert_eq!(p, root.join("wer").join("crash-1.log"));
+        assert!(p.parent().unwrap().is_dir());
+        std::fs::write(&p, b"report").unwrap();
+        // The same title path reads that copy back before searching the package directories.
+        assert_eq!(
+            open_host_path_in(&root, br"t:\wer\crash-1.log", false),
+            Some(p.clone())
+        );
+        // A path written with `/` is a host path, whatever the mode.
+        assert_eq!(
+            open_host_path_in(&root, b"/tmp/nativ64-host.bin", true),
+            Some(PathBuf::from("/tmp/nativ64-host.bin"))
+        );
+        // Nothing to map: an empty path, and a drive prefix alone.
+        assert_eq!(open_host_path_in(&root, b"", true), None);
+        assert_eq!(open_host_path_in(&root, b"t:", true), None);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

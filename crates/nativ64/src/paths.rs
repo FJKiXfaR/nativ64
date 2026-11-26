@@ -125,13 +125,19 @@ fn resolve_in(start: &Path, rest: &str) -> PathBuf {
 /// Maps a title path to the host path to write: the same relative path under [`write_dir`] (a
 /// drive prefix and `..` components are dropped, so nothing escapes). `None` for an empty path.
 pub fn map_write_path(win: &str) -> Option<PathBuf> {
+    map_write_path_in(&write_dir(), win)
+}
+
+/// [`map_write_path`] under an explicit directory (for callers with their own sandbox and for
+/// tests).
+pub fn map_write_path_in(root: &Path, win: &str) -> Option<PathBuf> {
     let unified = win.replace('\\', "/");
     let mut rest = unified.as_str();
     let bytes = rest.as_bytes();
     if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
         rest = &rest[2..];
     }
-    let mut out = write_dir();
+    let mut out = root.to_path_buf();
     let mut any = false;
     for part in rest
         .split('/')
