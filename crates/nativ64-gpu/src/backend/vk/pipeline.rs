@@ -9,8 +9,9 @@
 //! refused (with the reason) when it has a stage other than VS and PS, reads
 //! an address the backend cannot translate, uses a logic op, dual-source blending, conservative
 //! rasterization, multisampling, a patch or adjacency topology, an instance step rate above 1,
-//! or a format with no Vulkan mapping. Set `NATIV64_SHADER_VALIDATE` to have every module run
-//! through `spirv-val` (a failure is logged; the pipeline is still built).
+//! or a format with no Vulkan mapping. A rectangle list (list topology 17) uses a second variant
+//! of the pipeline with a geometry stage made from the vertex outputs (`spirv::rect`).
+//! Set `NATIV64_SHADER_VALIDATE` to have every module run through `spirv-val` (a failure is logged; the pipeline is still built).
 //!
 //! Dynamic state: viewport, scissor, blend constants, stencil reference, primitive topology,
 //! vertex binding strides and primitive restart; everything else (cull, front face, depth
@@ -30,6 +31,7 @@ use crate::d3d12::pipeline::{GraphicsState, PipelineData};
 use crate::d3d12::pipeline_state::{fixed_state, Blend, FixedState, StencilFace};
 use crate::shader::io::{self, StageIo};
 use crate::shader::native::RootLayout;
+use crate::shader::spirv::rect::rectangle_gs;
 use crate::shader::{parse, ParsedShader};
 use ash::vk;
 use std::collections::HashMap;
@@ -63,7 +65,8 @@ pub enum Outcome {
 
 pub struct Pipelines<'g> {
     gpu: &'g Gpu,
-    map: HashMap<u64, Outcome>,
+    /// By serial and whether the pipeline is the rectangle-list variant (it has a geometry stage).
+    map: HashMap<(u64, bool), Outcome>,
 }
 
 impl<'g> Pipelines<'g> {
@@ -74,23 +77,29 @@ impl<'g> Pipelines<'g> {
         }
     }
 
-    /// The outcome for `pd`, building it the first time.
+    /// The outcome for `pd`, building it the first time. `rect` asks for the variant that
+    /// completes rectangle lists with a geometry stage (`spirv::rect`).
     pub fn get(
         &mut self,
         bindless: &mut Bindless<'_>,
         samplers: &mut SamplerCache<'_>,
         pd: &PipelineData,
+        rect: bool,
     ) -> &Outcome {
         let gpu = self.gpu;
-        self.map
-            .entry(pd.serial)
-            .or_insert_with(|| match build(gpu, bindless, samplers, pd) {
+        self.map.entry((pd.serial, rect)).or_insert_with(|| {
+            match build(gpu, bindless, samplers, pd, rect) {
                 Ok(b) => Outcome::Built(b),
                 Err(why) => {
-                    log_once(format!("pipeline {} is not replayed: {why}", pd.serial));
+                    let kind = if rect { " as a rectangle list" } else { "" };
+                    log_once(format!(
+                        "pipeline {} is not replayed{kind}: {why}",
+                        pd.serial
+                    ));
                     Outcome::Failed(why)
                 }
-            })
+            }
+        })
     }
 
     /// How many pipelines were built (tests).
@@ -361,6 +370,7 @@ fn build(
     bindless: &mut Bindless<'_>,
     samplers: &mut SamplerCache<'_>,
     pd: &PipelineData,
+    rect: bool,
 ) -> Result<Built, String> {
     let g = pd
         .graphics
@@ -380,6 +390,9 @@ fn build(
     let ps = stage(pd, "pixel")
         .map(|b| parse_stage(b, "pixel"))
         .transpose()?;
+    if rect && !gpu.caps.geometry {
+        return Err("a rectangle list needs geometryShader, which this device lacks".into());
+    }
     let (tv, tp) = match &ps {
         Some(ps) => {
             let (a, b) =
@@ -409,6 +422,19 @@ fn build(
         )),
     };
     let topo = topology(g.topology_type)?;
+    if rect && topo != vk::PrimitiveTopology::TRIANGLE_LIST {
+        return Err(format!(
+            "a rectangle list on topology type {}",
+            g.topology_type
+        ));
+    }
+    let gs = if rect {
+        let iface = io::rect_interface(&vs, ps.as_ref(), &g.target_formats)
+            .ok_or("the vertex stage has no I/O")?;
+        Some(rectangle_gs(&iface))
+    } else {
+        None
+    };
     let blends: Vec<_> = (0..color.len())
         .map(|i| attachment(&fixed.targets[if fixed.independent_blend { i } else { 0 }]))
         .collect::<Result<_, _>>()?;
@@ -427,6 +453,9 @@ fn build(
     if let Some(t) = &tp {
         validate(&t.words, "pixel");
     }
+    if let Some(w) = &gs {
+        validate(w, "rectangle");
+    }
     // SAFETY: every object made here is destroyed before returning (modules) or owned by the
     // returned `Built`.
     unsafe {
@@ -442,6 +471,16 @@ fn build(
                 return Err(e);
             }
         };
+        let gm = match gs.as_ref().map(|w| module(w)).transpose() {
+            Ok(m) => m,
+            Err(e) => {
+                d.destroy_shader_module(vm, None);
+                if let Some(pm) = pm {
+                    d.destroy_shader_module(pm, None);
+                }
+                return Err(e);
+            }
+        };
         let entry = c"main";
         let mut stages = vec![vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::VERTEX)
@@ -452,6 +491,15 @@ fn build(
                 vk::PipelineShaderStageCreateInfo::default()
                     .stage(vk::ShaderStageFlags::FRAGMENT)
                     .module(pm)
+                    .name(entry),
+            );
+        }
+        if let Some(gm) = gm {
+            stages.insert(
+                1,
+                vk::PipelineShaderStageCreateInfo::default()
+                    .stage(vk::ShaderStageFlags::GEOMETRY)
+                    .module(gm)
                     .name(entry),
             );
         }
@@ -545,8 +593,8 @@ fn build(
             .push_next(&mut rendering);
         let made = d.create_graphics_pipelines(vk::PipelineCache::null(), &[info], None);
         d.destroy_shader_module(vm, None);
-        if let Some(pm) = pm {
-            d.destroy_shader_module(pm, None);
+        for m in [pm, gm].into_iter().flatten() {
+            d.destroy_shader_module(m, None);
         }
         let pipeline = match made {
             Ok(p) => p[0],

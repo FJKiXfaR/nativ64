@@ -201,7 +201,7 @@ fn get(out: &Out, r: Reg) -> u32 {
 // ---------------------------------------------------------------------------------------
 // Validation
 
-fn validate(words: &[u32]) {
+pub(crate) fn validate(words: &[u32]) {
     static N: AtomicUsize = AtomicUsize::new(0);
     if Command::new("spirv-val").arg("--version").output().is_err() {
         eprintln!("spirv-val is not in PATH: validation skipped");
@@ -2042,6 +2042,78 @@ pub(crate) mod stage {
                 p[0x221] = 0; // the root descriptor is root parameter 0
                 put32(p, e + 0xc4, 0); // no vertex input
                 put32(p, e + 0x188, 0); // no parameter output
+            },
+        )
+    }
+
+    /// As [`draw_vs_pulling_from_a_root_buffer`], with two parameter outputs: TEXCOORD0 is the
+    /// position mapped to 0..1 (x, y, 0, 1) and COLOR0 is the constant (0, 0, 1, 1).
+    pub(crate) fn draw_vs_pulling_with_outputs() -> Vec<u8> {
+        let lines = [
+            "s_mov_b32 s0, s8",
+            "s_or_b32 s1, s9, 0x10000",
+            "s_mov_b32 s2, -1",
+            "s_mov_b32 s3, 0x11014fac",
+            "v_lshlrev_b32 v1, 4, v0",
+            "buffer_load_dwordx4 v[4:7], v1, s[0:3], 0 offen",
+            "v_mul_f32 v8, 0.5, v4",
+            "v_mul_f32 v9, 0.5, v5",
+            "v_add_f32 v8, 0.5, v8",
+            "v_add_f32 v9, 0.5, v9",
+            "v_mov_b32 v10, 1.0",
+            "v_mov_b32 v11, 0",
+            "exp pos0, v4, v5, v6, v7",
+            "exp param0, v8, v9, v11, v10",
+            "exp param1, v11, v11, v10, v10 done",
+        ];
+        blob_bytes(
+            true,
+            &prog(&lines),
+            sig(&[("POSITION", 0, 0, 1, 0xf)]),
+            sigs(),
+            |p, e| {
+                p[0x221] = 0; // the root descriptor is root parameter 0
+                put32(p, e + 0xc4, 0); // no vertex input
+                for (k, row) in [1u8, 2].into_iter().enumerate() {
+                    p[e + 0xc8 + 6 * k..e + 0xc8 + 6 * k + 6]
+                        .copy_from_slice(&[6, row, k as u8, 0, 0, 0]);
+                }
+                put32(p, e + 0x188, 2);
+            },
+        )
+    }
+
+    /// A pixel program that writes (TEXCOORD0.x, TEXCOORD0.y, flat COLOR0.z, 1) to target 0.
+    pub(crate) fn draw_ps_reading_the_outputs() -> Vec<u8> {
+        let lines = [
+            "s_mov_b32 m0, s16", // the parameter offset: right after the four user SGPRs
+            "v_interp_p1_f32 v2, v0, attr0.x",
+            "v_interp_p2_f32 v2, v1, attr0.x",
+            "v_interp_p1_f32 v3, v0, attr0.y",
+            "v_interp_p2_f32 v3, v1, attr0.y",
+            "v_interp_mov_f32 v4, p0, attr1.z",
+            "v_mov_b32 v5, 1.0",
+            "exp mrt0, v2, v3, v4, v5 done",
+        ];
+        blob_bytes(
+            false,
+            &prog(&lines),
+            sigs(),
+            sig(&[("SV_Target", 0, 64, 0, 0xf)]),
+            |p, e| {
+                put32(p, 0x210, 0); // root constants, as in the other draw programs
+                put32(p, 0x214, 0);
+                put32(p, 0x218, 4);
+                p[0x220] = 12;
+                p[0x221] = 1;
+                let rows = [(1u8, 0u8, 0u8), (2, 1, 1)];
+                for (k, (row, attr, flags)) in rows.into_iter().enumerate() {
+                    p[e + 0x24 + 8 * k..e + 0x24 + 8 * k + 8]
+                        .copy_from_slice(&[6, row, 0xf, attr, 0, 0, 1, flags]);
+                }
+                put32(p, e + 0x124, 2);
+                put32(p, e + 0x134, 0x2);
+                put32(p, e + 0x14c, u32::MAX); // no export patch
             },
         )
     }

@@ -330,6 +330,8 @@ fn skip<T>(s: Skip) -> Result<T, Skip> {
 /// 19 quad list, 20 quad strip), and the quad list.
 const CONSOLE_TOPOLOGY: u32 = 17;
 const QUADS: u32 = 19;
+/// The rectangle list: three corners per rectangle, the fourth made by a geometry stage.
+const RECTANGLES: u32 = 17;
 
 /// 0 points, 1 lines, 2 triangles.
 fn class_of(t: vk::PrimitiveTopology) -> u8 {
@@ -426,11 +428,12 @@ impl<'g> VkBackend<'g> {
             return skip(Skip::State("no bindless descriptor set".into()));
         }
         let draw = &mut self.draw;
+        let rects = draw.list.topology == RECTANGLES;
         let Some(Some(bl)) = draw.bindless.as_mut() else {
             return skip(Skip::State("no bindless descriptor set".into()));
         };
         let set = bl.set;
-        let built = match draw.pipelines.get(bl, &mut draw.samplers, pd) {
+        let built = match draw.pipelines.get(bl, &mut draw.samplers, pd, rects) {
             Outcome::Built(b) => b.clone(),
             Outcome::Failed(w) => return skip(Skip::Pipeline(w.clone())),
         };
@@ -564,7 +567,9 @@ impl<'g> VkBackend<'g> {
         let quads = list.topology == QUADS;
         let topo = match dynamic_topology(list.topology) {
             Some(t) if class_of(t) == class_of(built.topology) => t,
-            None if quads && class_of(built.topology) == 2 => vk::PrimitiveTopology::TRIANGLE_LIST,
+            None if (quads || rects) && class_of(built.topology) == 2 => {
+                vk::PrimitiveTopology::TRIANGLE_LIST
+            }
             None if (CONSOLE_TOPOLOGY..=CONSOLE_TOPOLOGY + 3).contains(&list.topology) => {
                 let name = match list.topology {
                     17 => "rectangle list",
@@ -1345,22 +1350,113 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn rectangles_line_loops_and_quad_strips_are_refused_by_name() {
+    fn line_loops_and_quad_strips_are_refused_by_name() {
         let Some(g) = gpu_or_skip() else { return };
         let mut b = VkBackend::new(&g);
         let target = texture(16, 8, 28, 1);
         let handle = rtv(target);
         let verts = title_memory(&floats(&QUAD));
         let pipe = quad_pipeline();
-        let mut list = quad_list(pipe, handle, verts, 17);
+        let mut list = quad_list(pipe, handle, verts, 18);
         list.push(draw(4));
-        for t in [18, 20] {
-            list.extend([Command::Topology(t), draw(4)]);
-        }
+        list.extend([Command::Topology(20), draw(4)]);
         b.execute(&[list]);
-        assert_eq!((b.stats.draws, b.stats.drawn), (3, 0), "{:?}", b.stats);
-        assert_eq!(b.stats.draw_skips.state, 3);
+        assert_eq!((b.stats.draws, b.stats.drawn), (2, 0), "{:?}", b.stats);
+        assert_eq!(b.stats.draw_skips.state, 2);
         let r = b.read_back(target).unwrap();
         assert!(r.bytes.chunks(4).all(|p| p == BLUE), "nothing was drawn");
+    }
+
+    /// Three corners of a rectangle with the right angle in the middle of the list.
+    const RECT: [f32; 12] = [
+        1.0, 1.0, 0.0, 1.0, -1.0, 1.0, 0.0, 1.0, -1.0, -1.0, 0.0, 1.0,
+    ];
+
+    #[test]
+    fn a_rectangle_list_is_completed_by_the_geometry_stage() {
+        let Some(g) = gpu_or_skip() else { return };
+        if !g.caps.geometry {
+            return;
+        }
+        let mut b = VkBackend::new(&g);
+        let target = texture(16, 8, 28, 1);
+        let handle = rtv(target);
+        let verts = title_memory(&floats(&RECT));
+        let pipe = pipeline(
+            stage::draw_vs_pulling_with_outputs(),
+            stage::draw_ps_reading_the_outputs(),
+            None,
+        );
+        let mut list = quad_list(pipe, handle, verts, 17);
+        list.push(draw(3));
+        b.execute(&[list]);
+        assert_eq!((b.stats.draws, b.stats.drawn), (1, 1), "{:?}", b.stats);
+        let r = b.read_back(target).unwrap();
+        // the colour is the position over 0..1 and the flat blue is on, everywhere: the
+        // corner the geometry stage made (top right, v3) is as covered as the others
+        for (x, y) in [(0, 0), (15, 0), (0, 7), (15, 7), (8, 4), (13, 1), (2, 6)] {
+            let p = pixel(&r, x, y);
+            let (wx, wy) = ((x as f32 + 0.5) / 16.0, 1.0 - (y as f32 + 0.5) / 8.0);
+            let near = |got: u8, want: f32| (f32::from(got) - want * 255.0).abs() <= 3.0;
+            assert!(
+                near(p[0], wx) && near(p[1], wy) && p[2] == 255 && p[3] == 255,
+                "({x}, {y}): {p:?} wants x {wx} y {wy}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_rectangle_list_covers_the_target_wherever_its_right_angle_is() {
+        let Some(g) = gpu_or_skip() else { return };
+        if !g.caps.geometry {
+            return;
+        }
+        let corners = [[1.0, 1.0], [-1.0, 1.0], [-1.0, -1.0]];
+        for order in [
+            [0, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ] {
+            let mut b = VkBackend::new(&g);
+            let target = texture(16, 8, 28, 1);
+            let handle = rtv(target);
+            let flat: Vec<f32> = order
+                .iter()
+                .flat_map(|&i| [corners[i][0], corners[i][1], 0.0, 1.0])
+                .collect();
+            let verts = title_memory(&floats(&flat));
+            let pipe = pipeline(
+                stage::draw_vs_pulling_with_outputs(),
+                stage::draw_ps_reading_the_outputs(),
+                None,
+            );
+            let mut list = quad_list(pipe, handle, verts, 17);
+            list.push(draw(3));
+            b.execute(&[list]);
+            assert_eq!(b.stats.drawn, 1, "{order:?}: {:?}", b.stats);
+            let r = b.read_back(target).unwrap();
+            for (x, y) in [(0, 0), (15, 0), (0, 7), (15, 7), (8, 4)] {
+                assert_eq!(pixel(&r, x, y)[2], 255, "{order:?} ({x}, {y})");
+            }
+        }
+    }
+
+    #[test]
+    fn a_rectangle_list_is_a_skip_by_name_without_geometry_shaders() {
+        let Some(g) = gpu_or_skip() else { return };
+        if g.caps.geometry {
+            return;
+        }
+        let mut b = VkBackend::new(&g);
+        let target = texture(16, 8, 28, 1);
+        let handle = rtv(target);
+        let verts = title_memory(&floats(&RECT));
+        let mut list = quad_list(quad_pipeline(), handle, verts, 17);
+        list.push(draw(3));
+        b.execute(&[list]);
+        assert_eq!(b.stats.draw_skips.pipeline, 1, "{:?}", b.stats);
     }
 }

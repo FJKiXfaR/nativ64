@@ -40,6 +40,8 @@ pub(super) struct Caps {
     pub mirror_clamp: bool,
     /// `textureCompressionBC`.
     pub bc: bool,
+    /// `geometryShader`: the rectangle lists need it (chunk 10b).
+    pub geometry: bool,
 }
 
 /// The features of a device we look at, as the 1.0 struct and the 1.1 to 1.3 ones.
@@ -189,6 +191,7 @@ impl Gpu {
                         .then_some(limits.max_sampler_anisotropy),
                     mirror_clamp: have.f12.sampler_mirror_clamp_to_edge != 0,
                     bc: have.core.texture_compression_bc != 0,
+                    geometry: have.core.geometry_shader != 0,
                 };
                 Ok(Gpu {
                     caps,
@@ -278,7 +281,8 @@ impl Gpu {
             .queue_family_index(family)
             .queue_priorities(&prio)];
         // Everything `missing` checked, plus the optional features the pipelines use when they
-        // are there (clip distances, sample shading, wireframe, depth bounds, anisotropy).
+        // are there (clip distances, sample shading, wireframe, depth bounds, anisotropy,
+        // geometry shaders).
         let have_f = Features::query(instance, phys);
         let core = vk::PhysicalDeviceFeatures::default()
             .shader_int64(true)
@@ -289,7 +293,8 @@ impl Gpu {
             .fill_mode_non_solid(have_f.core.fill_mode_non_solid != 0)
             .depth_bounds(have_f.core.depth_bounds != 0)
             .sampler_anisotropy(have_f.core.sampler_anisotropy != 0)
-            .texture_compression_bc(have_f.core.texture_compression_bc != 0);
+            .texture_compression_bc(have_f.core.texture_compression_bc != 0)
+            .geometry_shader(have_f.core.geometry_shader != 0);
         let mut f11 = vk::PhysicalDeviceVulkan11Features::default().shader_draw_parameters(true);
         let mut f12 = vk::PhysicalDeviceVulkan12Features::default()
             .buffer_device_address(true)

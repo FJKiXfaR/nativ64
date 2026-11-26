@@ -9,6 +9,7 @@
 pub mod alu;
 pub mod builder;
 pub mod emit;
+pub mod rect;
 
 pub use alu::Unsupported;
 pub use emit::{translate, translate_io, Probe, SpirvError};

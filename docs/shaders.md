@@ -1243,6 +1243,27 @@ it says otherwise.
      `spirv-val`.
    * Real validation: frames 4+ show trace 50545's and 50546's rectangles over pipeline 56's
      result.
+   **As built (chunk 10b, part 3)** (`shader/spirv/rect.rs`, `shader/io.rs::rect_interface`,
+   `backend/vk/{pipeline,draw,device}.rs`; the design above stands, with what is said here).
+   * Device: `geometryShader` is enabled when the device has it (`Caps::geometry`), never
+     required; without it a rectangle draw is a `pipeline` skip with the reason logged.
+   * `rect::rectangle_gs(&RectInterface)` writes the geometry shader directly with the module
+     builder (not through the DXBC-style `Shader` of the VIctory facts). The interface is the VS's
+     `Position`, `ClipDistance` (when the VS exports clip distances) and every linked `Location`
+     (always `vec4` of `f32`: the VS outputs are never integer; a location is flat when the
+     pixel shader reads it flat, decorated `Flat` on the GS output only). The right angle is
+     chosen on x/w, y/w; `right_angle` is its CPU twin. Output is `max_vertices 6`. `PrimitiveId`
+     is not passed (no vertex shader writes it).
+   * `Pipelines::get(.., rect)` keys by `(serial, rect)`; the variant is built at the first
+     rectangle draw (list topology 17), only on a triangle-class pipeline, with the GS stage
+     between the vertex and the pixel stage. Draws bind it as `TRIANGLE_LIST`.
+   * Tests (lavapipe too): `right_angle` in the six orders and its degenerate cases; the GS
+     passes `spirv-val` (with and without clip distances and flat outputs); a rectangle draw
+     (right angle in the middle of the list) read back per pixel, the interpolated position
+     colour and the flat output included, and the same for the six orders of the corners. The
+     refusal test no longer lists 17. Unverified: the flat value of the second triangle is
+     `va`'s, the first's is `v0`'s (provoking vertices); blends and culling over the rectangle
+     as the hardware does them; the real validation (frames 4+ of the title) is not done.
 11. **Widening, driven by the corpus report**: f16 and `v_pk_*`, remaining VOP3, MIMG
     gather/compare/derivatives, FLAT/SCRATCH stores and atomics, ray queries, merged stages if a
     title uses them (none in this corpus: its stages are VS, PS, CS, mesh only).

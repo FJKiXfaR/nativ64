@@ -13,6 +13,7 @@ use super::gfx10;
 use super::ir::{self, EntryRegs, IrError, PS_INPUT_DWORDS};
 use super::native::{PsInput, Record, StageData, VsInput, VsOutput};
 use super::resource::Translated;
+use super::spirv::rect::RectInterface;
 use super::spirv::{self, SpirvError};
 use super::structure::{self, StructError};
 use super::ParsedShader;
@@ -409,6 +410,38 @@ pub fn translate_pair(
     v.samplers = shared.clone();
     p.samplers = shared;
     Ok((v, p))
+}
+
+/// The outputs the geometry shader of a rectangle list passes on (`spirv::rect`): the locations
+/// the vertex shader writes (as linked to `ps`, or its own parameter numbers without one), flat
+/// where the pixel shader reads them flat, and whether it writes clip distances. `None` for a
+/// program that is not a vertex shader.
+pub fn rect_interface(
+    vs: &ParsedShader,
+    ps: Option<&ParsedShader>,
+    targets: &[u32],
+) -> Option<RectInterface> {
+    let link = ps.map(|ps| link(vs, ps));
+    let StageIo::Vertex(v) = stage_io(vs, &[], link.as_ref())? else {
+        return None;
+    };
+    let flat: BTreeSet<u32> = match ps.and_then(|ps| stage_io(ps, targets, link.as_ref())) {
+        Some(StageIo::Pixel(p)) => p
+            .attrs
+            .values()
+            .filter(|a| a.flat)
+            .filter_map(|a| a.location)
+            .collect(),
+        _ => BTreeSet::new(),
+    };
+    let locations: BTreeSet<u32> = v.params.values().copied().collect();
+    Some(RectInterface {
+        locations: locations
+            .into_iter()
+            .map(|l| (l, flat.contains(&l)))
+            .collect(),
+        clip: v.clip,
+    })
 }
 
 /// Rewrites the `Binding` of every variable in descriptor set 1 (the static samplers) from `k`
