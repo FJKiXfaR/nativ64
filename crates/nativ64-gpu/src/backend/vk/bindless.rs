@@ -516,10 +516,14 @@ mod tests {
             let r = table.buf.read(index_of(slot) * RECORD, RECORD);
             assert_eq!(u32_at(&r, 0), 0);
         }
-        assert_eq!(table.retry, [index_of(lost)]);
+        // (the registry is global: other tests' views may be in the list too)
+        assert!(table.retry.contains(&index_of(lost)));
+        assert!(!table.retry.contains(&index_of(tex)));
         // a reset rewrites the records (the addresses may have changed)
         table.reset();
         table.update(&mut mem);
-        assert_eq!(table.retry, [index_of(lost)]);
+        assert!(table.retry.contains(&index_of(lost)));
+        let r = table.buf.read(index_of(srv) * RECORD, RECORD);
+        assert_eq!(u64_at(&r, 8), first + 32);
     }
 }
