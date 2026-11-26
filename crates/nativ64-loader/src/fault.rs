@@ -475,6 +475,69 @@ pub(crate) unsafe fn emulate_clzero(
     true
 }
 
+/// Emulates the AMD-only SSE4a `extrq` / `insertq` (register forms: `66 0f 78 /0 ib ib`,
+/// `66 0f 79`, `f2 0f 78 ib ib`, `f2 0f 79`, optional REX) on the saved XMM registers, as the
+/// vendor manual defines them; returns the instruction's length, `None` for anything else.
+///
+/// `extrq` replaces the low half of its operand by `len` bits starting at bit `idx`, shifted
+/// down; `insertq` replaces `len` bits of the destination's low half, from bit `idx`, by the
+/// source's low bits. A length field of 0 means 64. The upper half is architecturally undefined
+/// and left as it is. The register forms read `len` and `idx` from the source: its low half
+/// (`extrq`) or its high half (`insertq`), 6 bits each, at bits 0 and 8.
+///
+/// # Safety
+/// `code` points at the faulting instruction, readable for as many bytes as it is long.
+pub(crate) unsafe fn emulate_sse4a(code: *const u8, xmm: &mut [[u64; 2]; 16]) -> Option<usize> {
+    let b = |i: usize| unsafe { code.add(i).read() };
+    let prefix = b(0);
+    if !matches!(prefix, 0x66 | 0xf2) {
+        return None;
+    }
+    let (rex, at) = if b(1) & 0xf0 == 0x40 {
+        (b(1), 2)
+    } else {
+        (0, 1)
+    };
+    if b(at) != 0x0f || !matches!(b(at + 1), 0x78 | 0x79) {
+        return None;
+    }
+    let modrm = b(at + 2);
+    if modrm >> 6 != 3 {
+        return None;
+    }
+    let reg = usize::from(modrm >> 3 & 7 | (rex & 4) << 1);
+    let rm = usize::from(modrm & 7 | (rex & 1) << 3);
+    let immediate = b(at + 1) == 0x78;
+    let extrq = prefix == 0x66;
+    let (fields, len) = if immediate {
+        // The immediate extrq has the opcode extension /0 and works on `rm`.
+        if extrq && reg & 7 != 0 {
+            return None;
+        }
+        ((u64::from(b(at + 3)), u64::from(b(at + 4))), at + 5)
+    } else {
+        let f = if extrq { xmm[rm][0] } else { xmm[rm][1] };
+        ((f & 0xff, f >> 8 & 0xff), at + 3)
+    };
+    let (n, shift) = ((fields.0 & 63) as u32, (fields.1 & 63) as u32);
+    let bits = if n == 0 { 64 } else { n };
+    let mask = if bits == 64 {
+        u64::MAX
+    } else {
+        (1u64 << bits) - 1
+    };
+    if extrq {
+        // `extrq xmm1, xmm2`: xmm1 is `reg`, xmm2 (the fields) `rm`; immediate form: `rm`.
+        let target = if immediate { rm } else { reg };
+        xmm[target][0] = (xmm[target][0] >> shift) & mask;
+    } else {
+        // `insertq xmm1, xmm2`: xmm1 is `reg`, xmm2 `rm`.
+        let value = (xmm[rm][0] & mask) << shift;
+        xmm[reg][0] = xmm[reg][0] & !(mask << shift) | value;
+    }
+    Some(len)
+}
+
 /// SIGILL for an instruction the console CPU has and the host lacks: emulates it and resumes.
 /// Async-signal-safe: reads and writes only registers and guest memory.
 unsafe fn emulate_cpu_gap(uc: *mut libc::ucontext_t) -> bool {
@@ -504,6 +567,16 @@ unsafe fn emulate_cpu_gap(uc: *mut libc::ucontext_t) -> bool {
         }
         g[libc::REG_RIP as usize] = (rip + 3) as i64;
         return true;
+    }
+    // SSE4a `extrq` / `insertq` (the console CPU is AMD; Intel hosts lack them).
+    let fp = (*uc).uc_mcontext.fpregs;
+    if !fp.is_null() && matches!(*code, 0x66 | 0xf2) {
+        // The saved XMM registers follow the 160-byte x87 and control area of the FXSAVE image.
+        let xmm = &mut *((fp as *mut u8).add(160) as *mut [[u64; 2]; 16]);
+        if let Some(len) = emulate_sse4a(code, xmm) {
+            g[libc::REG_RIP as usize] = (rip + len as u64) as i64;
+            return true;
+        }
     }
     // Stay inside the page of the faulting instruction: the neighbouring one may be unmapped.
     let off = rip as usize & 0xfff;
@@ -618,6 +691,62 @@ mod tests {
         assert_eq!(regs.rip, 0x1000 + 8);
         assert!(zeroed(&m, s, s + 256));
         assert_eq!(regs.eflags & CMP_FLAGS, cmp_flags(s + 256, s + 256));
+    }
+
+    #[test]
+    fn sse4a_insertq_and_extrq() {
+        let mut x = [[0u64; 2]; 16];
+        x[0][0] = 0xaaaa_aaaa_aaaa_aaaa;
+        x[1][0] = 0x1234_5678;
+        // insertq xmm0, xmm1, len 16, idx 16
+        assert_eq!(
+            unsafe { emulate_sse4a([0xf2, 0x0f, 0x78, 0xc1, 0x10, 0x10].as_ptr(), &mut x) },
+            Some(6)
+        );
+        assert_eq!(x[0][0], 0xaaaa_aaaa_5678_aaaa);
+        // extrq xmm0, len 8, idx 20 (immediate form, /0)
+        assert_eq!(
+            unsafe { emulate_sse4a([0x66, 0x0f, 0x78, 0xc0, 0x08, 0x14].as_ptr(), &mut x) },
+            Some(6)
+        );
+        assert_eq!(x[0][0], 0x67);
+        // insertq xmm2, xmm3 with len 8, idx 4 in xmm3's high half
+        x[2][0] = u64::MAX;
+        x[3] = [0, 0x0408];
+        assert_eq!(
+            unsafe { emulate_sse4a([0xf2, 0x0f, 0x79, 0xd3].as_ptr(), &mut x) },
+            Some(4)
+        );
+        assert_eq!(x[2][0], !0xff0u64);
+        // extrq xmm4, xmm5 with len 4, idx 8 in xmm5's low half
+        x[4][0] = 0xfedc;
+        x[5] = [0x0804, 0];
+        assert_eq!(
+            unsafe { emulate_sse4a([0x66, 0x0f, 0x79, 0xe5].as_ptr(), &mut x) },
+            Some(4)
+        );
+        assert_eq!(x[4][0], 0xe);
+        // REX.R and REX.B reach xmm8-xmm15; length 0 means 64 bits
+        x[9][0] = 0x1111;
+        x[8][0] = 7;
+        assert_eq!(
+            unsafe { emulate_sse4a([0xf2, 0x45, 0x0f, 0x78, 0xc1, 0x00, 0x00].as_ptr(), &mut x) },
+            Some(7)
+        );
+        assert_eq!(x[8][0], 0x1111);
+        // Not SSE4a: a memory form, an extrq with another extension, other opcodes.
+        assert_eq!(
+            unsafe { emulate_sse4a([0xf2, 0x0f, 0x78, 0x01, 0, 0].as_ptr(), &mut x) },
+            None
+        );
+        assert_eq!(
+            unsafe { emulate_sse4a([0x66, 0x0f, 0x78, 0xc8, 0, 0].as_ptr(), &mut x) },
+            None
+        );
+        assert_eq!(
+            unsafe { emulate_sse4a([0x66, 0x0f, 0x7e, 0xc0, 0, 0].as_ptr(), &mut x) },
+            None
+        );
     }
 
     #[test]
