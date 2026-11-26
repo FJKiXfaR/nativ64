@@ -83,13 +83,21 @@ fn print_ir(p: &shader::ParsedShader) -> bool {
     }
 }
 
-/// Prints the flow-followed code of the program's VS or PS record.
+/// Prints the flow-followed code of the program's VS or PS record. Stages without a decoded
+/// record (compute, mesh) print each slot's code, read as wave64 like `--stats` does.
 fn print_code(p: &shader::ParsedShader) -> bool {
     let Some(rec) = p.record() else {
-        return true;
+        let mut ok = true;
+        for (_, code) in p.native.slot_codes() {
+            ok &= print_follow(code, false);
+        }
+        return ok;
     };
-    let code = p.native.code(rec);
-    match gfx10::follow(code, gfx10::ENTRY, rec.wave32()) {
+    print_follow(p.native.code(rec), rec.wave32())
+}
+
+fn print_follow(code: &[u8], wave32: bool) -> bool {
+    match gfx10::follow(code, gfx10::ENTRY, wave32) {
         Ok(prog) => {
             for i in &prog.instrs {
                 println!("  +{:#05x}: {}", i.at, gfx10::disasm_instr(i));
