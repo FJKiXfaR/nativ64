@@ -109,6 +109,11 @@ pub const IID_SYSTEM: Guid = Guid::new(
 pub const E_BUFFER_TOO_SMALL: i32 = 0x8007_007Au32 as i32;
 /// The sandbox the title is told it runs in.
 pub const SANDBOX_ID: &[u8] = b"RETAIL\0";
+/// The console id `XSystemGetConsoleId` answers with: four groups of eight hex digits and a
+/// two-digit suffix, 38 characters plus the terminator (`XSystemConsoleIdBytes` is 39, the
+/// buffer size titles allocate for it). Zeroes are the PC stand-in; the format and the length
+/// are what a title sizes its buffer for.
+pub const CONSOLE_ID: &[u8] = b"00000000.00000000.00000000.00000000.00\0";
 
 extern "win64" fn trap<const SLOT: usize>() -> ! {
     eprintln!(
@@ -121,11 +126,11 @@ extern "win64" fn trap<const SLOT: usize>() -> ! {
 
 type SystemObj = ComObject<SystemVtbl, ()>;
 
-/// Slots 0-2 are `IUnknown`, 4 is the sandbox id; the others are traps.
+/// Slots 0-2 are `IUnknown`, 3 the console id, 4 the sandbox id; the others are traps.
 #[repr(C)]
 struct SystemVtbl {
     unknown: IUnknownVtbl<SystemVtbl, ()>,
-    slot3: extern "win64" fn() -> !,
+    console_id: unsafe extern "win64" fn(*mut SystemObj, usize, *mut u8, *mut usize) -> i32,
     sandbox_id: unsafe extern "win64" fn(*mut SystemObj, usize, *mut u8, *mut usize) -> i32,
     slot5: extern "win64" fn() -> !,
     slot6: extern "win64" fn() -> !,
@@ -137,7 +142,39 @@ struct SystemVtbl {
     slot12: extern "win64" fn() -> !,
 }
 
-/// `GetXboxLiveSandboxId(size, buffer, used)`: the id with its terminator.
+/// Writes `value` (terminator included): `used` gets its length, a too-small buffer fails
+/// without writing, and a NULL buffer with a non-zero `size` is `E_POINTER`.
+///
+/// # Safety
+/// `buffer` is NULL or valid for `size` bytes; `used` is NULL or valid.
+unsafe fn write_cstr(size: usize, buffer: *mut u8, used: *mut usize, value: &[u8]) -> i32 {
+    if buffer.is_null() && size != 0 {
+        return E_POINTER;
+    }
+    if !used.is_null() {
+        *used = value.len();
+    }
+    if size < value.len() {
+        return E_BUFFER_TOO_SMALL;
+    }
+    std::ptr::copy_nonoverlapping(value.as_ptr(), buffer, value.len());
+    S_OK
+}
+
+/// `XSystemGetConsoleId(size, buffer, used)`: the console id with its terminator.
+///
+/// # Safety
+/// `buffer` is NULL or valid for `size` bytes; `used` is NULL or valid.
+unsafe extern "win64" fn console_id(
+    _this: *mut SystemObj,
+    size: usize,
+    buffer: *mut u8,
+    used: *mut usize,
+) -> i32 {
+    write_cstr(size, buffer, used, CONSOLE_ID)
+}
+
+/// `XSystemGetXboxLiveSandboxId(size, buffer, used)`: the id with its terminator.
 ///
 /// # Safety
 /// `buffer` is NULL or valid for `size` bytes; `used` is NULL or valid.
@@ -147,17 +184,7 @@ unsafe extern "win64" fn sandbox_id(
     buffer: *mut u8,
     used: *mut usize,
 ) -> i32 {
-    if buffer.is_null() && size != 0 {
-        return E_POINTER;
-    }
-    if !used.is_null() {
-        *used = SANDBOX_ID.len();
-    }
-    if size < SANDBOX_ID.len() {
-        return E_BUFFER_TOO_SMALL;
-    }
-    std::ptr::copy_nonoverlapping(SANDBOX_ID.as_ptr(), buffer, SANDBOX_ID.len());
-    S_OK
+    write_cstr(size, buffer, used, SANDBOX_ID)
 }
 
 static SYSTEM_VTBL: SystemVtbl = SystemVtbl {
@@ -166,7 +193,7 @@ static SYSTEM_VTBL: SystemVtbl = SystemVtbl {
         add_ref: add_ref::<SystemVtbl, ()>,
         release: release::<SystemVtbl, ()>,
     },
-    slot3: trap::<3>,
+    console_id,
     sandbox_id,
     slot5: trap::<5>,
     slot6: trap::<6>,
@@ -313,13 +340,39 @@ mod tests {
     }
 
     #[test]
-    fn system_api_gives_the_sandbox_id() {
+    fn system_api_gives_the_console_and_sandbox_ids() {
         unsafe {
             let mut obj = std::ptr::null_mut();
             assert_eq!(QueryApiImpl(&API_SYSTEM, &IID_SYSTEM, &mut obj), S_OK);
             let o = obj as *mut SystemObj;
-            let mut buf = [0xffu8; 16];
+            // Slot 3 is XSystemGetConsoleId: 38 characters plus the terminator, the size titles
+            // allocate (XSystemConsoleIdBytes = 39).
+            assert_eq!(CONSOLE_ID.len(), 39);
+            let get_console: unsafe extern "win64" fn(
+                *mut SystemObj,
+                usize,
+                *mut u8,
+                *mut usize,
+            ) -> i32 = method(o.cast(), 3);
+            let mut id = [0xffu8; 39];
             let mut used = 0usize;
+            assert_eq!(get_console(o, 39, id.as_mut_ptr(), &mut used), S_OK);
+            assert_eq!(used, 39);
+            assert_eq!(&id[..38], b"00000000.00000000.00000000.00000000.00");
+            assert_eq!(id[38], 0);
+            let mut small = [0xffu8; 8];
+            assert_eq!(
+                get_console(o, 8, small.as_mut_ptr(), &mut used),
+                E_BUFFER_TOO_SMALL
+            );
+            assert_eq!(used, 39);
+            assert_eq!(small, [0xff; 8]);
+            assert_eq!(
+                get_console(o, 8, std::ptr::null_mut(), &mut used),
+                E_POINTER
+            );
+            // Slot 4 is XSystemGetXboxLiveSandboxId: the id with its terminator.
+            let mut buf = [0xffu8; 16];
             assert_eq!(sandbox_id(o, 16, buf.as_mut_ptr(), &mut used), S_OK);
             assert_eq!(used, 7);
             assert_eq!(&buf[..7], b"RETAIL\0");
