@@ -1,9 +1,9 @@
 //! `decode`: one instruction from machine code.
 
-use super::ops::{OpInfo, Slot};
-use super::table;
+use super::ops::{self, OpInfo, Slot};
+use super::{table, table_ext};
 use super::{
-    DecodeError, Dpp, DppKind, Enc, ErrorKind, Exp, Instr, Intrp, Mem, Mods, Operand, Sdwa,
+    DecodeError, Dpp, DppKind, Enc, ErrorKind, Exp, Img, Instr, Intrp, Mem, Mods, Operand, Sdwa,
 };
 
 /// Decodes the instruction at byte offset `at` of `code` (wave64 operand widths).
@@ -38,6 +38,7 @@ pub fn decode_wave(code: &[u8], at: usize, wave32: bool) -> Result<Instr, Decode
             0x32 => Enc::Vintrp,
             0x35 => Enc::Vop3,
             0x38 => Enc::Mubuf,
+            0x3c => Enc::Mimg,
             0x3d => Enc::Smem,
             0x3e => Enc::Exp,
             _ => {
@@ -46,7 +47,6 @@ pub fn decode_wave(code: &[u8], at: usize, wave32: bool) -> Result<Instr, Decode
                     0x36 => "DS",
                     0x37 => "FLAT",
                     0x3a => "MTBUF",
-                    0x3c => "MIMG",
                     _ => "?",
                 };
                 return Err(c.err(ErrorKind::UnknownEncoding { name, word: d0 }));
@@ -65,6 +65,7 @@ pub fn decode_wave(code: &[u8], at: usize, wave32: bool) -> Result<Instr, Decode
         Enc::Vintrp => c.vintrp(d0),
         Enc::Exp => c.exp(d0),
         Enc::Mubuf => c.mubuf(d0),
+        Enc::Mimg => c.mimg(d0),
     }
 }
 
@@ -224,6 +225,7 @@ impl Cursor<'_> {
                     code: 256 + f.vdata as u16,
                     count: *c + f.extra,
                 },
+                Slot::ImgData | Slot::ImgAddr | Slot::ImgRsrc | Slot::ImgSamp => Operand::Imm(0),
                 Slot::Lit => Operand::Literal(lit),
                 Slot::Fixed(t) => Operand::Fixed(t),
                 Slot::Waitcnt
@@ -249,6 +251,7 @@ impl Cursor<'_> {
             dpp: None,
             sdwa: None,
             mem: Mem::default(),
+            img: Img::default(),
             exp: Exp::default(),
             intrp: Intrp::default(),
             wave32: self.wave32,
@@ -356,6 +359,104 @@ impl Cursor<'_> {
             slc: d1 >> 22 & 1 != 0,
             tfe,
         };
+        Ok(i)
+    }
+
+    fn mimg(&self, d0: u32) -> Result<Instr, DecodeError> {
+        let d1 = self.dword(1)?;
+        let op = (d0 & 1) << 7 | (d0 >> 18) & 0x7f;
+        let info = self.lookup(&table_ext::MIMG, Enc::Mimg, op)?;
+        let nsa = (d0 >> 1 & 3) as usize;
+        let dim = (d0 >> 3 & 7) as u8;
+        let a16 = d1 >> 30 & 1 != 0;
+        let dmask = (d0 >> 8 & 0xf) as u8;
+        let tfe = d0 >> 16 & 1 != 0;
+        let d16 = d1 >> 31 & 1 != 0;
+        let bvh = info.flags & ops::FLAG_IMG_BVH != 0;
+        if bvh && a16 {
+            return Err(self.err(ErrorKind::BadField("BVH a16")));
+        }
+        let naddr = if bvh {
+            11 + u8::from(info.flags & ops::FLAG_IMG_BVH64 != 0)
+        } else {
+            img_naddr(info.flags, dim, a16)
+        };
+        // the data registers: one per channel of the mask (an atomic's valid masks already
+        // count its operands: 1 or 3, and 3 or 15 for compare-and-swap), halved by d16
+        let f = info.flags;
+        let mut ndata = if f & ops::FLAG_IMG_GATHER != 0 || bvh {
+            4
+        } else {
+            dmask.count_ones() as u8
+        };
+        if d16 && f & ops::FLAG_IMG_ATOMIC == 0 {
+            ndata = ndata.div_ceil(2);
+        }
+        ndata += u8::from(tfe);
+        let mut img = Img {
+            dmask,
+            dim,
+            nsa: nsa as u8,
+            naddr,
+            vdata: (d1 >> 8) as u8,
+            ndata: ndata.max(1),
+            srsrc: ((d1 >> 16 & 0x1f) * 4) as u8,
+            ssamp: ((d1 >> 21 & 0x1f) * 4) as u8,
+            unorm: d0 >> 12 & 1 != 0,
+            glc: d0 >> 13 & 1 != 0,
+            slc: d0 >> 25 & 1 != 0,
+            dlc: d0 >> 7 & 1 != 0,
+            r128: d0 >> 15 & 1 != 0,
+            a16,
+            tfe,
+            lwe: d0 >> 17 & 1 != 0,
+            d16,
+            ..Img::default()
+        };
+        img.vaddr[0] = d1 as u8;
+        if nsa > 0 {
+            // one byte per further address register, four to a dword
+            if usize::from(naddr) > 1 + 4 * nsa {
+                return Err(self.err(ErrorKind::BadField("MIMG address count")));
+            }
+            for (k, slot) in img
+                .vaddr
+                .iter_mut()
+                .enumerate()
+                .take(usize::from(naddr))
+                .skip(1)
+            {
+                let w = self.dword(2 + (k - 1) / 4)?;
+                *slot = (w >> (8 * ((k - 1) % 4))) as u8;
+            }
+        } else {
+            for k in 1..usize::from(naddr) {
+                img.vaddr[k] = img.vaddr[0].wrapping_add(k as u8);
+            }
+        }
+        let mut i = self.finish(Enc::Mimg, op, info, &Fields::default(), 2 + nsa, None)?;
+        let vcount = if nsa > 0 { 1 } else { naddr.max(1) };
+        for (s, o) in info.slots.iter().zip(i.operands.iter_mut()) {
+            *o = match s {
+                Slot::ImgData => Operand::Reg {
+                    code: 256 + u16::from(img.vdata),
+                    count: img.ndata,
+                },
+                Slot::ImgAddr => Operand::Reg {
+                    code: 256 + u16::from(img.vaddr[0]),
+                    count: vcount,
+                },
+                Slot::ImgRsrc => Operand::Reg {
+                    code: u16::from(img.srsrc),
+                    count: if bvh { 4 } else { 8 },
+                },
+                _ => Operand::Reg {
+                    code: u16::from(img.ssamp),
+                    count: 4,
+                },
+            };
+        }
+        i.img = img;
         Ok(i)
     }
 
@@ -512,6 +613,31 @@ impl Cursor<'_> {
         };
         Ok(i)
     }
+}
+
+/// The address dwords of an image instruction: offset, bias, compare, derivatives, the
+/// coordinates and lod / clamp / mip; with `a16` the coordinates and those last three pack in
+/// halves (the derivatives only pack in the `_g16` opcodes).
+fn img_naddr(flags: u32, dim: u8, a16: bool) -> u8 {
+    const COORDS: [u8; 8] = [1, 2, 3, 3, 2, 3, 3, 4];
+    const GRADS: [u8; 8] = [1, 2, 3, 2, 1, 2, 2, 2];
+    let has = |f: u32| u8::from(flags & f != 0);
+    if flags & ops::FLAG_IMG_NOCOORD != 0 {
+        return 1;
+    }
+    let d = dim as usize & 7;
+    let mut n = has(ops::FLAG_IMG_OFFSET) + has(ops::FLAG_IMG_BIAS) + has(ops::FLAG_IMG_COMPARE);
+    if flags & ops::FLAG_IMG_DERIV != 0 {
+        let g = GRADS[d];
+        n += if flags & ops::FLAG_IMG_G16 != 0 {
+            2 * g.div_ceil(2)
+        } else {
+            2 * g
+        };
+    }
+    let packed =
+        COORDS[d] + has(ops::FLAG_IMG_LOD) + has(ops::FLAG_IMG_CLAMP) + has(ops::FLAG_IMG_MIP);
+    n + if a16 { packed.div_ceil(2) } else { packed }
 }
 
 /// Source 0 of a DPP / SDWA instruction: the VGPR (or SGPR, SDWA `s0`) in the extension dword.

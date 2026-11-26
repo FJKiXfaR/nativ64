@@ -3,8 +3,8 @@
 //! prints them.
 
 use super::ops::{
-    Slot, FLAG_CLAMP, FLAG_DLC, FLAG_FMODS_SHIFT, FLAG_GLC, FLAG_LIT16, FLAG_OMOD, FLAG_OPSEL,
-    FLAG_SUFFIX,
+    Slot, FLAG_CLAMP, FLAG_DLC, FLAG_FMODS_SHIFT, FLAG_GLC, FLAG_IMG_BVH, FLAG_LIT16, FLAG_OMOD,
+    FLAG_OPSEL, FLAG_SUFFIX,
 };
 use super::{decode_wave, DecodeError, DppKind, Enc, Instr, Operand};
 use std::fmt::Write as _;
@@ -38,6 +38,7 @@ pub fn disasm_instr(i: &Instr) -> String {
     match i.enc {
         Enc::Exp => return exp(i, s),
         Enc::Vintrp => return vintrp(i, s),
+        Enc::Mimg => return mimg(i, s),
         _ => {}
     }
     let mut ops: Vec<String> = Vec::new();
@@ -462,6 +463,60 @@ fn mubuf(i: &Instr, mut s: String, ops: Vec<String>) -> String {
     }
     if m.lds {
         s.push_str(" lds");
+    }
+    s
+}
+
+fn mimg(i: &Instr, mut s: String) -> String {
+    const DIM: [&str; 8] = [
+        "1D",
+        "2D",
+        "3D",
+        "CUBE",
+        "1D_ARRAY",
+        "2D_ARRAY",
+        "2D_MSAA",
+        "2D_MSAA_ARRAY",
+    ];
+    let m = &i.img;
+    let mut parts: Vec<String> = Vec::new();
+    for (slot, op) in i.info.slots.iter().zip(&i.operands) {
+        parts.push(match slot {
+            Slot::ImgAddr if m.nsa > 0 => {
+                let regs: Vec<String> = m.vaddr[..usize::from(m.naddr).max(1)]
+                    .iter()
+                    .map(|r| format!("v{r}"))
+                    .collect();
+                format!("[{}]", regs.join(", "))
+            }
+            _ => operand(op, i.wave32),
+        });
+    }
+    if i.info.flags & FLAG_IMG_BVH != 0 {
+        return format!("{s} {}", parts.join(", "));
+    }
+    let _ = write!(
+        s,
+        " {} dmask:{:#x} dim:SQ_RSRC_IMG_{}",
+        parts.join(", "),
+        m.dmask,
+        DIM[usize::from(m.dim & 7)]
+    );
+    for (on, t) in [
+        (m.unorm, "unorm"),
+        (m.glc, "glc"),
+        (m.slc, "slc"),
+        (m.dlc, "dlc"),
+        (m.r128, "r128"),
+        (m.a16, "a16"),
+        (m.tfe, "tfe"),
+        (m.lwe, "lwe"),
+        (m.d16, "d16"),
+    ] {
+        if on {
+            s.push(' ');
+            s.push_str(t);
+        }
     }
     s
 }

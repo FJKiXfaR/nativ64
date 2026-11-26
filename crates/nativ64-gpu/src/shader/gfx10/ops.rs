@@ -30,6 +30,12 @@ pub enum Slot {
     Vdata(u8),
     /// VOP3 interpolation attribute: source 0 field read as `attr.chan`.
     Attr,
+    /// MIMG operands: data VGPRs, address VGPRs, resource and sampler SGPRs (the registers
+    /// come from `Instr::img`).
+    ImgData,
+    ImgAddr,
+    ImgRsrc,
+    ImgSamp,
     /// The extra literal dword.
     Lit,
     /// An implicit operand printed as written (`vcc` prints `vcc_lo` in wave32).
@@ -73,6 +79,29 @@ pub const FLAG_FMODS_SHIFT: u32 = 16;
 /// VOP3: `clamp` and the output modifier apply.
 pub const FLAG_CLAMP: u32 = 256;
 pub const FLAG_OMOD: u32 = 512;
+
+/// MIMG opcode properties (bits shared with the VOP3-only flags above, which MIMG never uses).
+pub const FLAG_IMG_SAMP: u32 = 1 << 6;
+pub const FLAG_IMG_GATHER: u32 = 1 << 7;
+pub const FLAG_IMG_ATOMIC: u32 = 1 << 10;
+pub const FLAG_IMG_CMPSWAP: u32 = 1 << 11;
+/// Address pieces besides the coordinates: offset, bias, compare, derivatives, lod, clamp, mip.
+pub const FLAG_IMG_OFFSET: u32 = 1 << 12;
+pub const FLAG_IMG_BIAS: u32 = 1 << 13;
+pub const FLAG_IMG_COMPARE: u32 = 1 << 14;
+pub const FLAG_IMG_DERIV: u32 = 1 << 15;
+pub const FLAG_IMG_LOD: u32 = 1 << 19;
+pub const FLAG_IMG_CLAMP: u32 = 1 << 20;
+pub const FLAG_IMG_MIP: u32 = 1 << 21;
+/// The derivatives are 16-bit (`_g16` opcodes).
+pub const FLAG_IMG_G16: u32 = 1 << 22;
+/// No coordinates (`image_get_resinfo`: the mip level only).
+pub const FLAG_IMG_NOCOORD: u32 = 1 << 23;
+
+/// `image_bvh_intersect_ray` / `image_bvh64_intersect_ray`: 4 data registers, a 4-dword
+/// resource, 11 (12 for the 64-bit node pointer) address registers in the NSA form.
+pub const FLAG_IMG_BVH: u32 = 1 << 24;
+pub const FLAG_IMG_BVH64: u32 = 1 << 25;
 
 /// Fills a table from `(opcode, row)` pairs.
 pub const fn build<const N: usize>(rows: &[(u16, OpInfo)]) -> [Option<OpInfo>; N] {

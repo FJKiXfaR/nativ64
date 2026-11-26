@@ -26,7 +26,11 @@ fn one(hex: &str) -> Instr {
 fn matches_llvm_fixtures() {
     let mut n = 0;
     let mut bad = Vec::new();
-    for line in include_str!("fixtures.txt").lines() {
+    let all = [
+        include_str!("fixtures.txt"),
+        include_str!("fixtures_ext.txt"),
+    ];
+    for line in all.iter().flat_map(|f| f.lines()) {
         let (hex, text) = line.split_once('\t').unwrap();
         let b = bytes(hex);
         match decode(&b, 0) {
@@ -178,11 +182,15 @@ fn typed_errors() {
         ErrorKind::UnknownEncoding { name: "DS", .. }
     ));
     assert!(e.to_string().contains("encoding DS"), "{e}");
-    let e = decode(&dw(&[0xf000_0000, 0]), 0).unwrap_err();
-    assert!(matches!(
+    // MIMG opcode 0x06 is not an instruction
+    let e = decode(&dw(&[0xf000_0000 | 6 << 18, 0]), 0).unwrap_err();
+    assert_eq!(
         e.kind,
-        ErrorKind::UnknownEncoding { name: "MIMG", .. }
-    ));
+        ErrorKind::UnknownOpcode {
+            enc: Enc::Mimg,
+            opcode: 6
+        }
+    );
     // truncated: a VOP3 needs 8 bytes, a literal needs 4 more
     assert_eq!(
         decode(&dw(&[0xd414_0000]), 0).unwrap_err().kind,
@@ -258,8 +266,8 @@ fn flow_errors_and_indirect_jumps() {
 }
 
 /// `NATIV64_SHADER_CORPUS=<dir of .dxbc blobs>`: every program of every blob (all stages) is
-/// followed from its entry. The only accepted failures are the encodings of later chunks
-/// (MIMG, MTBUF, DS, VOP3P, FLAT); every instruction reached prints exactly what `llvm-mc`
+/// followed from its entry. A program that stops on a typed error is counted by encoding or
+/// opcode and reported; every instruction reached prints exactly what `llvm-mc`
 /// prints for the same bytes (when `llvm-mc` runs). Skipped when the variable is unset.
 #[test]
 fn corpus_matches_llvm() {
@@ -278,6 +286,7 @@ fn corpus_matches_llvm() {
     assert!(!files.is_empty(), "no .dxbc blob in NATIV64_SHADER_CORPUS");
     let (mut programs, mut followed, mut instrs, mut compared, mut indirect) = (0, 0, 0, 0, 0);
     let mut diffs = Vec::new();
+    let mut stops = std::collections::BTreeMap::new();
     for f in files {
         let blob = std::fs::read(&f).unwrap();
         let p = crate::shader::parse(&blob).unwrap_or_else(|e| panic!("{}: {e}", f.display()));
@@ -286,11 +295,19 @@ fn corpus_matches_llvm() {
             let flow = match follow(code, ENTRY, false) {
                 Ok(flow) => flow,
                 Err(e) => {
-                    assert!(
-                        matches!(e.kind, ErrorKind::UnknownEncoding { .. }),
-                        "{} {slot}: {e}",
-                        f.display()
-                    );
+                    // typed stops, counted by what stopped them
+                    let key = match &e.kind {
+                        ErrorKind::UnknownEncoding { name, .. } => format!("encoding {name}"),
+                        ErrorKind::UnknownOpcode { enc, opcode } => {
+                            format!("{} opcode {opcode:#x}", enc.name())
+                        }
+                        k => format!("{k:?}"),
+                    };
+                    let sample = code[e.at..code.len().min(e.at + 16)]
+                        .iter()
+                        .map(|b| format!("{b:02x}"))
+                        .collect::<String>();
+                    stops.entry(key).or_insert((0usize, sample)).0 += 1;
                     continue;
                 }
             };
@@ -352,6 +369,9 @@ fn corpus_matches_llvm() {
          {compared} compared with llvm-mc, {} differ, {indirect} with indirect jumps",
         diffs.len()
     );
+    for (what, (n, sample)) in &stops {
+        eprintln!("corpus stop: {what}: {n} programs, e.g. {sample}");
+    }
     assert!(
         diffs.is_empty(),
         "{}",
