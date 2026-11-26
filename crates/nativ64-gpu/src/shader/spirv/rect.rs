@@ -222,6 +222,9 @@ pub fn rectangle_gs(iface: &RectInterface) -> Vec<u32> {
     m.exec_mode(main, ExecutionMode::Triangles, &[]);
     m.exec_mode(main, ExecutionMode::OutputTriangleStrip, &[]);
     m.exec_mode(main, ExecutionMode::OutputVertices, &[6]);
+    // Without it the invocation count reads 0, which the spec forbids (and drivers may treat as
+    // "no invocation": nothing is drawn).
+    m.exec_mode(main, ExecutionMode::Invocations, &[1]);
     m.finish()
 }
 
@@ -267,5 +270,23 @@ mod tests {
             let words = rectangle_gs(&RectInterface { locations, clip });
             validate(&words);
         }
+    }
+
+    /// Vulkan wants an invocation count of at least 1 on a geometry stage (VUID 00715); a
+    /// shader without the mode reads 0 and the validation layer rejects it.
+    #[test]
+    fn the_geometry_shader_declares_one_invocation() {
+        let words = rectangle_gs(&RectInterface {
+            locations: vec![(0, false)],
+            clip: false,
+        });
+        // OpExecutionMode (op 16, 3 words with one literal): entry, mode, value
+        let modes: Vec<(u32, u32)> = words[5..]
+            .windows(4)
+            .filter(|w| w[0] == (4 << 16 | 16))
+            .map(|w| (w[2], w[3]))
+            .collect();
+        let invocations = ExecutionMode::Invocations as u32;
+        assert!(modes.contains(&(invocations, 1)), "{modes:?}");
     }
 }
