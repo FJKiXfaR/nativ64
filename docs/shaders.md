@@ -967,6 +967,91 @@ it says otherwise.
    * Real validation of 10a: the title's frame 2 (`NATIV64_DUMP_FRAMES`) shows pipeline 56's
      draw (not the clear colour), frames 4+ the draws of 50545 / 50546 that need no image;
      compare with the console's first screen.
+   **As built (chunk 10a)** (`backend/vk/{gpumem,rootblock,bindless,pipeline,draw}.rs`,
+   `d3d12/pipeline_state.rs`; the design above stands, with what is said here). Draws replay:
+   `Draw` / `DrawIndexed` into the images of the bound render and depth views, with the VS+PS pair
+   of the pipeline object.
+   * Floor: `Gpu::open` wants Vulkan 1.3 and names the first missing feature (`shaderInt64`,
+     `depthClamp`, `independentBlend`, `shaderDrawParameters`, buffer device address, timeline
+     semaphores, descriptor indexing: runtime arrays, partially bound, update-after-bind and
+     non-uniform indexing of sampled / storage images, `dynamicRendering`, `synchronization2`,
+     demote to helper invocation). Optional ones are enabled when present (clip distance,
+     sample shading, wireframe, depth bounds, anisotropy, `VK_EXT_shader_stencil_export`).
+   * GPU memory (`gpumem.rs`): as designed. The memory table (`nativ64::api_ms_win_core_memory`)
+     records decommitted, released, replaced and remapped ranges (`mark_mapped` covers the
+     `xmem` alias / unmap, so `xmem.rs` is unchanged) once `watch_gpu_changes` was called, and
+     `take_gpu_changes` hands them out; `committed_run(addr)` is the unit of an import. A run is
+     imported whole, shrunk inwards to the import alignment (so a run smaller than it does not
+     import), and a descriptor heap that owns its memory (now page-aligned, page-sized, listed
+     by `heap_ranges()`, its drop recorded as a change) is imported like title memory. The
+     device address plus length must stay below 2^48. A range that runs past its import does not
+     translate (no merging of neighbouring imports).
+   * `Translated` gained `images` (a texture, sampler or static sampler is read) and
+     `memory_addresses` (a raw scalar load or a built V# with a word that is not scalar
+     arithmetic on user data and constants, e.g. a pointer loaded from a buffer). Both are
+     decided by the tracing pass; a pipeline with either is `Failed` and its draws skipped.
+     Decision for the pair's static samplers: none are supported in 10a (they come with images
+     in 10b), so the pipeline layout is set 0 and the push constant only; `translate_pair` is
+     unchanged and 10b picks between a shared list and a renumbering.
+   * Root block (`rootblock.rs`): as designed (392 bytes, 512-byte records in a per-submission
+     host-visible arena, its device address pushed for VS | PS). Rows of both stages go into one
+     block, so a user SGPR that means two different things in the two stages (different root
+     type or parameter) refuses the draw (`state`) instead of letting one overwrite the other;
+     real root signatures should not do this **[unverified]**. Heap rows (types 5, 6) are filled
+     as tables from the start of the first bound views / samplers heap **[unverified]**: no
+     blob with such a row has run. Compute arguments are not tracked.
+   * Bindless set and view table (`bindless.rs`): set 0 with three runtime-sized bindings
+     (`min(device limits, 1 << 20)`, update-after-bind, partially bound), one pool and set,
+     bound at every draw, never written. The view buffer is host-visible (device-local when
+     the device has such memory), doubled when the registry outgrows it. Records of new
+     registry indices are written at the first draw of a submission; a buffer view whose
+     memory does not translate stays kind 0 and is tried again at each submission; all are
+     rewritten when a recorded memory change happened. A view's resource is read through
+     `resource::info_of_checked` (the registry never forgets a view, so the resource may be
+     released or, in tests, fake).
+   * Pipelines (`pipeline.rs`), cached by a serial the pipeline object now carries (an object's
+     address can be reused), not by `shader::note_pipeline`'s id. Fixed state comes from
+     `pipeline_state::fixed_state` (both raw forms; absent subobjects default as in D3D12).
+     Refused with a reason (logged once, draws skipped as `pipeline`): stages other than VS and
+     PS, compute, a blend logic operation, dual-source factors, conservative rasterization,
+     more than one sample, patch topology types, instance step rates above 1, vertex formats
+     without a mapping, a stage that needs images or reads untranslated addresses. Static
+     rather than dynamic: cull mode, front face (`FrontCounterClockwise` false is `CLOCKWISE`
+     **[unverified]**: the test pipelines cull nothing), depth test, blend, depth bias (the
+     clamp and the depth bounds test are ignored). Dynamic: viewport, scissor, blend constants,
+     stencil reference, primitive topology (kept in the pipeline's class), vertex strides and
+     primitive restart (on only for a strip topology when the pipeline has a strip cut).
+     `NATIV64_SHADER_VALIDATE` runs each module through `spirv-val` (a failure is logged and the
+     pipeline is still built). A VS attribute without a semantic or without an input element is
+     logged and left unfed. Pipeline targets must match the bound images' formats (typeless
+     views and sRGB reinterpretation are not handled): a mismatch is a `target` skip.
+   * Draws (`draw.rs`): list state is reset per list; rendering stays open over draws and state
+     changes on the same attachments and ends at any other command, with a global barrier;
+     the viewport is `y + height, -height`; one viewport and scissor (the first); a target view
+     of several layers draws into its first. `ReplayStats` gains `drawn` and `draw_skips`
+     (`pipeline`, `memory`, `target`, `state`); `ExecuteIndirect` counts as a `state` skip,
+     dispatches and mesh dispatches stay counted only. A non-zero first or base vertex is logged
+     once.
+   * Discrepancy found, not fixed: `d3d12/pipeline.rs` reads the input layout, formats and
+     samples of the description form 8 bytes above the standard header layout (it counts the
+     stream output as 40 bytes, the header's is 32), while `pipeline_state.rs` uses the standard
+     offsets (blend 120, rasterizer 452, depth-stencil 496). Titles seen so far create pipelines
+     from streams, so neither was exercised **[unverified]**.
+   * Tests (each GPU test also run on lavapipe with `NATIV64_GPU=llvmpipe`): memory table
+     records and committed runs; GPU memory (import on demand, reuse, drop after a recorded
+     change, refusal outside the table, heap memory); the flags of `Translated`; both raw
+     forms of the fixed state; root block filling and its refusals; view records of buffer
+     views, constant buffer views, unreachable memory and textures; real draws read back per
+     pixel: a VS pulling its position from a root SRV (as vs e5fcb71c) with a PS writing root
+     constants, under a top-half viewport and a left-half scissor, then a second draw into the
+     bottom half reusing the pipeline; an indexed draw with a vertex buffer and a base vertex; a
+     depth-tested pair of draws; skips counted by reason (no pipeline, a PS that samples, a root
+     descriptor outside GPU memory, no target, a topology of another class).
+   * Skipped (still counted): compute (10c), mesh and amplification, indirect, draws that read
+     images (10b), multisampling, stream output, predication, queries.
+   * Real validation of the title's frame 2 (pipeline 56) against the console's first screen is
+     **not done** in this step (the title was not run); the synthetic draws above are the
+     evidence so far.
 11. **Widening, driven by the corpus report**: f16 and `v_pk_*`, remaining VOP3, MIMG
     gather/compare/derivatives, FLAT/SCRATCH stores and atomics, ray queries, merged stages if a
     title uses them (none in this corpus: its stages are VS, PS, CS, mesh only).
