@@ -217,9 +217,18 @@ fn indirect_jump_and_unknown_encoding_are_typed_errors() {
     // s_setpc_b64 s[8:9]
     let e = build(&code(&[0xbe802008, 0xbf810000]), 0, false, &regs()).unwrap_err();
     assert_eq!(e.kind, IrErrorKind::Indirect);
-    // a MIMG first dword
-    let e = build(&code(&[0xf000_0000, 0, 0xbf810000]), 0, false, &regs()).unwrap_err();
+    // a VOP3P first dword: not decoded yet
+    let e = build(&code(&[0xcc00_0000, 0, 0xbf810000]), 0, false, &regs()).unwrap_err();
     assert!(matches!(e.kind, IrErrorKind::Decode(_)), "{e}");
+    // image_load v[0:3], v0, s[0:7] dmask:0xf dim:SQ_RSRC_IMG_1D: decoded, not in the IR yet
+    let e = build(
+        &code(&[0xf000_0f00, 0x0000_0000, 0xbf810000]),
+        0,
+        false,
+        &regs(),
+    )
+    .unwrap_err();
+    assert!(matches!(e.kind, IrErrorKind::UnsupportedEncoding(_)), "{e}");
 }
 
 /// `NATIV64_SHADER_CORPUS=<dir of .dxbc blobs>`: builds the IR of every program that decodes
