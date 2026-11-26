@@ -278,6 +278,11 @@ The executable imports from `d3d12_xs` only `D3D12XboxCreateDevice` and
   host) and its count of non-zero bytes (formats the PNG dump does not convert are named only).
   It reads every image back, so a run is slow (use `--timeout` of 60 or more); pipeline serials
   are not stable from one run to the next (threads), read them within one run.
+- `NATIV64_DUMP_FROM=<n>` skips the kept frames before `n` (to reach a late frame with
+  `NATIV64_DUMP_TARGETS` in reasonable time); `NATIV64_DRAW_ONLY=<a>-<b>` records only draws `a`
+  to `b` of each described frame (bisect which draw produces or breaks a pixel).
+- `NATIV64_PROFILE=1` prints, every 60 presented frames, the seconds spent in each phase of a
+  submission (texture sync, write watch, hashing, uploads, recording, dump) and their counters.
 
 ## Milestones and chunks
 
