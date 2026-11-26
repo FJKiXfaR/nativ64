@@ -1,8 +1,12 @@
 //! Physical device choice and the `Gpu` (device + one graphics/compute queue).
 //!
 //! Order: discrete, integrated, virtual, CPU (llvmpipe). `NATIV64_GPU` is an index into the
-//! enumeration or a case-insensitive part of the device name. A device must offer Vulkan 1.2,
-//! `VK_EXT_external_memory_host`, buffer device address and timeline semaphores.
+//! enumeration or a case-insensitive part of the device name. A device must offer Vulkan 1.3
+//! (dynamic rendering, the extended dynamic state of 1.3, demote to helper invocation),
+//! `VK_EXT_external_memory_host`, buffer device address, timeline semaphores, 64-bit integers,
+//! draw parameters and the descriptor indexing the bindless set needs (update after bind,
+//! partially bound, runtime arrays, non-uniform indexing of sampled and storage images); the
+//! refusal names the first missing feature (chunk 10).
 
 use super::{instance, log_once, vk_try, Result, VkError};
 use ash::{ext::external_memory_host, khr, vk, Device, Entry, Instance};
@@ -25,13 +29,77 @@ pub struct Gpu {
     pub(super) instance: Instance,
 }
 
+/// The features of a device we look at, as the 1.0 struct and the 1.1 to 1.3 ones.
+#[derive(Default)]
+struct Features {
+    core: vk::PhysicalDeviceFeatures,
+    f11: vk::PhysicalDeviceVulkan11Features<'static>,
+    f12: vk::PhysicalDeviceVulkan12Features<'static>,
+    f13: vk::PhysicalDeviceVulkan13Features<'static>,
+}
+
+impl Features {
+    fn query(instance: &Instance, phys: vk::PhysicalDevice) -> Features {
+        let mut f = Features::default();
+        let mut f2 = vk::PhysicalDeviceFeatures2::default()
+            .push_next(&mut f.f11)
+            .push_next(&mut f.f12)
+            .push_next(&mut f.f13);
+        // SAFETY: query on a physical device of this instance.
+        unsafe { instance.get_physical_device_features2(phys, &mut f2) };
+        f.core = f2.features;
+        f
+    }
+
+    /// The name of the first feature we need that is missing.
+    fn missing(&self) -> Option<&'static str> {
+        let need = [
+            (self.core.shader_int64, "shaderInt64"),
+            (self.core.depth_clamp, "depthClamp"),
+            (self.core.independent_blend, "independentBlend"),
+            (self.f11.shader_draw_parameters, "shaderDrawParameters"),
+            (self.f12.buffer_device_address, "buffer device address"),
+            (self.f12.timeline_semaphore, "timeline semaphores"),
+            (self.f12.descriptor_indexing, "descriptorIndexing"),
+            (self.f12.runtime_descriptor_array, "runtimeDescriptorArray"),
+            (
+                self.f12.descriptor_binding_partially_bound,
+                "descriptorBindingPartiallyBound",
+            ),
+            (
+                self.f12.descriptor_binding_sampled_image_update_after_bind,
+                "descriptorBindingSampledImageUpdateAfterBind",
+            ),
+            (
+                self.f12.descriptor_binding_storage_image_update_after_bind,
+                "descriptorBindingStorageImageUpdateAfterBind",
+            ),
+            (
+                self.f12.shader_sampled_image_array_non_uniform_indexing,
+                "shaderSampledImageArrayNonUniformIndexing",
+            ),
+            (
+                self.f12.shader_storage_image_array_non_uniform_indexing,
+                "shaderStorageImageArrayNonUniformIndexing",
+            ),
+            (self.f13.dynamic_rendering, "dynamicRendering"),
+            (self.f13.synchronization2, "synchronization2"),
+            (
+                self.f13.shader_demote_to_helper_invocation,
+                "shaderDemoteToHelperInvocation",
+            ),
+        ];
+        need.into_iter().find(|(v, _)| *v == 0).map(|(_, n)| n)
+    }
+}
+
 /// The queue family to use on `phys`, or why the device cannot be used.
 fn check(instance: &Instance, phys: vk::PhysicalDevice) -> std::result::Result<u32, String> {
     // SAFETY: queries on a physical device of this instance.
     unsafe {
         let p = instance.get_physical_device_properties(phys);
-        if p.api_version < vk::API_VERSION_1_2 {
-            return Err("Vulkan 1.2 missing".into());
+        if p.api_version < vk::API_VERSION_1_3 {
+            return Err("Vulkan 1.3 missing".into());
         }
         let exts = instance
             .enumerate_device_extension_properties(phys)
@@ -42,14 +110,8 @@ fn check(instance: &Instance, phys: vk::PhysicalDevice) -> std::result::Result<u
         {
             return Err("VK_EXT_external_memory_host missing".into());
         }
-        let mut f12 = vk::PhysicalDeviceVulkan12Features::default();
-        let mut f2 = vk::PhysicalDeviceFeatures2::default().push_next(&mut f12);
-        instance.get_physical_device_features2(phys, &mut f2);
-        if f12.buffer_device_address == 0 {
-            return Err("buffer device address missing".into());
-        }
-        if f12.timeline_semaphore == 0 {
-            return Err("timeline semaphores missing".into());
+        if let Some(name) = Features::query(instance, phys).missing() {
+            return Err(format!("feature {name} missing"));
         }
         instance
             .get_physical_device_queue_family_properties(phys)
@@ -61,6 +123,11 @@ fn check(instance: &Instance, phys: vk::PhysicalDevice) -> std::result::Result<u
             .map(|i| i as u32)
             .ok_or_else(|| "no graphics+compute queue".into())
     }
+}
+
+/// `VK_EXT_shader_stencil_export`, which a pixel stage that writes the stencil reference needs.
+fn ext_shader_stencil_export_name() -> &'static std::ffi::CStr {
+    c"VK_EXT_shader_stencil_export"
 }
 
 fn type_rank(t: vk::PhysicalDeviceType) -> u32 {
@@ -183,9 +250,34 @@ impl Gpu {
         let qi = [vk::DeviceQueueCreateInfo::default()
             .queue_family_index(family)
             .queue_priorities(&prio)];
+        // Everything `missing` checked, plus the optional features the pipelines use when they
+        // are there (clip distances, sample shading, wireframe, depth bounds, anisotropy).
+        let have_f = Features::query(instance, phys);
+        let core = vk::PhysicalDeviceFeatures::default()
+            .shader_int64(true)
+            .depth_clamp(true)
+            .independent_blend(true)
+            .shader_clip_distance(have_f.core.shader_clip_distance != 0)
+            .sample_rate_shading(have_f.core.sample_rate_shading != 0)
+            .fill_mode_non_solid(have_f.core.fill_mode_non_solid != 0)
+            .depth_bounds(have_f.core.depth_bounds != 0)
+            .sampler_anisotropy(have_f.core.sampler_anisotropy != 0);
+        let mut f11 = vk::PhysicalDeviceVulkan11Features::default().shader_draw_parameters(true);
         let mut f12 = vk::PhysicalDeviceVulkan12Features::default()
             .buffer_device_address(true)
-            .timeline_semaphore(true);
+            .timeline_semaphore(true)
+            .descriptor_indexing(true)
+            .runtime_descriptor_array(true)
+            .descriptor_binding_partially_bound(true)
+            .descriptor_binding_sampled_image_update_after_bind(true)
+            .descriptor_binding_storage_image_update_after_bind(true)
+            .shader_sampled_image_array_non_uniform_indexing(true)
+            .shader_storage_image_array_non_uniform_indexing(true);
+        let mut f13 = vk::PhysicalDeviceVulkan13Features::default()
+            .dynamic_rendering(true)
+            .synchronization2(true)
+            .shader_demote_to_helper_invocation(true);
+        let mut f2 = vk::PhysicalDeviceFeatures2::default().features(core);
         // SAFETY: query on a physical device of this instance.
         let have =
             unsafe { instance.enumerate_device_extension_properties(phys) }.unwrap_or_default();
@@ -196,10 +288,19 @@ impl Gpu {
         if swapchain {
             exts.push(khr::swapchain::NAME.as_ptr());
         }
+        if have
+            .iter()
+            .any(|e| e.extension_name_as_c_str() == Ok(ext_shader_stencil_export_name()))
+        {
+            exts.push(ext_shader_stencil_export_name().as_ptr());
+        }
         let info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&qi)
             .enabled_extension_names(&exts)
-            .push_next(&mut f12);
+            .push_next(&mut f2)
+            .push_next(&mut f11)
+            .push_next(&mut f12)
+            .push_next(&mut f13);
         // SAFETY: `info` and its pointees outlive the call.
         let device = vk_try("vkCreateDevice", unsafe {
             instance.create_device(phys, &info, None)
