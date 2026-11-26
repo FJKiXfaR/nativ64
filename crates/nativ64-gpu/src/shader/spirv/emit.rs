@@ -9,6 +9,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+mod resource;
 mod stage;
 
 use spirv::{
@@ -20,6 +21,7 @@ use super::alu::{self, Backend, Ctx, Cvt, FBin, FCmp, FUn, IBin, ICmp, IUn, Opd,
 use super::builder::{inst, Module};
 use crate::shader::io::StageIo;
 use crate::shader::ir::{Func, Reg, Src, Term, Val};
+use crate::shader::resource::{SamplerDesc, Translated};
 use crate::shader::structure::{BrKind, BranchKind, Guard, Node, Structured, Target};
 
 /// Why a program does not translate.
@@ -459,7 +461,7 @@ struct Tr<'a> {
 
 /// Translates a structured program to the probe module.
 pub fn translate(f: &Func, s: &Structured) -> Result<Probe, SpirvError> {
-    let (words, inputs, outputs) = build(f, s, None)?;
+    let (words, inputs, outputs, _) = build(f, s, None)?;
     Ok(Probe {
         words,
         inputs,
@@ -469,11 +471,12 @@ pub fn translate(f: &Func, s: &Structured) -> Result<Probe, SpirvError> {
 
 /// Translates a structured vertex or pixel program to a module with its real entry point:
 /// inputs from the root block and the stage's built-ins, outputs to the stage's variables.
-pub fn translate_io(f: &Func, s: &Structured, io: &StageIo) -> Result<Vec<u32>, SpirvError> {
-    Ok(build(f, s, Some(io))?.0)
+pub fn translate_io(f: &Func, s: &Structured, io: &StageIo) -> Result<Translated, SpirvError> {
+    let (words, _, _, samplers) = build(f, s, Some(io))?;
+    Ok(Translated { words, samplers })
 }
 
-type Built = (Vec<u32>, Vec<Reg>, Vec<(Reg, bool)>);
+type Built = (Vec<u32>, Vec<Reg>, Vec<(Reg, bool)>, Vec<SamplerDesc>);
 
 fn build<'a>(f: &'a Func, s: &'a Structured, io: Option<&'a StageIo>) -> Result<Built, SpirvError> {
     let mut g = Gen::new();
@@ -530,6 +533,10 @@ fn build<'a>(f: &'a Func, s: &'a Structured, io: Option<&'a StageIo>) -> Result<
 
     let mut inputs: Vec<Reg> = f.args.iter().map(|(r, _)| *r).collect();
     inputs.sort();
+    let stage = match io {
+        Some(io) => Some(stage::Stage::new(io, resource::analyze(f, io.tables())?)),
+        None => None,
+    };
     let mut t = Tr {
         f,
         s,
@@ -540,7 +547,7 @@ fn build<'a>(f: &'a Func, s: &'a Structured, io: Option<&'a StageIo>) -> Result<
         out_buf,
         conds: HashMap::new(),
         frames: Vec::new(),
-        stage: io.map(stage::Stage::new),
+        stage,
     };
     let entry = t.g.m.id();
     t.g.label(entry);
@@ -565,9 +572,11 @@ fn build<'a>(f: &'a Func, s: &'a Structured, io: Option<&'a StageIo>) -> Result<
     words.splice(5 + lab_len..5 + lab_len, locals);
     words.extend(inst(Op::FunctionEnd, &[]));
     t.g.m.add_function(&words);
+    let mut samplers = Vec::new();
     match t.stage.take() {
         Some(st) => {
             iface.extend(st.interface());
+            samplers = st.res.samplers.clone();
             let model = st.model();
             t.g.m.entry_point(model, main, "main", &iface);
             st.exec_modes(&mut t.g.m, main);
@@ -579,7 +588,7 @@ fn build<'a>(f: &'a Func, s: &'a Structured, io: Option<&'a StageIo>) -> Result<
         }
     }
     t.g.m.name(main, "main");
-    Ok((t.g.m.finish(), inputs, outputs))
+    Ok((t.g.m.finish(), inputs, outputs, samplers))
 }
 
 impl Tr<'_> {

@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use spirv::{BuiltIn, Capability, Decoration, ExecutionMode, ExecutionModel, Op, StorageClass};
 
+use super::resource::{self, Res};
 use super::{bad, Gen, Opd, SpirvError, Tr, R};
 use crate::shader::gfx10::{Enc, Operand, Slot};
 use crate::shader::io::{Class, PsAttr, PsVgpr, StageIo, VsAttr};
@@ -30,10 +31,12 @@ pub(super) struct Stage<'a> {
     stencil: Option<u32>,
     mask_out: Option<u32>,
     interps: BTreeMap<u8, (Mode, u32)>,
+    /// Memory and resources (chunk 9).
+    pub(super) res: Res,
 }
 
 impl<'a> Stage<'a> {
-    pub(super) fn new(io: &'a StageIo) -> Self {
+    pub(super) fn new(io: &'a StageIo, analysis: resource::Analysis) -> Self {
         Self {
             io,
             vars: Vec::new(),
@@ -46,6 +49,7 @@ impl<'a> Stage<'a> {
             stencil: None,
             mask_out: None,
             interps: BTreeMap::new(),
+            res: Res::new(analysis),
         }
     }
 
@@ -109,15 +113,15 @@ fn bary_of(i: &crate::shader::gfx10::Instr) -> Option<u16> {
 }
 
 impl<'a> Tr<'a> {
-    fn st(&mut self) -> &mut Stage<'a> {
+    pub(super) fn st(&mut self) -> &mut Stage<'a> {
         self.stage.as_mut().expect("a stage entry")
     }
 
-    fn io(&self) -> &'a StageIo {
+    pub(super) fn io(&self) -> &'a StageIo {
         self.stage.as_ref().expect("a stage entry").io
     }
 
-    fn t_i32(&mut self) -> u32 {
+    pub(super) fn t_i32(&mut self) -> u32 {
         self.g.m.global(Op::TypeInt, None, &[32, 1])
     }
 
@@ -129,19 +133,19 @@ impl<'a> Tr<'a> {
         }
     }
 
-    fn vec4(&mut self, c: Class) -> u32 {
+    pub(super) fn vec4(&mut self, c: Class) -> u32 {
         let t = self.scalar(c);
         self.g.m.global(Op::TypeVector, None, &[t, 4])
     }
 
-    fn global(&mut self, class: StorageClass, ty: u32) -> u32 {
+    pub(super) fn global(&mut self, class: StorageClass, ty: u32) -> u32 {
         let p = self.g.t_ptr(class, ty);
         let v = self.g.m.global_var(p, class, None);
         self.st().vars.push(v);
         v
     }
 
-    fn bits_of(&mut self, o: Opd<Gen>) -> u32 {
+    pub(super) fn bits_of(&mut self, o: Opd<Gen>) -> u32 {
         match o {
             Opd::V(v) => v,
             Opd::B(b) => {
@@ -190,7 +194,10 @@ impl<'a> Tr<'a> {
     pub(super) fn begin_stage(&mut self) -> R<()> {
         let io = self.io();
         self.check_barycentrics()?;
-        let mut root: Option<u32> = None;
+        // the root block's address is read once, in the entry block, where it dominates
+        // every use
+        let root = self.root_pointer();
+        self.st().res.root = Some(root);
         let args = self.f.args.clone();
         for (reg, val) in args {
             let v = match reg {
@@ -200,15 +207,7 @@ impl<'a> Tr<'a> {
                     if n >= 32 {
                         return unsupported(&format!("user data s{n}"));
                     }
-                    let r = match root {
-                        Some(r) => r,
-                        None => {
-                            let r = self.root_pointer();
-                            root = Some(r);
-                            r
-                        }
-                    };
-                    Opd::V(self.user_dword(r, u32::from(n)))
+                    Opd::V(self.user_dword(root, u32::from(n)))
                 }
                 Reg::S(n) => {
                     // below the user SGPRs: the VS fetch routine's address (s4, s5); above:
@@ -242,9 +241,18 @@ impl<'a> Tr<'a> {
         let n = self.g.k(32);
         let arr = self.g.m.global(Op::TypeArray, None, &[tu, n]);
         self.g.m.decorate(arr, Decoration::ArrayStride, &[4]);
-        let root = self.g.m.global(Op::TypeStruct, None, &[arr]);
+        let arr64 = self.g.m.global(Op::TypeArray, None, &[t64, n]);
+        self.g.m.decorate(arr64, Decoration::ArrayStride, &[8]);
+        // user_data[32], table_base[32], view_table
+        let root = self.g.m.global(Op::TypeStruct, None, &[arr, arr64, t64]);
         self.g.m.decorate(root, Decoration::Block, &[]);
         self.g.m.member_decorate(root, 0, Decoration::Offset, &[0]);
+        self.g
+            .m
+            .member_decorate(root, 1, Decoration::Offset, &[128]);
+        self.g
+            .m
+            .member_decorate(root, 2, Decoration::Offset, &[384]);
         self.g.m.name(root, "RootBlock");
         let pp = self.g.t_ptr(StorageClass::PushConstant, t64);
         let zero = self.g.k(0);
@@ -255,7 +263,7 @@ impl<'a> Tr<'a> {
     }
 
     /// `user_data[n]` of the root block.
-    fn user_dword(&mut self, root: u32, n: u32) -> u32 {
+    pub(super) fn user_dword(&mut self, root: u32, n: u32) -> u32 {
         let tu = self.g.t_u32();
         let p = self.g.t_ptr(StorageClass::PhysicalStorageBuffer, tu);
         let (zero, k) = (self.g.k(0), self.g.k(n));
@@ -413,7 +421,7 @@ impl<'a> Tr<'a> {
         if name.starts_with("v_interp") {
             return self.interp(c).map(|v| Some(vec![v]));
         }
-        Ok(None)
+        self.resource_exec(c, b, k)
     }
 
     /// `s_andn2 live, live, exec`: the lanes in EXEC are killed. They become helper lanes.
@@ -438,7 +446,11 @@ impl<'a> Tr<'a> {
     }
 
     /// Runs `body` in the invocations where `cond` holds (all of them for `None`).
-    fn guarded(&mut self, cond: Option<u32>, body: impl FnOnce(&mut Self) -> R<()>) -> R<()> {
+    pub(super) fn guarded(
+        &mut self,
+        cond: Option<u32>,
+        body: impl FnOnce(&mut Self) -> R<()>,
+    ) -> R<()> {
         let Some(c) = cond else {
             return body(self);
         };

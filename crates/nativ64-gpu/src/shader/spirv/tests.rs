@@ -1958,6 +1958,7 @@ mod stage {
     use crate::shader::container::XDAT_NATIVE;
     use crate::shader::io::{self, Link};
     use crate::shader::native::tests::{payload, xbch};
+    use crate::shader::resource::{SamplerDesc, Translated};
     use crate::shader::{parse, ParsedShader};
 
     const VS_AT: usize = 0x300;
@@ -2056,6 +2057,10 @@ mod stage {
     /// A PS whose inputs are attr 0 (TEXCOORD0, row 1), attr 1 (COLOR0, row 2, flat) and
     /// attr 2 (FOG0, row 4); `spi` enables its input VGPRs.
     fn ps_blob(spi: u32, lines: &[&str]) -> ParsedShader {
+        ps_blob_with(spi, lines, |_| {})
+    }
+
+    fn ps_blob_with(spi: u32, lines: &[&str], extra: impl FnOnce(&mut [u8])) -> ParsedShader {
         blob(
             false,
             &prog(lines),
@@ -2070,6 +2075,7 @@ mod stage {
                 put32(p, e + 0x124, 3);
                 put32(p, e + 0x134, spi);
                 put32(p, e + 0x14c, u32::MAX); // no export patch: the code is as written
+                extra(p);
             },
         )
     }
@@ -2107,9 +2113,13 @@ mod stage {
     }
 
     fn translate(p: &ParsedShader, link: Option<&Link>) -> Vec<u32> {
-        let w = io::translate_stage(p, &[], link).unwrap_or_else(|e| panic!("{e}"));
-        validate(&w);
-        w
+        translate_full(p, link).words
+    }
+
+    fn translate_full(p: &ParsedShader, link: Option<&Link>) -> Translated {
+        let t = io::translate_stage(p, &[], link).unwrap_or_else(|e| panic!("{e}"));
+        validate(&t.words);
+        t
     }
 
     const LOCATION: u32 = 30;
@@ -2169,7 +2179,7 @@ mod stage {
         let p = ps_blob(0x2, &["v_add_f32 v8, v0, v1"]);
         match io::translate_stage(&p, &[], None) {
             Err(io::StageError::Spirv(SpirvError::Unsupported(u))) => assert_eq!(u.chunk, 8),
-            r => panic!("{:?}", r.map(|w| w.len())),
+            r => panic!("{:?}", r.map(|t| t.words.len())),
         }
     }
 
@@ -2187,6 +2197,7 @@ mod stage {
                 .collect()
         );
         let (v, p) = io::translate_pair(&vs, &ps, &[]).unwrap();
+        let (v, p) = (v.words, p.words);
         validate(&v);
         validate(&p);
         // both stages carry the shared locations: the VS exports param 0 (v4, v5) at 1
@@ -2220,14 +2231,304 @@ mod stage {
         assert_eq!(c[32..36], [0; 4]);
     }
 
+    // -----------------------------------------------------------------------------------
+    // Resources (chunk 9a)
+
+    /// A VS around `lines`, which export position from v8 / v9; `tweak` edits the payload.
+    fn vs_with(lines: &[&str], tweak: impl FnOnce(&mut [u8])) -> ParsedShader {
+        blob(
+            true,
+            &prog(lines),
+            sig(&[("POSITION", 0, 0, 1, 0xf)]),
+            sigs(),
+            |p, _| tweak(p),
+        )
+    }
+
+    /// The layout of the synthetic record: one table in user SGPR s8 (instead of the default
+    /// root descriptor pair s8, s9).
+    fn one_table(p: &mut [u8]) {
+        put32(p, 0x210, 3);
+        put32(p, 0x218, 1);
+    }
+
+    fn ps_tables(lines: &[&str]) -> ParsedShader {
+        ps_blob_with(0, lines, one_table)
+    }
+
+    /// The `(chunk, op)` a stage is refused with.
+    fn refused(p: &ParsedShader) -> (u8, String) {
+        match io::translate_stage(p, &[], None) {
+            Err(io::StageError::Spirv(SpirvError::Unsupported(u))) => (u.chunk, u.op),
+            r => panic!("{:?}", r.map(|t| t.words.len())),
+        }
+    }
+
+    /// Instructions `op` of a module.
+    fn count_op(w: &[u32], op: u32) -> usize {
+        insts(w).iter().filter(|i| i.0 == op).count()
+    }
+
+    /// `OpLoad`s with `Aligned n`: the 64-bit ones read the root block's addresses.
+    fn aligned_loads(w: &[u32], n: u32) -> usize {
+        insts(w)
+            .iter()
+            .filter(|(op, o)| *op == 61 && o.len() == 5 && o[3] == 2 && o[4] == n)
+            .count()
+    }
+
+    const OP_SAMPLED_IMAGE: u32 = 86;
+    const OP_SAMPLE_IMPLICIT: u32 = 87;
+    const OP_SAMPLE_EXPLICIT: u32 = 88;
+    const OP_STORE: u32 = 62;
+    const DESCRIPTOR_SET: u32 = 34;
+    const BINDING: u32 = 33;
+
+    const VS_EXPORT: [&str; 3] = [
+        "v_mov_b32 v8, 1.0",
+        "v_mov_b32 v9, 0.5",
+        "exp pos0, v8, v9, v8, v9 done",
+    ];
+
+    fn vs_lines(body: &[&'static str]) -> Vec<&'static str> {
+        body.iter().chain(VS_EXPORT.iter()).copied().collect()
+    }
+
     #[test]
-    fn memory_stays_for_chunk_9() {
-        let p = ps_blob(0x2, &["s_load_dwordx4 s[0:3], s[8:9], 0x0"]);
-        match io::translate_stage(&p, &[], None) {
-            Err(io::StageError::Spirv(SpirvError::Unsupported(u))) => {
-                assert_eq!((u.chunk, u.op.as_str()), (9, "s_load_dwordx4"))
-            }
-            r => panic!("{:?}", r.map(|w| w.len())),
+    fn constant_buffer_from_a_table_is_read_through_the_view_table() {
+        let lines = vs_lines(&[
+            "s_mov_b32 s9, 0",
+            "s_load_dwordx4 s[0:3], s[8:9], 0x0",
+            "s_buffer_load_dword s4, s[0:3], 0x10",
+            "s_buffer_load_dwordx4 s[4:7], s[0:3], 0x20",
+        ]);
+        let w = translate(&vs_with(&lines, one_table), None);
+        assert_eq!(entry_model(&w), 0);
+        // table_base[8] once for the descriptor, view_table once per buffer load
+        assert_eq!(aligned_loads(&w, 8), 3);
+        // the root block: user_data[32], table_base[32], view_table
+        assert!(insts(&w).iter().any(|(op, o)| *op == 30 && o.len() == 4));
+    }
+
+    #[test]
+    fn dynamic_offsets_of_a_table_and_of_a_buffer() {
+        // the table address gets a value computed from memory; the buffer offset is an SGPR
+        let lines = vs_lines(&[
+            "s_mov_b32 s9, 0",
+            "s_load_dwordx4 s[0:3], s[8:9], 0x0",
+            "s_buffer_load_dword s4, s[0:3], 0x10",
+            "s_lshl_b32 s10, s4, 5",
+            "s_add_u32 s8, s8, s10",
+            "s_load_dwordx4 s[12:15], s[8:9], 0x40",
+            "s_buffer_load_dword s5, s[12:15], 0x10",
+            "s_buffer_load_dword s5, s[0:3], s10",
+        ]);
+        let w = translate(&vs_with(&lines, one_table), None);
+        // two table slots, three buffer reads
+        assert_eq!(aligned_loads(&w, 8), 2 + 3);
+    }
+
+    #[test]
+    fn buffer_built_from_a_root_descriptor_is_decoded_at_run_time() {
+        // `s0 = s8; s1 = s9 | 0x10000; s2 = -1; s3 = flags`: base from s8 / s9, stride 1
+        let lines = vs_lines(&[
+            "s_mov_b32 s0, s8",
+            "s_or_b32 s1, s9, 0x10000",
+            "s_mov_b32 s2, -1",
+            "s_mov_b32 s3, 0x11014fac",
+            "s_mov_b32 s4, 0",
+            "v_mov_b32 v1, 0",
+            "v_mov_b32 v2, 0",
+            "buffer_load_dwordx4 v[4:7], v1, s[0:3], 0 offen",
+            "buffer_load_dword v4, v1, s[0:3], 0 idxen offset:8",
+            "buffer_load_dword v4, v[1:2], s[0:3], s4 idxen offen",
+            "buffer_store_dword v4, v1, s[0:3], 0 offen",
+        ]);
+        let w = translate(&vs_with(&lines, |_| {}), None);
+        // the root block is only read for the user dwords: no table, no view table
+        assert_eq!(aligned_loads(&w, 8), 0);
+        // the stores of the guarded loads' result, and the one store the program does
+        assert!(count_op(&w, OP_STORE) >= 6);
+    }
+
+    #[test]
+    fn raw_scalar_load_reads_a_root_descriptor_address() {
+        let lines = vs_lines(&["s_load_dwordx4 s[0:3], s[8:9], 0x0"]);
+        let w = translate(&vs_with(&lines, |_| {}), None);
+        assert_eq!(aligned_loads(&w, 8), 0);
+        // four dwords loaded from the address the two user dwords make, and the root block
+        assert_eq!(count_op(&w, 120), 4 + 1); // OpConvertUToPtr
+    }
+
+    /// The vector registers a sample reads and the exports read.
+    const VREGS: [&str; 7] = [
+        "v_mov_b32 v1, 0",
+        "v_mov_b32 v2, 1.0",
+        "v_mov_b32 v3, 0.5",
+        "v_mov_b32 v4, 0",
+        "v_mov_b32 v5, 0",
+        "v_mov_b32 v6, 0",
+        "v_mov_b32 v7, 0",
+    ];
+
+    /// The T# from a table slot (s8 + 0x20) and the S# as four constants.
+    const TEX_CONST_SAMPLER: [&str; 6] = [
+        "s_mov_b32 s9, 0",
+        "s_load_dwordx8 s[0:7], s[8:9], 0x20",
+        "s_movk_i32 s12, 0x400",
+        "s_mov_b32 s13, 0xc00000",
+        "s_mov_b32 s14, 0x18f00000",
+        "s_mov_b32 s15, 0",
+    ];
+
+    const SAMPLE_2D: &str =
+        "image_sample v[4:7], v[2:3], s[0:7], s[12:15] dmask:0xf dim:SQ_RSRC_IMG_2D";
+
+    /// `pre`, the vector registers, `then`, and a render target export.
+    fn ps_after(pre: &[&'static str], then: &[&'static str]) -> Vec<&'static str> {
+        let mut l = pre.to_vec();
+        l.extend(VREGS);
+        l.extend(then);
+        l.push("exp mrt0, v4, v5, v6, v7 done");
+        l
+    }
+
+    #[test]
+    fn image_sample_with_a_loaded_texture_and_a_constant_sampler() {
+        let t = translate_full(
+            &ps_tables(&ps_after(&TEX_CONST_SAMPLER, &[SAMPLE_2D])),
+            None,
+        );
+        let w = &t.words;
+        assert_eq!(count_op(w, OP_SAMPLE_IMPLICIT), 1);
+        assert_eq!(count_op(w, OP_SAMPLED_IMAGE), 1);
+        // the sampled images at set 0, binding 0; the static sampler at set 1, binding 0
+        assert_eq!(count(w, DESCRIPTOR_SET, &[0]), 1);
+        assert_eq!(count(w, DESCRIPTOR_SET, &[1]), 1);
+        assert_eq!(count(w, BINDING, &[0]), 2);
+        assert_eq!(
+            t.samplers,
+            [SamplerDesc::from_words([0x400, 0xc0_0000, 0x18f0_0000, 0])]
+        );
+        assert_eq!(t.samplers[0].max_anisotropy(), 4);
+    }
+
+    #[test]
+    fn sample_forms_and_dimensions() {
+        for (sample, explicit) in [
+            (
+                "image_sample v[4:5], v[2:3], s[0:7], s[12:15] dmask:0x5 dim:SQ_RSRC_IMG_2D",
+                false,
+            ),
+            (
+                "image_sample_l v[4:7], v[2:4], s[0:7], s[12:15] dmask:0xf dim:SQ_RSRC_IMG_2D",
+                true,
+            ),
+            (
+                "image_sample_lz v[4:7], v[2:3], s[0:7], s[12:15] dmask:0xf dim:SQ_RSRC_IMG_2D",
+                true,
+            ),
+            (
+                "image_sample_lz v[4:7], v[1:3], s[0:7], s[12:15] dmask:0xf dim:SQ_RSRC_IMG_CUBE",
+                true,
+            ),
+            (
+                "image_sample v[4:7], v[1:3], s[0:7], s[12:15] dmask:0xf dim:SQ_RSRC_IMG_2D_ARRAY",
+                false,
+            ),
+        ] {
+            let w = translate(&ps_tables(&ps_after(&TEX_CONST_SAMPLER, &[sample])), None);
+            assert_eq!(count_op(&w, OP_SAMPLE_EXPLICIT) == 1, explicit, "{sample}");
+            assert_eq!(count_op(&w, OP_SAMPLE_IMPLICIT) == 1, !explicit, "{sample}");
+        }
+    }
+
+    #[test]
+    fn a_loaded_sampler_indexes_the_sampler_array() {
+        let lines = ps_after(
+            &[
+                "s_mov_b32 s9, 0",
+                "s_load_dwordx8 s[0:7], s[8:9], 0x20",
+                "s_load_dwordx4 s[12:15], s[8:9], 0x40",
+            ],
+            &[SAMPLE_2D],
+        );
+        let t = translate_full(&ps_tables(&lines), None);
+        // no static sampler; the array is at set 0, binding 2
+        assert!(t.samplers.is_empty());
+        assert_eq!(count(&t.words, BINDING, &[2]), 1);
+        assert_eq!(count(&t.words, DESCRIPTOR_SET, &[1]), 0);
+    }
+
+    #[test]
+    fn a_texture_that_is_not_loaded_is_refused() {
+        // with the default layout s8 / s9 is a root descriptor: the T# is raw memory
+        let mut pre = TEX_CONST_SAMPLER.to_vec();
+        pre[0] = "s_mov_b32 s9, 0";
+        let p = ps_blob_with(0, &ps_after(&pre, &[SAMPLE_2D]), |_| {});
+        let (chunk, op) = refused(&p);
+        assert_eq!(chunk, 9);
+        assert!(op.contains("not loaded from a table"), "{op}");
+    }
+
+    #[test]
+    fn a_sampler_neither_constant_nor_loaded_is_refused() {
+        let mut pre = TEX_CONST_SAMPLER.to_vec();
+        pre[2] = "s_mov_b32 s12, s8"; // a word of user data
+        let (chunk, op) = refused(&ps_tables(&ps_after(&pre, &[SAMPLE_2D])));
+        assert_eq!(chunk, 9);
+        assert!(op.contains("neither constant nor loaded"), "{op}");
+    }
+
+    #[test]
+    fn descriptor_words_used_as_numbers_are_refused() {
+        let lines = vs_lines(&[
+            "s_mov_b32 s9, 0",
+            "s_load_dwordx4 s[0:3], s[8:9], 0x0",
+            "s_and_b32 s5, s2, 0xff",
+        ]);
+        let (chunk, op) = refused(&vs_with(&lines, one_table));
+        assert_eq!(chunk, 9);
+        assert!(op.contains("used as numbers"), "{op}");
+    }
+
+    #[test]
+    fn implicit_lod_sampling_is_refused_in_a_vertex_stage() {
+        let mut lines = TEX_CONST_SAMPLER.to_vec();
+        lines.extend(VREGS);
+        lines.push(SAMPLE_2D);
+        lines.extend(VS_EXPORT);
+        let (chunk, op) = refused(&vs_with(&lines, one_table));
+        assert_eq!(chunk, 9);
+        assert!(op.contains("vertex stage"), "{op}");
+    }
+
+    #[test]
+    fn chunk_9b_operations_stay_unsupported_by_name() {
+        for (line, name) in [
+            (
+                "buffer_load_format_x v4, v1, s[0:3], 0 offen",
+                "buffer_load_format_x",
+            ),
+            ("global_load_dword v4, v[2:3], off", "global_load_dword"),
+            (
+                "image_sample_b v[4:7], v[2:4], s[0:7], s[12:15] dmask:0xf dim:SQ_RSRC_IMG_2D",
+                "image_sample_b",
+            ),
+            (
+                "image_sample v[4:5], v[2:3], s[0:7], s[12:15] dmask:0xf dim:SQ_RSRC_IMG_2D d16",
+                "d16",
+            ),
+        ] {
+            let pre = [
+                "s_mov_b32 s9, 0",
+                "s_load_dwordx8 s[0:7], s[8:9], 0x20",
+                "s_load_dwordx4 s[12:15], s[8:9], 0x40",
+            ];
+            let lines = ps_after(&pre, &[line]);
+            let (chunk, op) = refused(&ps_tables(&lines));
+            assert_eq!(chunk, 9, "{line}");
+            assert!(op.contains(name), "{line}: {op}");
         }
     }
 

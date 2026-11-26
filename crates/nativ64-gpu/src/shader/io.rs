@@ -4,7 +4,7 @@
 //! VS+PS pair by semantic. The emitter (`spirv/emit/stage.rs`) turns a `StageIo` into the
 //! entry point.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::ops::Range;
 
@@ -12,6 +12,7 @@ use super::container::{SigElement, Signature};
 use super::gfx10;
 use super::ir::{self, EntryRegs, IrError, PS_INPUT_DWORDS};
 use super::native::{PsInput, Record, StageData, VsInput, VsOutput};
+use super::resource::Translated;
 use super::spirv::{self, SpirvError};
 use super::structure::{self, StructError};
 use super::ParsedShader;
@@ -73,6 +74,8 @@ pub struct VsAttr {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VsIo {
     pub user: Range<u16>,
+    /// The user SGPRs the layout marks as tables or heaps (root types 3, 5, 6).
+    pub tables: BTreeSet<u16>,
     pub attrs: Vec<VsAttr>,
     /// `exp param n` → location (an output nothing reads has none and is dropped).
     pub params: BTreeMap<u8, u32>,
@@ -115,6 +118,7 @@ pub struct PsAttr {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PsIo {
     pub user: Range<u16>,
+    pub tables: BTreeSet<u16>,
     pub vgprs: BTreeMap<u16, PsVgpr>,
     pub attrs: BTreeMap<u8, PsAttr>,
     /// Class of each render target (`Float` past the end).
@@ -134,6 +138,23 @@ impl StageIo {
             Self::Pixel(p) => &p.user,
         }
     }
+
+    pub fn tables(&self) -> &BTreeSet<u16> {
+        match self {
+            Self::Vertex(v) => &v.tables,
+            Self::Pixel(p) => &p.tables,
+        }
+    }
+}
+
+/// The user SGPRs the layout marks as tables (type 3) or heaps (types 5 and 6): each holds the
+/// low 32 bits of an address the root block carries in full.
+fn table_sgprs(rec: &Record) -> BTreeSet<u16> {
+    rec.layout
+        .iter()
+        .filter(|l| matches!(l.root_type, 3 | 5 | 6) && l.user_sgprs > 0)
+        .map(|l| u16::from(l.first_user_dword))
+        .collect()
 }
 
 /// The locations a VS+PS pair shares.
@@ -217,6 +238,7 @@ fn vs_io(p: &ParsedShader, rec: &Record, link: Option<&Link>) -> Option<VsIo> {
     };
     Some(VsIo {
         user: ir::user_range(rec),
+        tables: table_sgprs(rec),
         attrs,
         params,
         clip: d.outputs.iter().any(|o| o.usage == 7),
@@ -278,6 +300,7 @@ fn ps_io(rec: &Record, targets: &[u32], link: Option<&Link>) -> Option<PsIo> {
         .collect();
     Some(PsIo {
         user: ir::user_range(rec),
+        tables: table_sgprs(rec),
         vgprs,
         attrs,
         targets: targets.iter().map(|&f| dxgi_class(f)).collect(),
@@ -347,7 +370,7 @@ pub fn translate_stage(
     p: &ParsedShader,
     targets: &[u32],
     link: Option<&Link>,
-) -> Result<Vec<u32>, StageError> {
+) -> Result<Translated, StageError> {
     let rec = p.record().ok_or(StageError::NotAStage)?;
     let io = stage_io(p, targets, link).ok_or(StageError::NotAStage)?;
     let code = stage_code(p, rec);
@@ -362,7 +385,7 @@ pub fn translate_pair(
     vs: &ParsedShader,
     ps: &ParsedShader,
     targets: &[u32],
-) -> Result<(Vec<u32>, Vec<u32>), StageError> {
+) -> Result<(Translated, Translated), StageError> {
     let l = link(vs, ps);
     Ok((
         translate_stage(vs, targets, Some(&l))?,

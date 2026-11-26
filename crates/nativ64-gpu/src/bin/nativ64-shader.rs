@@ -788,7 +788,7 @@ fn spirv_write(blob: &str, out: &str) -> ExitCode {
     };
     if let Some(io) = shader::io::stage_io(&p, &[], None) {
         return match shader::io::translate_stage(&p, &[], None) {
-            Ok(words) => write_words(&words, out, &io),
+            Ok(t) => write_words(&t.words, out, &io),
             Err(e) => {
                 eprintln!("{blob}: {e}");
                 ExitCode::FAILURE
@@ -871,11 +871,11 @@ fn spirv_pair(vs: &str, ps: &str, out: &str) -> ExitCode {
             ) else {
                 return ExitCode::FAILURE;
             };
-            let r = write_words(&v, &format!("{out}.vert.spv"), &a);
+            let r = write_words(&v.words, &format!("{out}.vert.spv"), &a);
             if r != ExitCode::SUCCESS {
                 return r;
             }
-            write_words(&p, &format!("{out}.frag.spv"), &b)
+            write_words(&p.words, &format!("{out}.frag.spv"), &b)
         }
         Err(e) => {
             eprintln!("{e}");
@@ -974,7 +974,7 @@ fn spirv_stats(files: &[String], alu_only: bool) -> ExitCode {
             };
             e[1] += 1;
             let built = match &io {
-                Some(io) => spirv::translate_io(&func, &st, io),
+                Some(io) => spirv::translate_io(&func, &st, io).map(|t| t.words),
                 None => spirv::translate(&func, &st).map(|p| p.words),
             };
             match built {
