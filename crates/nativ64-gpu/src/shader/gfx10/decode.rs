@@ -42,14 +42,14 @@ pub fn decode_wave(code: &[u8], at: usize, wave32: bool) -> Result<Instr, Decode
             0x3a => Enc::Mtbuf,
             0x36 => Enc::Ds,
             0x33 => Enc::Vop3p,
+            0x37 => Enc::Flat,
             0x3d => Enc::Smem,
             0x3e => Enc::Exp,
             _ => {
-                let name = match top6 {
-                    0x37 => "FLAT",
-                    _ => "?",
-                };
-                return Err(c.err(ErrorKind::UnknownEncoding { name, word: d0 }));
+                return Err(c.err(ErrorKind::UnknownEncoding {
+                    name: "?",
+                    word: d0,
+                }));
             }
         }
     };
@@ -69,6 +69,7 @@ pub fn decode_wave(code: &[u8], at: usize, wave32: bool) -> Result<Instr, Decode
         Enc::Mtbuf => c.mtbuf(d0),
         Enc::Ds => c.ds(d0),
         Enc::Vop3p => c.vop3p(d0),
+        Enc::Flat => c.flat(d0),
     }
 }
 
@@ -90,6 +91,9 @@ struct Fields {
     dsaddr: u32,
     data0: u32,
     data1: u32,
+    vaddr: u32,
+    saddr: u32,
+    seg: u8,
     imm16: u32,
     /// VMEM data dwords added by `tfe`.
     extra: u8,
@@ -242,6 +246,22 @@ impl Cursor<'_> {
                 Slot::DsData1(c) => Operand::Reg {
                     code: 256 + f.data1 as u16,
                     count: *c,
+                },
+                Slot::FlatAddr => match (f.seg, f.saddr == 0x7d) {
+                    (0, _) | (2, true) => Operand::Reg {
+                        code: 256 + f.vaddr as u16,
+                        count: 2,
+                    },
+                    (1, false) => Operand::Fixed("off"),
+                    _ => Operand::Reg {
+                        code: 256 + f.vaddr as u16,
+                        count: 1,
+                    },
+                },
+                Slot::FlatSaddr if f.saddr == 0x7d => Operand::Fixed("off"),
+                Slot::FlatSaddr => Operand::Reg {
+                    code: f.saddr as u16,
+                    count: if f.seg == 2 { 2 } else { 1 },
                 },
                 Slot::ImgData | Slot::ImgAddr | Slot::ImgRsrc | Slot::ImgSamp => Operand::Imm(0),
                 Slot::Lit => Operand::Literal(lit),
@@ -430,6 +450,57 @@ impl Cursor<'_> {
             clamp: d0 >> 15 & 1 != 0,
             omod: 0,
             opsel_hi: (d1 >> 27 & 3) as u8 | ((d0 >> 14 & 1) as u8) << 2,
+        };
+        Ok(i)
+    }
+
+    fn flat(&self, d0: u32) -> Result<Instr, DecodeError> {
+        let d1 = self.dword(1)?;
+        let seg = (d0 >> 14 & 3) as u8;
+        let (table, enc_seg) = match seg {
+            0 => (&table_ext::FLAT, 0),
+            1 => (&table_ext::SCRATCH, 1),
+            2 => (&table_ext::GLOBAL, 2),
+            _ => return Err(self.err(ErrorKind::BadField("FLAT segment"))),
+        };
+        let op = (d0 >> 18) & 0x7f;
+        let info = self.lookup(table, Enc::Flat, op)?;
+        let saddr = d1 >> 16 & 0x7f;
+        // the scalar base: absent (0x7d) for flat; a pair (not m0 / exec) for global
+        let saddr_ok = match seg {
+            0 => saddr == 0x7d,
+            1 => saddr <= 0x7e,
+            _ => saddr <= 106 || (108..=123).contains(&saddr) || saddr == 0x7d,
+        };
+        if !saddr_ok {
+            return Err(self.err(ErrorKind::BadField("FLAT saddr")));
+        }
+        if d1 >> 23 & 1 != 0 {
+            return Err(self.err(ErrorKind::BadField("FLAT nv")));
+        }
+        let lds = d0 >> 13 & 1 != 0;
+        if lds && info.flags & ops::FLAG_FLAT_LDS == 0 {
+            return Err(self.err(ErrorKind::BadField("FLAT lds")));
+        }
+        let f = Fields {
+            vaddr: d1 & 0xff,
+            vdata: d1 >> 8 & 0xff,
+            saddr,
+            vdst: d1 >> 24,
+            seg: enc_seg,
+            ..Fields::default()
+        };
+        let mut i = self.finish(Enc::Flat, op, info, &f, 2, None)?;
+        // 12-bit offset: signed except for the flat segment
+        let off = (d0 & 0xfff) as i32;
+        i.mem = Mem {
+            offset: if seg == 0 { off } else { (off << 20) >> 20 },
+            glc: d0 >> 16 & 1 != 0,
+            slc: d0 >> 17 & 1 != 0,
+            dlc: d0 >> 12 & 1 != 0,
+            lds,
+            seg,
+            ..Mem::default()
         };
         Ok(i)
     }

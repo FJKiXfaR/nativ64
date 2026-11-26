@@ -238,6 +238,15 @@ fn indirect_jump_and_unknown_encoding_are_typed_errors() {
     )
     .unwrap_err();
     assert!(matches!(e.kind, IrErrorKind::UnsupportedEncoding(_)), "{e}");
+    // global_load_dword v1, v[4:5], off: likewise
+    let e = build(
+        &code(&[0xdc30_8000, 0x7d01_0004, 0xbf810000]),
+        0,
+        false,
+        &regs(),
+    )
+    .unwrap_err();
+    assert!(matches!(e.kind, IrErrorKind::UnsupportedEncoding(_)), "{e}");
 }
 
 /// `NATIV64_SHADER_CORPUS=<dir of .dxbc blobs>`: builds the IR of every program that decodes

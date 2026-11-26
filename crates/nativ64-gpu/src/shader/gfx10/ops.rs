@@ -40,6 +40,9 @@ pub enum Slot {
     DsAddr,
     DsData0(u8),
     DsData1(u8),
+    /// FLAT / GLOBAL / SCRATCH: the address register(s) and the scalar base (`off` when unused).
+    FlatAddr,
+    FlatSaddr,
     /// The extra literal dword.
     Lit,
     /// An implicit operand printed as written (`vcc` prints `vcc_lo` in wave32).
@@ -108,6 +111,9 @@ pub const FLAG_DS_SWIZZLE: u32 = 1 << 7;
 
 /// VOP3P: `v_fma_mix*` (op_sel_hi defaults to 0; neg_lo / neg_hi are the neg / abs source modifiers).
 pub const FLAG_P_MIX: u32 = 1 << 6;
+/// FLAT: an atomic (it has a destination only with `glc`), and a load that can write the LDS.
+pub const FLAG_FLAT_ATOMIC: u32 = 1 << 6;
+pub const FLAG_FLAT_LDS: u32 = 1 << 7;
 
 /// `image_bvh_intersect_ray` / `image_bvh64_intersect_ray`: 4 data registers, a 4-dword
 /// resource, 11 (12 for the 64-bit node pointer) address registers in the NSA form.

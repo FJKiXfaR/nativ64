@@ -337,6 +337,63 @@ def vop3p(fix, rnd):
     return ('VOP3P', 128, rows)
 
 
+# ---------------------------------------------------------------- FLAT / GLOBAL / SCRATCH
+
+
+def flat_dw(op, seg, d0=0, saddr=0x7d, d1=0, vaddr=4, data=3, vdst=1, off=0):
+    return [0xDC000000 | op << 18 | seg << 14 | (off & 0xfff) | d0,
+            vaddr | data << 8 | saddr << 16 | vdst << 24 | d1]
+
+
+def flat_family(seg, prefix, table_name):
+    def f(fix, rnd):
+        rows = []
+        for op in range(128):
+            t = dis(u(*flat_dw(op, seg, d0=1 << 16)), '1013')
+            if not t:
+                continue
+            name = t.split()[0]
+            toks = split_ops(t.partition(' ')[2].replace(' glc', ''))
+            kind = 'load' if '_load' in name else 'store' if '_store' in name else 'atomic'
+
+            def width(tok):
+                m = TOK.match(tok)
+                return 1 if m.group(2) is not None else int(m.group(4)) - int(m.group(3)) + 1
+            slots = []
+            if kind != 'store':
+                slots.append('Slot::VDst(%d)' % width(toks[0]))
+            slots.append('Slot::FlatAddr')
+            flags = 0
+            if kind == 'atomic':
+                flags |= 1 << 6
+            if kind != 'load':
+                data_tok = toks[2] if kind == 'atomic' else toks[1]
+                slots.append('Slot::Vdata(%d)' % width(data_tok))
+            if seg:
+                slots.append('Slot::FlatSaddr')
+            if seg and dis(u(*flat_dw(op, seg, d0=1 << 13)), '1013'):
+                flags |= 1 << 7
+            rows.append((op, name, slots, flags))
+            for _ in range(14):
+                saddr = rnd.choice([0x7d, 0x7d, 0x7d] + list(range(0, 127, 3)) + [106, 107, 108, 124, 125, 126,
+                                                                                  127, 102, 103, 104, 105])
+                d0 = (rnd.getrandbits(1) << 12 | rnd.getrandbits(1) << 13 | rnd.getrandbits(1) << 16
+                      | rnd.getrandbits(1) << 17)
+                if rnd.random() < 0.6:
+                    d0 &= ~(1 << 13)
+                if seg == 0 and rnd.random() < 0.9:
+                    saddr = 0x7d
+                fix.append((u(*flat_dw(op, seg, d0, saddr, 0, rnd.randrange(200), rnd.randrange(200),
+                                       rnd.randrange(200), rnd.getrandbits(12))),))
+        return (table_name, 128, rows)
+    return f
+
+
+family(flat_family(0, 'flat', 'FLAT'))
+family(flat_family(2, 'global', 'GLOBAL'))
+family(flat_family(1, 'scratch', 'SCRATCH'))
+
+
 def run():
     out_t, out_f = sys.argv[1], sys.argv[2]
     rnd = random.Random(1013)

@@ -4988,3 +4988,1379 @@ c4ed22ccf4628a65	v_fma_mixhi_f16 v196, -|2.0|, -v49, |v98| op_sel:[1,0,1] op_sel
 058022cc859a2201	v_fma_mixhi_f16 v5, 5, v77, s72 clamp
 7ed422cc3f1e31f6	v_fma_mixhi_f16 v126, -s63, neg(15), -|v140| op_sel:[0,1,0] op_sel_hi:[0,1,1] clamp
 603c22cc09628ec2	v_fma_mixhi_f16 v96, s9, -v49, -|35| op_sel:[1,1,1]
+831823dc81807dc3	flat_load_ubyte v195, v[129:130] offset:2179 glc slc dlc
+c81122dc71c47d8c	flat_load_ubyte v140, v[113:114] offset:456 slc dlc
+b20622dc131f7d92	flat_load_ubyte v146, v[19:20] offset:1714 slc
+2c1523dcb2be7d21	flat_load_ubyte v33, v[178:179] offset:1324 glc slc dlc
+b00222dc66497d66	flat_load_ubyte v102, v[102:103] offset:688 slc
+161b23dcaa147dbe	flat_load_ubyte v190, v[170:171] offset:2838 glc slc dlc
+6e1823dcb90e7d4d	flat_load_ubyte v77, v[185:186] offset:2158 glc slc dlc
+041c23dc74087d69	flat_load_ubyte v105, v[116:117] offset:3076 glc slc dlc
+d70921dc7a527d72	flat_load_ubyte v114, v[122:123] offset:2519 glc
+f31720dc7bc07d31	flat_load_ubyte v49, v[123:124] offset:2035 dlc
+130426dc96557d8c	flat_load_sbyte v140, v[150:151] offset:1043 slc
+b80f24dc205f7d3e	flat_load_sbyte v62, v[32:33] offset:4024
+d40527dc19797d88	flat_load_sbyte v136, v[25:26] offset:1492 glc slc
+be0c24dc7c747d3a	flat_load_sbyte v58, v[124:125] offset:3262
+780d26dca9aa7db6	flat_load_sbyte v182, v[169:170] offset:3448 slc
+dc0725dc7b2e7d3d	flat_load_sbyte v61, v[123:124] offset:2012 glc
+a40625dc924d7dc4	flat_load_sbyte v196, v[146:147] offset:1700 glc
+c00026dc804e7d0b	flat_load_sbyte v11, v[128:129] offset:192 slc
+b90127dc8c187d0e	flat_load_sbyte v14, v[140:141] offset:441 glc slc
+f71428dc40c27d4f	flat_load_ushort v79, v[64:65] offset:1271 dlc
+a51429dc8e2c7d32	flat_load_ushort v50, v[142:143] offset:1189 glc dlc
+d70d2adc9f137d8d	flat_load_ushort v141, v[159:160] offset:3543 slc
+af0d2adc0b3c7d35	flat_load_ushort v53, v[11:12] offset:3503 slc
+2a0e2bdcabb07d4b	flat_load_ushort v75, v[171:172] offset:3626 glc slc
+841f28dc15977d75	flat_load_ushort v117, v[21:22] offset:3972 dlc
+271a28dc03947d5c	flat_load_ushort v92, v[3:4] offset:2599 dlc
+d9122bdc64c67d24	flat_load_ushort v36, v[100:101] offset:729 glc slc dlc
+7f1f28dc753a7dc1	flat_load_ushort v193, v[117:118] offset:3967 dlc
+69172edc74937d81	flat_load_sshort v129, v[116:117] offset:1897 slc dlc
+d21a2fdc602d7d1f	flat_load_sshort v31, v[96:97] offset:2770 glc slc dlc
+85172ddc5f3a7d18	flat_load_sshort v24, v[95:96] offset:1925 glc dlc
+e9152fdc9d0c7d58	flat_load_sshort v88, v[157:158] offset:1513 glc slc dlc
+eb122cdc366c7d15	flat_load_sshort v21, v[54:55] offset:747 dlc
+971d2ddc3cc77d6d	flat_load_sshort v109, v[60:61] offset:3479 glc dlc
+901e2ddc3e397dc5	flat_load_sshort v197, v[62:63] offset:3728 glc dlc
+70132cdc7a1b7d17	flat_load_sshort v23, v[122:123] offset:880 dlc
+9b1b2edc01657d8d	flat_load_sshort v141, v[1:2] offset:2971 slc dlc
+830633dc53127d6e	flat_load_dword v110, v[83:84] offset:1667 glc slc
+eb0b32dc0ba27d06	flat_load_dword v6, v[11:12] offset:3051 slc
+d91032dcc27f7d1e	flat_load_dword v30, v[194:195] offset:217 slc dlc
+f41431dc88897da3	flat_load_dword v163, v[136:137] offset:1268 glc dlc
+c00531dc5a6f7d43	flat_load_dword v67, v[90:91] offset:1472 glc
+710732dca20a7d8c	flat_load_dword v140, v[162:163] offset:1905 slc
+b21a31dc3fa97d90	flat_load_dword v144, v[63:64] offset:2738 glc dlc
+330731dc090f7d7b	flat_load_dword v123, v[9:10] offset:1843 glc
+861032dc27207dae	flat_load_dword v174, v[39:40] offset:134 slc dlc
+860732dc33747d62	flat_load_dword v98, v[51:52] offset:1926 slc
+981f30dc888c7d3b	flat_load_dword v59, v[136:137] offset:3992 dlc
+a40537dc65397dbd	flat_load_dwordx2 v[189:190], v[101:102] offset:1444 glc slc
+c61836dc1e7a7d07	flat_load_dwordx2 v[7:8], v[30:31] offset:2246 slc dlc
+860434dc3e917d75	flat_load_dwordx2 v[117:118], v[62:63] offset:1158
+d80035dc16417d44	flat_load_dwordx2 v[68:69], v[22:23] offset:216 glc
+030e34dc6a7a7d2b	flat_load_dwordx2 v[43:44], v[106:107] offset:3587
+950636dcc4697dc5	flat_load_dwordx2 v[197:198], v[196:197] offset:1685 slc
+1c0836dc86147da4	flat_load_dwordx2 v[164:165], v[134:135] offset:2076 slc
+391a37dc9b6b7d4b	flat_load_dwordx2 v[75:76], v[155:156] offset:2617 glc slc dlc
+21193adcab317d8c	flat_load_dwordx4 v[140:143], v[171:172] offset:2337 slc dlc
+b20b3bdc540e7db0	flat_load_dwordx4 v[176:179], v[84:85] offset:2994 glc slc
+eb1238dc31c67d1c	flat_load_dwordx4 v[28:31], v[49:50] offset:747 dlc
+a30f3adca36c7da1	flat_load_dwordx4 v[161:164], v[163:164] offset:4003 slc
+cb0d38dcaa217db1	flat_load_dwordx4 v[177:180], v[170:171] offset:3531
+40133adc30377d75	flat_load_dwordx4 v[117:120], v[48:49] offset:832 slc dlc
+541238dc6cb67d31	flat_load_dwordx4 v[49:52], v[108:109] offset:596 dlc
+ca0e38dc52b97d86	flat_load_dwordx4 v[134:137], v[82:83] offset:3786
+df0b3bdcaab37d09	flat_load_dwordx4 v[9:12], v[170:171] offset:3039 glc slc
+08113adcbc2a7d21	flat_load_dwordx4 v[33:36], v[188:189] offset:264 slc dlc
+49033bdc50bb7d0f	flat_load_dwordx4 v[15:18], v[80:81] offset:841 glc slc
+081439dcbca27d3a	flat_load_dwordx4 v[58:61], v[188:189] offset:1032 glc dlc
+660a3cdc7fa87d37	flat_load_dwordx3 v[55:57], v[127:128] offset:2662
+b5003edc40ab7d1f	flat_load_dwordx3 v[31:33], v[64:65] offset:181 slc
+2a1b3ddc0f987d65	flat_load_dwordx3 v[101:103], v[15:16] offset:2858 glc dlc
+70113cdcb4997d85	flat_load_dwordx3 v[133:135], v[180:181] offset:368 dlc
+94073cdc3c597d1d	flat_load_dwordx3 v[29:31], v[60:61] offset:1940
+210b3cdcb30c7d6f	flat_load_dwordx3 v[111:113], v[179:180] offset:2849
+0e083fdc45927da9	flat_load_dwordx3 v[169:171], v[69:70] offset:2062 glc slc
+631d3edc9a8c7d33	flat_load_dwordx3 v[51:53], v[154:155] offset:3427 slc dlc
+26133cdc02477d36	flat_load_dwordx3 v[54:56], v[2:3] offset:806 dlc
+f0033edc885e7d16	flat_load_dwordx3 v[22:24], v[136:137] offset:1008 slc
+5a1e62dcac567d6a	flat_store_byte v[172:173], v86 offset:3674 slc dlc
+221c60dc7aa87da5	flat_store_byte v[122:123], v168 offset:3106 dlc
+c20662dc539b7d0a	flat_store_byte v[83:84], v155 offset:1730 slc
+f50a60dcbf037d6a	flat_store_byte v[191:192], v3 offset:2805
+e31363dc59a97d40	flat_store_byte v[89:90], v169 offset:995 glc slc dlc
+da0460dc159f7da3	flat_store_byte v[21:22], v159 offset:1242
+b00663dc4e327d40	flat_store_byte v[78:79], v50 offset:1712 glc slc
+651662dc2db27d4c	flat_store_byte v[45:46], v178 offset:1637 slc dlc
+4f1561dc94c77d6a	flat_store_byte v[148:149], v199 offset:1359 glc dlc
+d30762dc1b857d8e	flat_store_byte v[27:28], v133 offset:2003 slc
+5e0f66dc11987d1a	flat_store_byte_d16_hi v[17:18], v152 offset:3934 slc
+401467dc4a1e7d93	flat_store_byte_d16_hi v[74:75], v30 offset:1088 glc slc dlc
+b11d66dca82a7d26	flat_store_byte_d16_hi v[168:169], v42 offset:3505 slc dlc
+d50764dca23a7da9	flat_store_byte_d16_hi v[162:163], v58 offset:2005
+8d1966dca36e7d72	flat_store_byte_d16_hi v[163:164], v110 offset:2445 slc dlc
+e00764dc95c67d09	flat_store_byte_d16_hi v[149:150], v198 offset:2016
+430166dc1c357dac	flat_store_byte_d16_hi v[28:29], v53 offset:323 slc
+f51564dc7c5f7d5a	flat_store_byte_d16_hi v[124:125], v95 offset:1525 dlc
+910666dc35a27d39	flat_store_byte_d16_hi v[53:54], v162 offset:1681 slc
+631167dc0bb17d9b	flat_store_byte_d16_hi v[11:12], v177 offset:355 glc slc dlc
+571f6adc777b7d42	flat_store_short v[119:120], v123 offset:3927 slc dlc
+cc0d69dc78b77d38	flat_store_short v[120:121], v183 offset:3532 glc
+fd0869dc2fbd7d50	flat_store_short v[47:48], v189 offset:2301 glc
+071f68dcc71f7d04	flat_store_short v[199:200], v31 offset:3847 dlc
+860d6bdca0187dbc	flat_store_short v[160:161], v24 offset:3462 glc slc
+9e1668dc8c957d59	flat_store_short v[140:141], v149 offset:1694 dlc
+8b0d6bdc4a637d50	flat_store_short v[74:75], v99 offset:3467 glc slc
+cb1f6adc5d6b7d10	flat_store_short v[93:94], v107 offset:4043 slc dlc
+be0769dca2b67d89	flat_store_short v[162:163], v182 offset:1982 glc
+7e1068dcc0a37d3e	flat_store_short v[192:193], v163 offset:126 dlc
+5b096edc2c7c7d21	flat_store_short_d16_hi v[44:45], v124 offset:2395 slc
+031d6ddc70897d00	flat_store_short_d16_hi v[112:113], v137 offset:3331 glc dlc
+1a036ddcbe7f7d0c	flat_store_short_d16_hi v[190:191], v127 offset:794 glc
+111b6edcbf827d18	flat_store_short_d16_hi v[191:192], v130 offset:2833 slc dlc
+4a0a6cdc6e207d81	flat_store_short_d16_hi v[110:111], v32 offset:2634
+48066ddc05137dc2	flat_store_short_d16_hi v[5:6], v19 offset:1608 glc
+a3146edcbfa47d6f	flat_store_short_d16_hi v[191:192], v164 offset:1187 slc dlc
+5d0a6ddc842b7d34	flat_store_short_d16_hi v[132:133], v43 offset:2653 glc
+dc116edcc4507d5f	flat_store_short_d16_hi v[196:197], v80 offset:476 slc dlc
+d01b6edc85817d2c	flat_store_short_d16_hi v[133:134], v129 offset:3024 slc dlc
+b9026edc0b307d1c	flat_store_short_d16_hi v[11:12], v48 offset:697 slc
+a2196ddc7d3e7d6f	flat_store_short_d16_hi v[125:126], v62 offset:2466 glc dlc
+631273dc321c7d52	flat_store_dword v[50:51], v28 offset:611 glc slc dlc
+361770dc92417d9f	flat_store_dword v[146:147], v65 offset:1846 dlc
+ea1571dc496e7d8d	flat_store_dword v[73:74], v110 offset:1514 glc dlc
+671672dcac9a7d9b	flat_store_dword v[172:173], v154 offset:1639 slc dlc
+9c1f70dc98177d44	flat_store_dword v[152:153], v23 offset:3996 dlc
+800871dc924a7d15	flat_store_dword v[146:147], v74 offset:2176 glc
+990b72dc61117d0a	flat_store_dword v[97:98], v17 offset:2969 slc
+a50470dc76237d6d	flat_store_dword v[118:119], v35 offset:1189
+c41571dcbea87dc0	flat_store_dword v[190:191], v168 offset:1476 glc dlc
+a61e75dc3f747d89	flat_store_dwordx2 v[63:64], v[116:117] offset:3750 glc dlc
+4f0d75dc2f4d7d3d	flat_store_dwordx2 v[47:48], v[77:78] offset:3407 glc
+041f74dc2d2b7d72	flat_store_dwordx2 v[45:46], v[43:44] offset:3844 dlc
+221974dc667b7d4a	flat_store_dwordx2 v[102:103], v[123:124] offset:2338 dlc
+8c0975dc76ab7d70	flat_store_dwordx2 v[118:119], v[171:172] offset:2444 glc
+b71777dc807f7d92	flat_store_dwordx2 v[128:129], v[127:128] offset:1975 glc slc dlc
+9a0a77dc293e7d63	flat_store_dwordx2 v[41:42], v[62:63] offset:2714 glc slc
+6d1c77dc51bc7d6b	flat_store_dwordx2 v[81:82], v[188:189] offset:3181 glc slc dlc
+951b74dca4a57d67	flat_store_dwordx2 v[164:165], v[165:166] offset:2965 dlc
+a50077dc6db97d30	flat_store_dwordx2 v[109:110], v[185:186] offset:165 glc slc
+231875dc5f1b7d66	flat_store_dwordx2 v[95:96], v[27:28] offset:2083 glc dlc
+451f74dc68bb7d1a	flat_store_dwordx2 v[104:105], v[187:188] offset:3909 dlc
+09107bdc0c287d2b	flat_store_dwordx4 v[12:13], v[40:43] offset:9 glc slc dlc
+6e0d7adc193e7d0d	flat_store_dwordx4 v[25:26], v[62:65] offset:3438 slc
+180278dcafad7d7d	flat_store_dwordx4 v[175:176], v[173:176] offset:536
+0f1479dc45157d29	flat_store_dwordx4 v[69:70], v[21:24] offset:1039 glc dlc
+f6197adc7f9b7d1d	flat_store_dwordx4 v[127:128], v[155:158] offset:2550 slc dlc
+c91979dc34627d1f	flat_store_dwordx4 v[52:53], v[98:101] offset:2505 glc dlc
+c20b7adc7c227d87	flat_store_dwordx4 v[124:125], v[34:37] offset:3010 slc
+a00d78dc60c47d5b	flat_store_dwordx4 v[96:97], v[196:199] offset:3488
+0f1579dc41737d7e	flat_store_dwordx4 v[65:66], v[115:118] offset:1295 glc dlc
+210f78dc9fa47d0c	flat_store_dwordx4 v[159:160], v[164:167] offset:3873
+9c177adc41ba7d75	flat_store_dwordx4 v[65:66], v[186:189] offset:1948 slc dlc
+c5137cdcaa777d96	flat_store_dwordx3 v[170:171], v[119:121] offset:965 dlc
+380d7edc430f7d38	flat_store_dwordx3 v[67:68], v[15:17] offset:3384 slc
+d90b7edc85377dbe	flat_store_dwordx3 v[133:134], v[55:57] offset:3033 slc
+83137ddc85a97db1	flat_store_dwordx3 v[133:134], v[169:171] offset:899 glc dlc
+d50a7ddc5d2d7d9b	flat_store_dwordx3 v[93:94], v[45:47] offset:2773 glc
+5d0b7fdc88837d38	flat_store_dwordx3 v[136:137], v[131:133] offset:2909 glc slc
+0a0c7fdc96217dc4	flat_store_dwordx3 v[150:151], v[33:35] offset:3082 glc slc
+b9137edc80897d03	flat_store_dwordx3 v[128:129], v[137:139] offset:953 slc dlc
+8d1a83dc757b7dc2	flat_load_ubyte_d16 v194, v[117:118] offset:2701 glc slc dlc
+bd1580dc9a1f7d6b	flat_load_ubyte_d16 v107, v[154:155] offset:1469 dlc
+660580dcc15c7d61	flat_load_ubyte_d16 v97, v[193:194] offset:1382
+cd0b83dc6f7b7dba	flat_load_ubyte_d16 v186, v[111:112] offset:3021 glc slc
+8d0182dc41237dc2	flat_load_ubyte_d16 v194, v[65:66] offset:397 slc
+a00580dc27787d1c	flat_load_ubyte_d16 v28, v[39:40] offset:1440
+d10e80dcc6be7da0	flat_load_ubyte_d16 v160, v[198:199] offset:3793
+760b83dc37457d1f	flat_load_ubyte_d16 v31, v[55:56] offset:2934 glc slc
+7d0e81dca8077d99	flat_load_ubyte_d16 v153, v[168:169] offset:3709 glc
+b31082dc03a47d39	flat_load_ubyte_d16 v57, v[3:4] offset:179 slc dlc
+010385dc8e347db5	flat_load_ubyte_d16_hi v181, v[142:143] offset:769 glc
+a30386dcb8747d43	flat_load_ubyte_d16_hi v67, v[184:185] offset:931 slc
+020285dc9e937d8e	flat_load_ubyte_d16_hi v142, v[158:159] offset:514 glc
+460584dc73897d1b	flat_load_ubyte_d16_hi v27, v[115:116] offset:1350
+031884dc94407d8a	flat_load_ubyte_d16_hi v138, v[148:149] offset:2051 dlc
+5c1086dc2f657d2b	flat_load_ubyte_d16_hi v43, v[47:48] offset:92 slc dlc
+a41384dc4fc37d87	flat_load_ubyte_d16_hi v135, v[79:80] offset:932 dlc
+5e0487dcaeb87d50	flat_load_ubyte_d16_hi v80, v[174:175] offset:1118 glc slc
+eb1684dc04b17d32	flat_load_ubyte_d16_hi v50, v[4:5] offset:1771 dlc
+e00685dc5c807d6e	flat_load_ubyte_d16_hi v110, v[92:93] offset:1760 glc
+9e1e8adc7c887d58	flat_load_sbyte_d16 v88, v[124:125] offset:3742 slc dlc
+f00b8bdc32377d69	flat_load_sbyte_d16 v105, v[50:51] offset:3056 glc slc
+091088dcc5887d7a	flat_load_sbyte_d16 v122, v[197:198] offset:9 dlc
+d90388dcc7707d57	flat_load_sbyte_d16 v87, v[199:200] offset:985
+b90188dc1b4a7d75	flat_load_sbyte_d16 v117, v[27:28] offset:441
+b60689dc8bac7d1e	flat_load_sbyte_d16 v30, v[139:140] offset:1718 glc
+751f8bdc8a8b7d8a	flat_load_sbyte_d16 v138, v[138:139] offset:3957 glc slc dlc
+111f8bdcb06b7d7e	flat_load_sbyte_d16 v126, v[176:177] offset:3857 glc slc dlc
+e8108adc284f7d65	flat_load_sbyte_d16 v101, v[40:41] offset:232 slc dlc
+52128bdc36877d01	flat_load_sbyte_d16 v1, v[54:55] offset:594 glc slc dlc
+440a8ddc74847dc7	flat_load_sbyte_d16_hi v199, v[116:117] offset:2628 glc
+10108cdc54867d81	flat_load_sbyte_d16_hi v129, v[84:85] offset:16 dlc
+16148fdc49657d68	flat_load_sbyte_d16_hi v104, v[73:74] offset:1046 glc slc dlc
+59118fdca59f7d33	flat_load_sbyte_d16_hi v51, v[165:166] offset:345 glc slc dlc
+241d8cdcb70a7d33	flat_load_sbyte_d16_hi v51, v[183:184] offset:3364 dlc
+7d048fdcbd637da2	flat_load_sbyte_d16_hi v162, v[189:190] offset:1149 glc slc
+da068edcc11a7dc7	flat_load_sbyte_d16_hi v199, v[193:194] offset:1754 slc
+c1008cdc6fa97d24	flat_load_sbyte_d16_hi v36, v[111:112] offset:193
+da0f8fdc8c407d68	flat_load_sbyte_d16_hi v104, v[140:141] offset:4058 glc slc
+d9158ddc0f367d78	flat_load_sbyte_d16_hi v120, v[15:16] offset:1497 glc dlc
+750f90dc9d2e7d3f	flat_load_short_d16 v63, v[157:158] offset:3957
+3f0b92dc93797d84	flat_load_short_d16 v132, v[147:148] offset:2879 slc
+e51d92dca66a7d9b	flat_load_short_d16 v155, v[166:167] offset:3557 slc dlc
+d20690dc31317d1a	flat_load_short_d16 v26, v[49:50] offset:1746
+0f0591dc60627da5	flat_load_short_d16 v165, v[96:97] offset:1295 glc
+691c91dc885d7d18	flat_load_short_d16 v24, v[136:137] offset:3177 glc dlc
+641a93dc88177d5a	flat_load_short_d16 v90, v[136:137] offset:2660 glc slc dlc
+590992dc0e6d7da4	flat_load_short_d16 v164, v[14:15] offset:2393 slc
+e50796dcbca17d41	flat_load_short_d16_hi v65, v[188:189] offset:2021 slc
+3c1e97dc64b77d34	flat_load_short_d16_hi v52, v[100:101] offset:3644 glc slc dlc
+1d0c97dc1f9b7d79	flat_load_short_d16_hi v121, v[31:32] offset:3101 glc slc
+291996dc07c77d00	flat_load_short_d16_hi v0, v[7:8] offset:2345 slc dlc
+441395dc8f037da2	flat_load_short_d16_hi v162, v[143:144] offset:836 glc dlc
+400e95dc51507d2f	flat_load_short_d16_hi v47, v[81:82] offset:3648 glc
+081296dc28477d7a	flat_load_short_d16_hi v122, v[40:41] offset:520 slc dlc
+760f94dc64037dc7	flat_load_short_d16_hi v199, v[100:101] offset:3958
+b91295dc73067d13	flat_load_short_d16_hi v19, v[115:116] offset:697 glc dlc
+361a97dc14687da3	flat_load_short_d16_hi v163, v[20:21] offset:2614 glc slc dlc
+d50a96dc86b87da8	flat_load_short_d16_hi v168, v[134:135] offset:2773 slc
+690fc0dc5d0b7d15	flat_atomic_swap v[93:94], v11 offset:3945
+7f1bc1dc52987d22	flat_atomic_swap v34, v[82:83], v152 offset:2943 glc dlc
+1907c2dc0d8d7d28	flat_atomic_swap v[13:14], v141 offset:1817 slc
+8406c3dc86c57d32	flat_atomic_swap v50, v[134:135], v197 offset:1668 glc slc
+0510c2dc32ba7d64	flat_atomic_swap v[50:51], v186 offset:5 slc dlc
+7a1cc0dca49d7d4c	flat_atomic_swap v[164:165], v157 offset:3194 dlc
+9e1bc2dc61357d15	flat_atomic_swap v[97:98], v53 offset:2974 slc dlc
+891fc3dcb7a27d68	flat_atomic_swap v104, v[183:184], v162 offset:3977 glc slc dlc
+4f18c2dca2197d0d	flat_atomic_swap v[162:163], v25 offset:2127 slc dlc
+2e07c0dcb68d7d6d	flat_atomic_swap v[182:183], v141 offset:1838
+0110c2dcb9c47d66	flat_atomic_swap v[185:186], v196 offset:1 slc dlc
+c50cc7dc3c5d7da2	flat_atomic_cmpswap v162, v[60:61], v[93:94] offset:3269 glc slc
+3a0bc5dc4cb57d09	flat_atomic_cmpswap v9, v[76:77], v[181:182] offset:2874 glc
+5105c5dc8e0e7d59	flat_atomic_cmpswap v89, v[142:143], v[14:15] offset:1361 glc
+5219c4dc983d7d0c	flat_atomic_cmpswap v[152:153], v[61:62] offset:2386 dlc
+591bc7dc30a17dae	flat_atomic_cmpswap v174, v[48:49], v[161:162] offset:2905 glc slc dlc
+f501c5dcc4507d10	flat_atomic_cmpswap v16, v[196:197], v[80:81] offset:501 glc
+730bc6dcb61b7d46	flat_atomic_cmpswap v[182:183], v[27:28] offset:2931 slc
+5214c7dc4db87dad	flat_atomic_cmpswap v173, v[77:78], v[184:185] offset:1106 glc slc dlc
+3406c5dcc7157d34	flat_atomic_cmpswap v52, v[199:200], v[21:22] offset:1588 glc
+fe15c7dc48b97d06	flat_atomic_cmpswap v6, v[72:73], v[185:186] offset:1534 glc slc dlc
+2b05c4dcbb9e7d2b	flat_atomic_cmpswap v[187:188], v[158:159] offset:1323
+3407c9dc0c557d9e	flat_atomic_add v158, v[12:13], v85 offset:1844 glc
+e81ecbdcb2be7d56	flat_atomic_add v86, v[178:179], v190 offset:3816 glc slc dlc
+7501cbdc626f7d95	flat_atomic_add v149, v[98:99], v111 offset:373 glc slc
+6e0ec9dc82047d09	flat_atomic_add v9, v[130:131], v4 offset:3694 glc
+9c0dcadc2a8b7daa	flat_atomic_add v[42:43], v139 offset:3484 slc
+6304cadc340e7d79	flat_atomic_add v[52:53], v14 offset:1123 slc
+731dc8dc4eb47d60	flat_atomic_add v[78:79], v180 offset:3443 dlc
+f007c8dc62657db4	flat_atomic_add v[98:99], v101 offset:2032
+551bcadc65947d54	flat_atomic_add v[101:102], v148 offset:2901 slc dlc
+5117c8dc87af7d9d	flat_atomic_add v[135:136], v175 offset:1873 dlc
+9b14cadcb1a77db2	flat_atomic_add v[177:178], v167 offset:1179 slc dlc
+aa00cedc58847db1	flat_atomic_sub v[88:89], v132 offset:170 slc
+6a06cddc09457d67	flat_atomic_sub v103, v[9:10], v69 offset:1642 glc
+eb03cddc3d317d5d	flat_atomic_sub v93, v[61:62], v49 offset:1003 glc
+5006cddc9e307d40	flat_atomic_sub v64, v[158:159], v48 offset:1616 glc
+8d0acedc8aa87db1	flat_atomic_sub v[138:139], v168 offset:2701 slc
+cd07cddc106e7d76	flat_atomic_sub v118, v[16:17], v110 offset:1997 glc
+ce16ccdc05c57dc2	flat_atomic_sub v[5:6], v197 offset:1742 dlc
+9b12cedcbf6d7d5d	flat_atomic_sub v[191:192], v109 offset:667 slc dlc
+9202ccdc41747d39	flat_atomic_sub v[65:66], v116 offset:658
+7204cfdc86137dbd	flat_atomic_sub v189, v[134:135], v19 offset:1138 glc slc
+9212cfdcbe417d6e	flat_atomic_sub v110, v[190:191], v65 offset:658 glc slc dlc
+6919d6dca2177d81	flat_atomic_smin v[162:163], v23 offset:2409 slc dlc
+bd1ad6dc9e227d87	flat_atomic_smin v[158:159], v34 offset:2749 slc dlc
+c605d5dc4b517d44	flat_atomic_smin v68, v[75:76], v81 offset:1478 glc
+dd0fd5dc94227d18	flat_atomic_smin v24, v[148:149], v34 offset:4061 glc
+591ad4dc75457d4d	flat_atomic_smin v[117:118], v69 offset:2649 dlc
+ce1fd6dc066e7db1	flat_atomic_smin v[6:7], v110 offset:4046 slc dlc
+341bd4dc0e5c7d78	flat_atomic_smin v[14:15], v92 offset:2868 dlc
+c613d5dc96297d11	flat_atomic_smin v17, v[150:151], v41 offset:966 glc dlc
+f70cd5dc70a67d41	flat_atomic_smin v65, v[112:113], v166 offset:3319 glc
+e31ad7dc2ba67d7c	flat_atomic_smin v124, v[43:44], v166 offset:2787 glc slc dlc
+b810d8dc2a867d21	flat_atomic_umin v[42:43], v134 offset:184 dlc
+7215d8dcb2247d42	flat_atomic_umin v[178:179], v36 offset:1394 dlc
+f30bdadc54257d16	flat_atomic_umin v[84:85], v37 offset:3059 slc
+c80cdbdc9b557d40	flat_atomic_umin v64, v[155:156], v85 offset:3272 glc slc
+e703d9dc7b8b7d96	flat_atomic_umin v150, v[123:124], v139 offset:999 glc
+3d17d8dc78a47da6	flat_atomic_umin v[120:121], v164 offset:1853 dlc
+4d10dbdcaaa87d92	flat_atomic_umin v146, v[170:171], v168 offset:77 glc slc dlc
+0c1ed9dc3a627d2c	flat_atomic_umin v44, v[58:59], v98 offset:3596 glc dlc
+c10ad9dc6d7d7d4f	flat_atomic_umin v79, v[109:110], v125 offset:2753 glc
+0108d8dc34177dba	flat_atomic_umin v[52:53], v23 offset:2049
+7f0ed9dc940c7d03	flat_atomic_umin v3, v[148:149], v12 offset:3711 glc
+5207dedc02a67d7b	flat_atomic_smax v[2:3], v166 offset:1874 slc
+e119dfdc7e647d6e	flat_atomic_smax v110, v[126:127], v100 offset:2529 glc slc dlc
+1c01dddc0b6e7d99	flat_atomic_smax v153, v[11:12], v110 offset:284 glc
+3d08dcdc89497d93	flat_atomic_smax v[137:138], v73 offset:2109
+2c0fdedcb5557d0a	flat_atomic_smax v[181:182], v85 offset:3884 slc
+3f16dcdc26507d81	flat_atomic_smax v[38:39], v80 offset:1599 dlc
+081bdedc708f7d8b	flat_atomic_smax v[112:113], v143 offset:2824 slc dlc
+5316dddca9797dbd	flat_atomic_smax v189, v[169:170], v121 offset:1619 glc dlc
+471cdfdca54a7d91	flat_atomic_smax v145, v[165:166], v74 offset:3143 glc slc dlc
+ce11e0dc0e4a7d55	flat_atomic_umax v[14:15], v74 offset:462 dlc
+1c12e0dcb7667d4f	flat_atomic_umax v[183:184], v102 offset:540 dlc
+a90ce0dc65947d54	flat_atomic_umax v[101:102], v148 offset:3241
+a017e0dc6fab7d2b	flat_atomic_umax v[111:112], v171 offset:1952 dlc
+1a0de3dc39b77d5e	flat_atomic_umax v94, v[57:58], v183 offset:3354 glc slc
+b107e1dca58a7d4d	flat_atomic_umax v77, v[165:166], v138 offset:1969 glc
+0814e2dc6b907d64	flat_atomic_umax v[107:108], v144 offset:1032 slc dlc
+6e0de1dc775f7d66	flat_atomic_umax v102, v[119:120], v95 offset:3438 glc
+5619e1dc53807d2c	flat_atomic_umax v44, v[83:84], v128 offset:2390 glc dlc
+a10be1dc0b157d7c	flat_atomic_umax v124, v[11:12], v21 offset:2977 glc
+9501e5dc0c3f7d83	flat_atomic_and v131, v[12:13], v63 offset:405 glc
+4f10e7dc2fa17d6b	flat_atomic_and v107, v[47:48], v161 offset:79 glc slc dlc
+3f10e6dc4b1e7d89	flat_atomic_and v[75:76], v30 offset:63 slc dlc
+a912e5dc86be7d31	flat_atomic_and v49, v[134:135], v190 offset:681 glc dlc
+5216e4dc82557d24	flat_atomic_and v[130:131], v85 offset:1618 dlc
+5f11e6dc63bd7d20	flat_atomic_and v[99:100], v189 offset:351 slc dlc
+b409e7dcc63f7d4c	flat_atomic_and v76, v[198:199], v63 offset:2484 glc slc
+991ae4dc6eb57d65	flat_atomic_and v[110:111], v181 offset:2713 dlc
+6917e4dc9b687d55	flat_atomic_and v[155:156], v104 offset:1897 dlc
+891fe4dc7c0e7d5f	flat_atomic_and v[124:125], v14 offset:3977 dlc
+0e0ce4dcc6707d8f	flat_atomic_and v[198:199], v112 offset:3086
+3b07ebdcb8b27d5e	flat_atomic_or v94, v[184:185], v178 offset:1851 glc slc
+e413eadc61757db0	flat_atomic_or v[97:98], v117 offset:996 slc dlc
+ce1de9dc097a7dbb	flat_atomic_or v187, v[9:10], v122 offset:3534 glc dlc
+cc08e9dc40b37d19	flat_atomic_or v25, v[64:65], v179 offset:2252 glc
+f306e8dc2fb67d9a	flat_atomic_or v[47:48], v182 offset:1779
+831febdc3f127d2d	flat_atomic_or v45, v[63:64], v18 offset:3971 glc slc dlc
+370cebdc0e5e7d59	flat_atomic_or v89, v[14:15], v94 offset:3127 glc slc
+9d1deadcb6977dc4	flat_atomic_or v[182:183], v151 offset:3485 slc dlc
+1b1de8dc4e9d7d0c	flat_atomic_or v[78:79], v157 offset:3355 dlc
+7f0ee9dc468e7d2a	flat_atomic_or v42, v[70:71], v142 offset:3711 glc
+6a05ebdcad4e7d93	flat_atomic_or v147, v[173:174], v78 offset:1386 glc slc
+4414eadc9e917d24	flat_atomic_or v[158:159], v145 offset:1092 slc dlc
+8a10eddc2a1d7d0c	flat_atomic_xor v12, v[42:43], v29 offset:138 glc dlc
+9a08ecdc024b7d9f	flat_atomic_xor v[2:3], v75 offset:2202
+7a0eeddc18437dab	flat_atomic_xor v171, v[24:25], v67 offset:3706 glc
+a21fecdc7fad7d0e	flat_atomic_xor v[127:128], v173 offset:4002 dlc
+fd01ecdc7a397dc2	flat_atomic_xor v[122:123], v57 offset:509
+5718ecdc35047d29	flat_atomic_xor v[53:54], v4 offset:2135 dlc
+5206efdc1ca97d2f	flat_atomic_xor v47, v[28:29], v169 offset:1618 glc slc
+7d1aefdc51777d2e	flat_atomic_xor v46, v[81:82], v119 offset:2685 glc slc dlc
+f509eddcb1b17db2	flat_atomic_xor v178, v[177:178], v177 offset:2549 glc
+421fefdc042c7da2	flat_atomic_xor v162, v[4:5], v44 offset:3906 glc slc dlc
+6e12ecdc7b377d0b	flat_atomic_xor v[123:124], v55 offset:622 dlc
+5e0cefdc83777d78	flat_atomic_xor v120, v[131:132], v119 offset:3166 glc slc
+4401f3dc8f1e7d4e	flat_atomic_inc v78, v[143:144], v30 offset:324 glc slc
+8501f2dcc7567d75	flat_atomic_inc v[199:200], v86 offset:389 slc
+5d0cf3dc308f7d86	flat_atomic_inc v134, v[48:49], v143 offset:3165 glc slc
+f719f2dc0aac7d4c	flat_atomic_inc v[10:11], v172 offset:2551 slc dlc
+bc08f3dc247e7d34	flat_atomic_inc v52, v[36:37], v126 offset:2236 glc slc
+621cf0dc47357db7	flat_atomic_inc v[71:72], v53 offset:3170 dlc
+8c01f3dc4e467d5c	flat_atomic_inc v92, v[78:79], v70 offset:396 glc slc
+f811f3dc9c907d06	flat_atomic_inc v6, v[156:157], v144 offset:504 glc slc dlc
+b310f0dc05907d0b	flat_atomic_inc v[5:6], v144 offset:179 dlc
+a811f3dc07727d20	flat_atomic_inc v32, v[7:8], v114 offset:424 glc slc dlc
+cb16f1dc200f7d3e	flat_atomic_inc v62, v[32:33], v15 offset:1739 glc dlc
+040af7dc695d7d64	flat_atomic_dec v100, v[105:106], v93 offset:2564 glc slc
+711df4dcb4907d41	flat_atomic_dec v[180:181], v144 offset:3441 dlc
+1400f6dc49417d10	flat_atomic_dec v[73:74], v65 offset:20 slc
+9a17f6dc385d7d92	flat_atomic_dec v[56:57], v93 offset:1946 slc dlc
+1e0ff4dc29a87d60	flat_atomic_dec v[41:42], v168 offset:3870
+2b04fadc5b887d4b	flat_atomic_fcmpswap v[91:92], v[136:137] offset:1067 slc
+a90df8dcc55f7d7c	flat_atomic_fcmpswap v[197:198], v[95:96] offset:3497
+cb0ffadc67067d27	flat_atomic_fcmpswap v[103:104], v[6:7] offset:4043 slc
+6200f9dcab2d7d0d	flat_atomic_fcmpswap v13, v[171:172], v[45:46] offset:98 glc
+381af8dc3a9d7d3c	flat_atomic_fcmpswap v[58:59], v[157:158] offset:2616 dlc
+1006fadc245d7dae	flat_atomic_fcmpswap v[36:37], v[93:94] offset:1552 slc
+b81bfbdc8e597d46	flat_atomic_fcmpswap v70, v[142:143], v[89:90] offset:3000 glc slc dlc
+d404fadc28767da9	flat_atomic_fcmpswap v[40:41], v[118:119] offset:1236 slc
+e801fadc922e7da7	flat_atomic_fcmpswap v[146:147], v[46:47] offset:488 slc
+1b1efbdc98797db6	flat_atomic_fcmpswap v182, v[152:153], v[121:122] offset:3611 glc slc dlc
+cf08fedc9e4f7d18	flat_atomic_fmin v[158:159], v79 offset:2255 slc
+1b1ffedc48c57d3d	flat_atomic_fmin v[72:73], v197 offset:3867 slc dlc
+f519fcdc927a7d91	flat_atomic_fmin v[146:147], v122 offset:2549 dlc
+a007fcdc349d7dbd	flat_atomic_fmin v[52:53], v157 offset:1952
+3205fddc5e147d5f	flat_atomic_fmin v95, v[94:95], v20 offset:1330 glc
+1d04fddc6e577dbb	flat_atomic_fmin v187, v[110:111], v87 offset:1053 glc
+dc0fffdc640d7d98	flat_atomic_fmin v152, v[100:101], v13 offset:4060 glc slc
+b70dfcdc8b577d12	flat_atomic_fmin v[139:140], v87 offset:3511
+7f18fddc1faf7d5f	flat_atomic_fmin v95, v[31:32], v175 offset:2175 glc dlc
+7411fedc539f7db0	flat_atomic_fmin v[83:84], v159 offset:372 slc dlc
+c109fedc10307d48	flat_atomic_fmin v[16:17], v48 offset:2497 slc
+360bfddc03b87d5c	flat_atomic_fmin v92, v[3:4], v184 offset:2870 glc
+200303dd85c37d38	flat_atomic_fmax v56, v[133:134], v195 offset:800 glc slc
+771a03dd303f7d1d	flat_atomic_fmax v29, v[48:49], v63 offset:2679 glc slc dlc
+cf1e03dd0d5b7d6b	flat_atomic_fmax v107, v[13:14], v91 offset:3791 glc slc dlc
+850301dd3bb37d8e	flat_atomic_fmax v142, v[59:60], v179 offset:901 glc
+231e01ddc7507d23	flat_atomic_fmax v35, v[199:200], v80 offset:3619 glc dlc
+990c03dd795c7d37	flat_atomic_fmax v55, v[121:122], v92 offset:3225 glc slc
+640a02dd8a1a7d93	flat_atomic_fmax v[138:139], v26 offset:2660 slc
+1a1100dd66237d1a	flat_atomic_fmax v[102:103], v35 offset:282 dlc
+760f03dd3db27d6c	flat_atomic_fmax v108, v[61:62], v178 offset:3958 glc slc
+b80301dd48167d7b	flat_atomic_fmax v123, v[72:73], v22 offset:952 glc
+661601ddab007d04	flat_atomic_fmax v4, v[171:172], v0 offset:1638 glc dlc
+cb0801dd6d6a7d14	flat_atomic_fmax v20, v[109:110], v106 offset:2251 glc
+960a43dd3e8e7d35	flat_atomic_swap_x2 v[53:54], v[62:63], v[142:143] offset:2710 glc slc
+780540dda26c7d05	flat_atomic_swap_x2 v[162:163], v[108:109] offset:1400
+741642dd95b97d89	flat_atomic_swap_x2 v[149:150], v[185:186] offset:1652 slc dlc
+010043dd75487d8e	flat_atomic_swap_x2 v[142:143], v[117:118], v[72:73] offset:1 glc slc
+331f40dd5e1f7d0e	flat_atomic_swap_x2 v[94:95], v[31:32] offset:3891 dlc
+df1b43dd1d427d9b	flat_atomic_swap_x2 v[155:156], v[29:30], v[66:67] offset:3039 glc slc dlc
+bf0141dd84997d83	flat_atomic_swap_x2 v[131:132], v[132:133], v[153:154] offset:447 glc
+251143dd0c5f7d6f	flat_atomic_swap_x2 v[111:112], v[12:13], v[95:96] offset:293 glc slc dlc
+521040dd59817d1a	flat_atomic_swap_x2 v[89:90], v[129:130] offset:82 dlc
+991b43ddb6987d95	flat_atomic_swap_x2 v[149:150], v[182:183], v[152:153] offset:2969 glc slc dlc
+c40b43dd2b037d6c	flat_atomic_swap_x2 v[108:109], v[43:44], v[3:4] offset:3012 glc slc
+cf1f41dd8aaa7d65	flat_atomic_swap_x2 v[101:102], v[138:139], v[170:171] offset:4047 glc dlc
+a00d44dd21a27d71	flat_atomic_cmpswap_x2 v[33:34], v[162:165] offset:3488
+8d1b47dd39c67da9	flat_atomic_cmpswap_x2 v[169:170], v[57:58], v[198:201] offset:2957 glc slc dlc
+2a1c44dd12837d24	flat_atomic_cmpswap_x2 v[18:19], v[131:134] offset:3114 dlc
+240346dd4b5d7d7c	flat_atomic_cmpswap_x2 v[75:76], v[93:96] offset:804 slc
+011f46dd2a087d1e	flat_atomic_cmpswap_x2 v[42:43], v[8:11] offset:3841 slc dlc
+cf0744dd46137d89	flat_atomic_cmpswap_x2 v[70:71], v[19:22] offset:1999
+ef1244dd41657d28	flat_atomic_cmpswap_x2 v[65:66], v[101:104] offset:751 dlc
+c30746dd65bd7d8e	flat_atomic_cmpswap_x2 v[101:102], v[189:192] offset:1987 slc
+cd1f4add4fb37d13	flat_atomic_add_x2 v[79:80], v[179:180] offset:4045 slc dlc
+1d1249dd504b7d8a	flat_atomic_add_x2 v[138:139], v[80:81], v[75:76] offset:541 glc dlc
+cb1649ddad9d7d7d	flat_atomic_add_x2 v[125:126], v[173:174], v[157:158] offset:1739 glc dlc
+ec1d4addb7147d20	flat_atomic_add_x2 v[183:184], v[20:21] offset:3564 slc dlc
+640349dd9e2d7d55	flat_atomic_add_x2 v[85:86], v[158:159], v[45:46] offset:868 glc
+fc1d48dd2dbf7daf	flat_atomic_add_x2 v[45:46], v[191:192] offset:3580 dlc
+480049dd34b97dba	flat_atomic_add_x2 v[186:187], v[52:53], v[185:186] offset:72 glc
+ea084bdd8f217dac	flat_atomic_add_x2 v[172:173], v[143:144], v[33:34] offset:2282 glc slc
+d21d4ddd334a7dbd	flat_atomic_sub_x2 v[189:190], v[51:52], v[74:75] offset:3538 glc dlc
+10154edd40737d5c	flat_atomic_sub_x2 v[64:65], v[115:116] offset:1296 slc dlc
+e70e4edd8b327d14	flat_atomic_sub_x2 v[139:140], v[50:51] offset:3815 slc
+2a054fdd89457db0	flat_atomic_sub_x2 v[176:177], v[137:138], v[69:70] offset:1322 glc slc
+d20c4fdd64a77d0e	flat_atomic_sub_x2 v[14:15], v[100:101], v[167:168] offset:3282 glc slc
+e3084ddd92c47d92	flat_atomic_sub_x2 v[146:147], v[146:147], v[196:197] offset:2275 glc
+7d1c4ddda6b27d04	flat_atomic_sub_x2 v[4:5], v[166:167], v[178:179] offset:3197 glc dlc
+1d064edd9db27d82	flat_atomic_sub_x2 v[157:158], v[178:179] offset:1565 slc
+290855ddbe557d72	flat_atomic_smin_x2 v[114:115], v[190:191], v[85:86] offset:2089 glc
+c11554dd6e0c7d0e	flat_atomic_smin_x2 v[110:111], v[12:13] offset:1473 dlc
+781a57dd7c467d17	flat_atomic_smin_x2 v[23:24], v[124:125], v[70:71] offset:2680 glc slc dlc
+4c1854dd64c47dbb	flat_atomic_smin_x2 v[100:101], v[196:197] offset:2124 dlc
+e71a56dd576e7d44	flat_atomic_smin_x2 v[87:88], v[110:111] offset:2791 slc dlc
+560f55dd7fc27d79	flat_atomic_smin_x2 v[121:122], v[127:128], v[194:195] offset:3926 glc
+7e0357dd9f927da3	flat_atomic_smin_x2 v[163:164], v[159:160], v[146:147] offset:894 glc slc
+7d1a55dd22087db7	flat_atomic_smin_x2 v[183:184], v[34:35], v[8:9] offset:2685 glc dlc
+02105bdd3bb17d91	flat_atomic_umin_x2 v[145:146], v[59:60], v[177:178] offset:2 glc slc dlc
+5c175bddaea77d5d	flat_atomic_umin_x2 v[93:94], v[174:175], v[167:168] offset:1884 glc slc dlc
+4b195add7d4e7d0a	flat_atomic_umin_x2 v[125:126], v[78:79] offset:2379 slc dlc
+111a58dd3eb57d4e	flat_atomic_umin_x2 v[62:63], v[181:182] offset:2577 dlc
+b80f59dd30227db1	flat_atomic_umin_x2 v[177:178], v[48:49], v[34:35] offset:4024 glc
+ca0d5bdd5f7b7d8a	flat_atomic_umin_x2 v[138:139], v[95:96], v[123:124] offset:3530 glc slc
+340c5bddb9a37d7b	flat_atomic_umin_x2 v[123:124], v[185:186], v[163:164] offset:3124 glc slc
+670b59dd46707d72	flat_atomic_umin_x2 v[114:115], v[70:71], v[112:113] offset:2919 glc
+84015add864e7d70	flat_atomic_umin_x2 v[134:135], v[78:79] offset:388 slc
+210958dda2607d6f	flat_atomic_umin_x2 v[162:163], v[96:97] offset:2337
+20185fdd55817d82	flat_atomic_smax_x2 v[130:131], v[85:86], v[129:130] offset:2080 glc slc dlc
+55085ddd57117d3a	flat_atomic_smax_x2 v[58:59], v[87:88], v[17:18] offset:2133 glc
+7d0a5eddb2717db2	flat_atomic_smax_x2 v[178:179], v[113:114] offset:2685 slc
+b10e5fdd5abd7d70	flat_atomic_smax_x2 v[112:113], v[90:91], v[189:190] offset:3761 glc slc
+6a0b5ddd5f367d56	flat_atomic_smax_x2 v[86:87], v[95:96], v[54:55] offset:2922 glc
+30185fdd2d0c7d66	flat_atomic_smax_x2 v[102:103], v[45:46], v[12:13] offset:2096 glc slc dlc
+d81e5cdd09b37dc7	flat_atomic_smax_x2 v[9:10], v[179:180] offset:3800 dlc
+d4095cdd2f247d07	flat_atomic_smax_x2 v[47:48], v[36:37] offset:2516
+fe185cdd9d407d7b	flat_atomic_smax_x2 v[157:158], v[64:65] offset:2302 dlc
+ed095edd1f557d48	flat_atomic_smax_x2 v[31:32], v[85:86] offset:2541 slc
+080c63dd53417d76	flat_atomic_umax_x2 v[118:119], v[83:84], v[65:66] offset:3080 glc slc
+a90662dd63767db2	flat_atomic_umax_x2 v[99:100], v[118:119] offset:1705 slc
+980b60ddb95c7dad	flat_atomic_umax_x2 v[185:186], v[92:93] offset:2968
+c80860dd4db87d1b	flat_atomic_umax_x2 v[77:78], v[184:185] offset:2248
+4f0963ddb4527d96	flat_atomic_umax_x2 v[150:151], v[180:181], v[82:83] offset:2383 glc slc
+090262dd6e7f7d9c	flat_atomic_umax_x2 v[110:111], v[127:128] offset:521 slc
+721d61dd6f617d10	flat_atomic_umax_x2 v[16:17], v[111:112], v[97:98] offset:3442 glc dlc
+c21060ddaa257d51	flat_atomic_umax_x2 v[170:171], v[37:38] offset:194 dlc
+680762dd8eac7d22	flat_atomic_umax_x2 v[142:143], v[172:173] offset:1896 slc
+860b63dd44587d8c	flat_atomic_umax_x2 v[140:141], v[68:69], v[88:89] offset:2950 glc slc
+d30960ddbe017dc3	flat_atomic_umax_x2 v[190:191], v[1:2] offset:2515
+f70f63ddb2147db5	flat_atomic_umax_x2 v[181:182], v[178:179], v[20:21] offset:4087 glc slc
+261c66dd5e9f7d88	flat_atomic_and_x2 v[94:95], v[159:160] offset:3110 slc dlc
+1f1d66dd576e7da5	flat_atomic_and_x2 v[87:88], v[110:111] offset:3359 slc dlc
+2d1c64dd52707d3d	flat_atomic_and_x2 v[82:83], v[112:113] offset:3117 dlc
+0d1266dd6c1b7d13	flat_atomic_and_x2 v[108:109], v[27:28] offset:525 slc dlc
+810566dd98b17d11	flat_atomic_and_x2 v[152:153], v[177:178] offset:1409 slc
+d00967dd48177d06	flat_atomic_and_x2 v[6:7], v[72:73], v[23:24] offset:2512 glc slc
+871165dd3e4b7d17	flat_atomic_and_x2 v[23:24], v[62:63], v[75:76] offset:391 glc dlc
+5d1164dd4e507db2	flat_atomic_and_x2 v[78:79], v[80:81] offset:349 dlc
+680c66dd9a9b7d3c	flat_atomic_and_x2 v[154:155], v[155:156] offset:3176 slc
+8a066bdd575d7da2	flat_atomic_or_x2 v[162:163], v[87:88], v[93:94] offset:1674 glc slc
+001f6bdd2a167d31	flat_atomic_or_x2 v[49:50], v[42:43], v[22:23] offset:3840 glc slc dlc
+fb006add921e7d2d	flat_atomic_or_x2 v[146:147], v[30:31] offset:251 slc
+711d6add4e247d50	flat_atomic_or_x2 v[78:79], v[36:37] offset:3441 slc dlc
+f00a6bdd1d297d9a	flat_atomic_or_x2 v[154:155], v[29:30], v[41:42] offset:2800 glc slc
+d60f69ddc1027d58	flat_atomic_or_x2 v[88:89], v[193:194], v[2:3] offset:4054 glc
+6e1369dd0c6c7da0	flat_atomic_or_x2 v[160:161], v[12:13], v[108:109] offset:878 glc dlc
+d70068dd073d7d2d	flat_atomic_or_x2 v[7:8], v[61:62] offset:215
+c0066bdd13c27d0f	flat_atomic_or_x2 v[15:16], v[19:20], v[194:195] offset:1728 glc slc
+421669dd6cc27d83	flat_atomic_or_x2 v[131:132], v[108:109], v[194:195] offset:1602 glc dlc
+480e6bdd10bf7d62	flat_atomic_or_x2 v[98:99], v[16:17], v[191:192] offset:3656 glc slc
+d01468dd3ac67d46	flat_atomic_or_x2 v[58:59], v[198:199] offset:1232 dlc
+580d6cdd9f9f7d6d	flat_atomic_xor_x2 v[159:160], v[159:160] offset:3416
+08026eddc2087d61	flat_atomic_xor_x2 v[194:195], v[8:9] offset:520 slc
+7d126ddda0507d64	flat_atomic_xor_x2 v[100:101], v[160:161], v[80:81] offset:637 glc dlc
+411c6edd44857da8	flat_atomic_xor_x2 v[68:69], v[133:134] offset:3137 slc dlc
+860c6edd8c607da0	flat_atomic_xor_x2 v[140:141], v[96:97] offset:3206 slc
+04086cdd158c7d22	flat_atomic_xor_x2 v[21:22], v[140:141] offset:2052
+4f126ddd78b57da2	flat_atomic_xor_x2 v[162:163], v[120:121], v[181:182] offset:591 glc dlc
+9f186cdd1c597da2	flat_atomic_xor_x2 v[28:29], v[89:90] offset:2207 dlc
+620872ddc4207d07	flat_atomic_inc_x2 v[196:197], v[32:33] offset:2146 slc
+e10373dd918d7d28	flat_atomic_inc_x2 v[40:41], v[145:146], v[141:142] offset:993 glc slc
+771571ddaac77d5a	flat_atomic_inc_x2 v[90:91], v[170:171], v[199:200] offset:1399 glc dlc
+c90672dd048c7d89	flat_atomic_inc_x2 v[4:5], v[140:141] offset:1737 slc
+4e0073dd05bb7d6a	flat_atomic_inc_x2 v[106:107], v[5:6], v[187:188] offset:78 glc slc
+850e70dda00b7dc0	flat_atomic_inc_x2 v[160:161], v[11:12] offset:3717
+b50571dd4b1a7d6d	flat_atomic_inc_x2 v[109:110], v[75:76], v[26:27] offset:1461 glc
+6a1872dd45457db5	flat_atomic_inc_x2 v[69:70], v[69:70] offset:2154 slc dlc
+521273dd53a77d2d	flat_atomic_inc_x2 v[45:46], v[83:84], v[167:168] offset:594 glc slc dlc
+3d0c72dda0c57d7a	flat_atomic_inc_x2 v[160:161], v[197:198] offset:3133 slc
+310d71dd53ba7d4e	flat_atomic_inc_x2 v[78:79], v[83:84], v[186:187] offset:3377 glc
+210870dd8e167d6a	flat_atomic_inc_x2 v[142:143], v[22:23] offset:2081
+860175dd19877d27	flat_atomic_dec_x2 v[39:40], v[25:26], v[135:136] offset:390 glc
+e20277dd28b17d6b	flat_atomic_dec_x2 v[107:108], v[40:41], v[177:178] offset:738 glc slc
+7a0376dd5d587d41	flat_atomic_dec_x2 v[93:94], v[88:89] offset:890 slc
+181076dd3b7f7d01	flat_atomic_dec_x2 v[59:60], v[127:128] offset:24 slc dlc
+df0176dd6da97d88	flat_atomic_dec_x2 v[109:110], v[169:170] offset:479 slc
+bf1a74dd33817d46	flat_atomic_dec_x2 v[51:52], v[129:130] offset:2751 dlc
+da0a75dd40087d07	flat_atomic_dec_x2 v[7:8], v[64:65], v[8:9] offset:2778 glc
+ae0574dd81667d91	flat_atomic_dec_x2 v[129:130], v[102:103] offset:1454
+aa0e77dda47d7d10	flat_atomic_dec_x2 v[16:17], v[164:165], v[125:126] offset:3754 glc slc
+77007bdda29b7d7a	flat_atomic_fcmpswap_x2 v[122:123], v[162:163], v[155:158] offset:119 glc slc
+94167addbb1f7da7	flat_atomic_fcmpswap_x2 v[187:188], v[31:34] offset:1684 slc dlc
+870579dd0da87dbe	flat_atomic_fcmpswap_x2 v[190:191], v[13:14], v[168:171] offset:1415 glc
+880c78dd46837d7f	flat_atomic_fcmpswap_x2 v[70:71], v[131:134] offset:3208
+73017bdd25457d29	flat_atomic_fcmpswap_x2 v[41:42], v[37:38], v[69:72] offset:371 glc slc
+b51b7bdd4b6f7da9	flat_atomic_fcmpswap_x2 v[169:170], v[75:76], v[111:114] offset:2997 glc slc dlc
+a11f7add0a377d29	flat_atomic_fcmpswap_x2 v[10:11], v[55:58] offset:4001 slc dlc
+731d7bdd55b67d98	flat_atomic_fcmpswap_x2 v[152:153], v[85:86], v[182:185] offset:3443 glc slc dlc
+821f7add21447d24	flat_atomic_fcmpswap_x2 v[33:34], v[68:71] offset:3970 slc dlc
+b60f7edd5f1c7dc0	flat_atomic_fmin_x2 v[95:96], v[28:29] offset:4022 slc
+8e167dddbb377d96	flat_atomic_fmin_x2 v[150:151], v[187:188], v[55:56] offset:1678 glc dlc
+fc147ddd6e757d20	flat_atomic_fmin_x2 v[32:33], v[110:111], v[117:118] offset:1276 glc dlc
+3f057cdd54607d3b	flat_atomic_fmin_x2 v[84:85], v[96:97] offset:1343
+95127cdd5d937da6	flat_atomic_fmin_x2 v[93:94], v[147:148] offset:661 dlc
+b2037cdd19787db0	flat_atomic_fmin_x2 v[25:26], v[120:121] offset:946
+c60f7edd03737d0d	flat_atomic_fmin_x2 v[3:4], v[115:116] offset:4038 slc
+18107edd2a4e7dbf	flat_atomic_fmin_x2 v[42:43], v[78:79] offset:24 slc dlc
+5d0b7cddc3997db2	flat_atomic_fmin_x2 v[195:196], v[153:154] offset:2909
+a6147cdd3b127d7c	flat_atomic_fmin_x2 v[59:60], v[18:19] offset:1190 dlc
+611081dd84b87dc2	flat_atomic_fmax_x2 v[194:195], v[132:133], v[184:185] offset:97 glc dlc
+110483dd5c6c7d5a	flat_atomic_fmax_x2 v[90:91], v[92:93], v[108:109] offset:1041 glc slc
+481281dd578f7d9b	flat_atomic_fmax_x2 v[155:156], v[87:88], v[143:144] offset:584 glc dlc
+1e0280ddc77b7d82	flat_atomic_fmax_x2 v[199:200], v[123:124] offset:542
+221480dd91547d89	flat_atomic_fmax_x2 v[145:146], v[84:85] offset:1058 dlc
+401882dd017a7d02	flat_atomic_fmax_x2 v[1:2], v[122:123] offset:2112 slc dlc
+071581dda9a17d20	flat_atomic_fmax_x2 v[32:33], v[169:170], v[161:162] offset:1287 glc dlc
+901883ddb7c27d63	flat_atomic_fmax_x2 v[99:100], v[183:184], v[194:195] offset:2192 glc slc dlc
+460582dd552c7db0	flat_atomic_fmax_x2 v[85:86], v[44:45] offset:1350 slc
+aa1180ddc01b7d20	flat_atomic_fmax_x2 v[192:193], v[27:28] offset:426 dlc
+9a1280dd2a987d6e	flat_atomic_fmax_x2 v[42:43], v[152:153] offset:666 dlc
+031f82dd990c7d4e	flat_atomic_fmax_x2 v[153:154], v[12:13] offset:3843 slc dlc
+6e9520dc3e2a7517	global_load_ubyte v23, v62, ttmp[8:9] offset:1390 dlc
+1a8b23dc1201669d	global_load_ubyte v157, v18, s[102:103] offset:-1254 glc slc
+438820dc22146905	global_load_ubyte v5, v34, s[104:105] offset:-1981
+959820dc927a27bd	global_load_ubyte v189, v146, s[38:39] offset:-1899 dlc
+4f9b20dc069e6c3b	global_load_ubyte v59, v6, ttmp[0:1] offset:-1201 dlc
+0bab23dc8d256f30	global_load_ubyte v141, ttmp[2:3] offset:-1269 glc slc lds
+588b23dcc601066e	global_load_ubyte v110, v198, s[6:7] offset:-1192 glc slc
+52b222dc1d9e12b9	global_load_ubyte v29, s[18:19] offset:594 slc dlc lds
+678621dc92a45709	global_load_ubyte v9, v146, s[86:87] offset:1639 glc
+a89721dca928487f	global_load_ubyte v127, v169, s[72:73] offset:1960 glc dlc
+6bbe21dc1e0a784c	global_load_ubyte v30, ttmp[12:13] offset:-405 glc dlc lds
+329c22dc34347b76	global_load_ubyte v118, v52, ttmp[14:15] offset:-974 slc dlc
+9d8921dc47791562	global_load_ubyte v98, v71, s[20:21] offset:-1635 glc
+d38f22dc29946656	global_load_ubyte v86, v41, s[102:103] offset:-45 slc
+238f24dcc6a35474	global_load_sbyte v116, v198, s[84:85] offset:-221
+d48725dc3a871b12	global_load_sbyte v18, v58, s[26:27] offset:2004 glc
+e4bb27dc4a9f213d	global_load_sbyte v74, s[32:33] offset:-1052 glc slc dlc lds
+f48b25dc301854c2	global_load_sbyte v194, v48, s[84:85] offset:-1036 glc
+1e9c26dc830b3300	global_load_sbyte v0, v131, s[50:51] offset:-994 slc dlc
+d8a125dca0116a54	global_load_sbyte v160, vcc offset:472 glc lds
+d9b725dc62707d97	global_load_sbyte v[98:99], off offset:2009 glc dlc lds
+dbb224dc5d315752	global_load_sbyte v93, s[86:87] offset:731 dlc lds
+239724dcaf945a3e	global_load_sbyte v62, v175, s[90:91] offset:1827 dlc
+ef9827dca77b6016	global_load_sbyte v22, v167, s[96:97] offset:-1809 glc slc dlc
+b28c24dcc46c0f07	global_load_sbyte v7, v196, s[14:15] offset:-846
+448724dc91745a16	global_load_sbyte v22, v145, s[90:91] offset:1860
+be8826dc4e037858	global_load_sbyte v88, v78, ttmp[12:13] offset:-1858 slc
+df9125dc6ab166be	global_load_sbyte v190, v106, s[102:103] offset:479 glc dlc
+e59d2bdc380b1508	global_load_ushort v8, v56, s[20:21] offset:-539 glc slc dlc
+069e29dc572f4521	global_load_ushort v33, v87, s[68:69] offset:-506 glc dlc
+19832adc0bb96810	global_load_ushort v16, v11, s[104:105] offset:793 slc
+72a12adc310f7d83	global_load_ushort v[49:50], off offset:370 slc lds
+70bf29dc326d0fc4	global_load_ushort v50, s[14:15] offset:-144 glc dlc lds
+a38229dc634e7894	global_load_ushort v148, v99, ttmp[12:13] offset:675 glc
+a7b42adc35676382	global_load_ushort v53, s[98:99] offset:1191 slc dlc lds
+06852bdc8e224b67	global_load_ushort v103, v142, s[74:75] offset:1286 glc slc
+5bbc28dc1e7b1e06	global_load_ushort v30, s[30:31] offset:-933 dlc lds
+748b2adc23842487	global_load_ushort v135, v35, s[36:37] offset:-1164 slc
+de8429dc4c510629	global_load_ushort v41, v76, s[6:7] offset:1246 glc
+59942adc4a80331e	global_load_ushort v30, v74, s[50:51] offset:1113 slc dlc
+a1972bdcbe33724b	global_load_ushort v75, v190, ttmp[6:7] offset:1953 glc slc dlc
+4fa22ddcb9210f61	global_load_sshort v185, s[14:15] offset:591 glc lds
+e1902fdc0f097b7f	global_load_sshort v127, v15, ttmp[14:15] offset:225 glc slc dlc
+2e952ddcafbf5788	global_load_sshort v136, v175, s[86:87] offset:1326 glc dlc
+9e912cdc41c26c5f	global_load_sshort v95, v65, ttmp[0:1] offset:414 dlc
+3fb12edcc2a56962	global_load_sshort v194, s[104:105] offset:319 slc dlc lds
+bc9f2edc54973f7d	global_load_sshort v125, v84, s[62:63] offset:-68 slc dlc
+c7832edc21881864	global_load_sshort v100, v33, s[24:25] offset:967 slc
+90852ddc81b30cba	global_load_sshort v186, v129, s[12:13] offset:1424 glc
+35942cdc73086988	global_load_sshort v136, v115, s[104:105] offset:1077 dlc
+c2932ddcb031574d	global_load_sshort v77, v176, s[86:87] offset:962 glc dlc
+57a32fdc75b26977	global_load_sshort v117, s[104:105] offset:855 glc slc lds
+c08a33dc78720698	global_load_dword v152, v120, s[6:7] offset:-1344 glc slc
+e5b730dca99b4215	global_load_dword v169, s[66:67] offset:2021 dlc lds
+e59232dc7bc20674	global_load_dword v116, v123, s[6:7] offset:741 slc dlc
+db9432dc10452124	global_load_dword v36, v16, s[32:33] offset:1243 slc dlc
+6b8232dcb016572a	global_load_dword v42, v176, s[86:87] offset:619 slc
+649431dcc08e1b4c	global_load_dword v76, v192, s[26:27] offset:1124 glc dlc
+8b9132dc9540219d	global_load_dword v157, v149, s[32:33] offset:395 slc dlc
+bea333dc171d3071	global_load_dword v23, s[48:49] offset:958 glc slc lds
+548b31dc316569a5	global_load_dword v165, v49, s[104:105] offset:-1196 glc
+508731dc68c521aa	global_load_dword v170, v104, s[32:33] offset:1872 glc
+989931dc146f6f04	global_load_dword v4, v20, ttmp[2:3] offset:-1640 glc dlc
+72a432dc174b665d	global_load_dword v23, s[102:103] offset:1138 slc lds
+249f32dc1b8557ae	global_load_dword v174, v27, s[86:87] offset:-220 slc dlc
+678135dc54aa301b	global_load_dwordx2 v[27:28], v84, s[48:49] offset:359 glc
+d89637dc21107b4b	global_load_dwordx2 v[75:76], v33, ttmp[14:15] offset:1752 glc slc dlc
+b88b35dc8756096c	global_load_dwordx2 v[108:109], v135, s[8:9] offset:-1096 glc
+468d35dcb4466c34	global_load_dwordx2 v[52:53], v180, ttmp[0:1] offset:-698 glc
+be9637dc9b335152	global_load_dwordx2 v[82:83], v155, s[80:81] offset:1726 glc slc dlc
+6c8836dc44a01526	global_load_dwordx2 v[38:39], v68, s[20:21] offset:-1940 slc
+fe9b37dcbd7f639b	global_load_dwordx2 v[155:156], v189, s[98:99] offset:-1026 glc slc dlc
+799337dc46a15152	global_load_dwordx2 v[82:83], v70, s[80:81] offset:889 glc slc dlc
+ad9c36dc65956f24	global_load_dwordx2 v[36:37], v101, ttmp[2:3] offset:-851 slc dlc
+1c9437dc03ae510d	global_load_dwordx2 v[13:14], v3, s[80:81] offset:1052 glc slc dlc
+ca8b38dc18a23382	global_load_dwordx4 v[130:133], v24, s[50:51] offset:-1078
+af9838dcb3c27b6d	global_load_dwordx4 v[109:112], v179, ttmp[14:15] offset:-1873 dlc
+ae883adc216409b7	global_load_dwordx4 v[183:186], v33, s[8:9] offset:-1874 slc
+d08738dc91415a6a	global_load_dwordx4 v[106:109], v145, s[90:91] offset:2000
+b6973adc31125402	global_load_dwordx4 v[2:5], v49, s[84:85] offset:1974 slc dlc
+5d9e38dc8c4b120f	global_load_dwordx4 v[15:18], v140, s[18:19] offset:-419 dlc
+b6903adc45621e1f	global_load_dwordx4 v[31:34], v69, s[30:31] offset:182 slc dlc
+449838dc9e7f1233	global_load_dwordx4 v[51:54], v158, s[18:19] offset:-1980 dlc
+0a863bdc227d4e3d	global_load_dwordx4 v[61:64], v34, s[78:79] offset:1546 glc slc
+d7863adca1912db7	global_load_dwordx4 v[183:186], v161, s[44:45] offset:1751 slc
+f79a39dc052f3f5e	global_load_dwordx4 v[94:97], v5, s[62:63] offset:-1289 glc dlc
+3f853fdc6eb02ab3	global_load_dwordx3 v[179:181], v110, s[42:43] offset:1343 glc slc
+4f9f3cdc0d0f51c3	global_load_dwordx3 v[195:197], v13, s[80:81] offset:-177 dlc
+3a803ddc7055541b	global_load_dwordx3 v[27:29], v112, s[84:85] offset:58 glc
+29913cdc182b7803	global_load_dwordx3 v[3:5], v24, ttmp[12:13] offset:297 dlc
+25863cdc851d68c1	global_load_dwordx3 v[193:195], v133, s[104:105] offset:1573
+8c9f3fdc1f806c90	global_load_dwordx3 v[144:146], v31, ttmp[0:1] offset:-116 glc slc dlc
+ab903cdc9d60391c	global_load_dwordx3 v[28:30], v157, s[56:57] offset:171 dlc
+59883edc52be66b7	global_load_dwordx3 v[183:185], v82, s[102:103] offset:-1959 slc
+b89f3fdc99063954	global_load_dwordx3 v[84:86], v153, s[56:57] offset:-72 glc slc dlc
+759b3fdc49a80f70	global_load_dwordx3 v[112:114], v73, s[14:15] offset:-1163 glc slc dlc
+198e60dc2a4b693b	global_store_byte v42, v75, s[104:105] offset:-487
+7c9f60dc0e9830a3	global_store_byte v14, v152, s[48:49] offset:-132 dlc
+379861dc99b06985	global_store_byte v153, v176, s[104:105] offset:-1993 glc dlc
+1d8262dca9036974	global_store_byte v169, v3, s[104:105] offset:541 slc
+528861dca3703086	global_store_byte v163, v112, s[48:49] offset:-1966 glc
+4f8761dcbc324817	global_store_byte v188, v50, s[72:73] offset:1871 glc
+b59a62dcb5934557	global_store_byte v181, v147, s[68:69] offset:-1355 slc dlc
+fb8860dc63825a47	global_store_byte v99, v130, s[90:91] offset:-1797
+928967dc9e8e7d14	global_store_byte_d16_hi v[158:159], v142, off offset:-1646 glc slc
+da8064dc50545d6f	global_store_byte_d16_hi v80, v84, s[92:93] offset:218
+579966dcb4014883	global_store_byte_d16_hi v180, v1, s[72:73] offset:-1705 slc dlc
+a98667dc4d86004a	global_store_byte_d16_hi v77, v134, s[0:1] offset:1705 glc slc
+879567dc9b762d97	global_store_byte_d16_hi v155, v118, s[44:45] offset:1415 glc slc dlc
+579664dc5f517d14	global_store_byte_d16_hi v[95:96], v81, off offset:1623 dlc
+159b66dc21036c46	global_store_byte_d16_hi v33, v3, ttmp[0:1] offset:-1259 slc dlc
+519665dc8e050f21	global_store_byte_d16_hi v142, v5, s[14:15] offset:1617 glc dlc
+e49665dc9a217d27	global_store_byte_d16_hi v[154:155], v33, off offset:1764 glc dlc
+dc886bdc8502308b	global_store_short v133, v2, s[48:49] offset:-1828 glc slc
+9f946bdc74b818ba	global_store_short v116, v184, s[24:25] offset:1183 glc slc dlc
+2a9568dca5ba2d51	global_store_short v165, v186, s[44:45] offset:1322 dlc
+db8a68dcb5b05a70	global_store_short v181, v176, s[90:91] offset:-1317
+35816adca9923391	global_store_short v169, v146, s[50:51] offset:309 slc
+718169dc5a91128d	global_store_short v90, v145, s[18:19] offset:369 glc
+b89668dc2cad4858	global_store_short v44, v173, s[72:73] offset:1720 dlc
+6d886fdc577c183b	global_store_short_d16_hi v87, v124, s[24:25] offset:-1939 glc slc
+159f6cdc168c5168	global_store_short_d16_hi v22, v140, s[80:81] offset:-235 dlc
+f4826edc81790952	global_store_short_d16_hi v129, v121, s[8:9] offset:756 slc
+8c886fdc429236b7	global_store_short_d16_hi v66, v146, s[54:55] offset:-1908 glc slc
+04956cdc9c37369e	global_store_short_d16_hi v156, v55, s[54:55] offset:1284 dlc
+6a8c6fdc2b5e48b2	global_store_short_d16_hi v43, v94, s[72:73] offset:-918 glc slc
+f3866edc6b1a4533	global_store_short_d16_hi v107, v26, s[68:69] offset:1779 slc
+179f6ddc457c7d62	global_store_short_d16_hi v[69:70], v124, off offset:-233 glc dlc
+72936cdc40815a32	global_store_short_d16_hi v64, v129, s[90:91] offset:882 dlc
+238d72dcbe085d95	global_store_dword v190, v8, s[92:93] offset:-733 slc
+b39c73dc5da2216c	global_store_dword v93, v162, s[32:33] offset:-845 glc slc dlc
+c88e72dc310e6c8a	global_store_dword v49, v14, ttmp[0:1] offset:-312 slc
+fa9b72dc83606a84	global_store_dword v131, v96, vcc offset:-1030 slc dlc
+799273dcae9e7dbb	global_store_dword v[174:175], v158, off offset:633 glc slc dlc
+9a9771dc61075aa7	global_store_dword v97, v7, s[90:91] offset:1946 glc dlc
+558271dc05a509c7	global_store_dword v5, v165, s[8:9] offset:597 glc
+7e9a73dc62501536	global_store_dword v98, v80, s[20:21] offset:-1410 glc slc dlc
+f09b73dc654e68b9	global_store_dword v101, v78, s[104:105] offset:-1040 glc slc dlc
+c79270dc3fa91273	global_store_dword v63, v169, s[18:19] offset:711 dlc
+5f8d72dc6fbe3f84	global_store_dword v111, v190, s[62:63] offset:-673 slc
+df9d71dc28746644	global_store_dword v40, v116, s[102:103] offset:-545 glc dlc
+6d8f74dcc473511d	global_store_dwordx2 v196, v[115:116], s[80:81] offset:-147
+d19f74dcad546c6d	global_store_dwordx2 v173, v[84:85], ttmp[0:1] offset:-47 dlc
+e99976dca1962a6e	global_store_dwordx2 v161, v[150:151], s[42:43] offset:-1559 slc dlc
+599f76dcac6742af	global_store_dwordx2 v172, v[103:104], s[66:67] offset:-167 slc dlc
+c68774dc5d9312a8	global_store_dwordx2 v93, v[147:148], s[18:19] offset:1990
+0b9777dc967c2759	global_store_dwordx2 v150, v[124:125], s[38:39] offset:1803 glc slc dlc
+119177dc914003c0	global_store_dwordx2 v145, v[64:65], s[2:3] offset:273 glc slc dlc
+119e74dcac9c728e	global_store_dwordx2 v172, v[156:157], ttmp[6:7] offset:-495 dlc
+0e857adc3a0c453b	global_store_dwordx4 v58, v[12:15], s[68:69] offset:1294 slc
+168578dc52330c8b	global_store_dwordx4 v82, v[51:54], s[12:13] offset:1302
+918e79dc79185762	global_store_dwordx4 v121, v[24:27], s[86:87] offset:-367 glc
+d88478dc54a8786a	global_store_dwordx4 v84, v[168:171], ttmp[12:13] offset:1240
+25987adc70c21557	global_store_dwordx4 v112, v[194:197], s[20:21] offset:-2011 slc dlc
+309878dc01446390	global_store_dwordx4 v1, v[68:71], s[98:99] offset:-2000 dlc
+ee9b7adc2f9f1e37	global_store_dwordx4 v47, v[159:162], s[30:31] offset:-1042 slc dlc
+048079dcc7a43334	global_store_dwordx4 v199, v[164:167], s[50:51] offset:4 glc
+d09278dcc14e7d14	global_store_dwordx4 v[193:194], v[78:81], off offset:720 dlc
+f5877adc6a773319	global_store_dwordx4 v106, v[119:122], s[50:51] offset:2037 slc
+59917bdc87942d6c	global_store_dwordx4 v135, v[148:151], s[44:45] offset:345 glc slc dlc
+a98a7ddca5716a30	global_store_dwordx3 v165, v[113:115], vcc offset:-1367 glc
+39997edc2d966782	global_store_dwordx3 v45, v[150:152], s[102:103] offset:-1735 slc dlc
+15967fdcae83674b	global_store_dwordx3 v174, v[131:133], s[102:103] offset:1557 glc slc dlc
+d99b7ddc8eab09a7	global_store_dwordx3 v142, v[171:173], s[8:9] offset:-1063 glc dlc
+c8877cdc01972a0b	global_store_dwordx3 v1, v[151:153], s[42:43] offset:1992
+60887edc31707805	global_store_dwordx3 v49, v[112:114], ttmp[12:13] offset:-1952 slc
+338a7ddc8eac6cac	global_store_dwordx3 v142, v[172:174], ttmp[0:1] offset:-1485 glc
+8f987edcad06362d	global_store_dwordx3 v173, v[6:8], s[54:55] offset:-1905 slc dlc
+c08b7ddc0e495dae	global_store_dwordx3 v14, v[73:75], s[92:93] offset:-1088 glc
+a9917cdc56721e6f	global_store_dwordx3 v86, v[114:116], s[30:31] offset:425 dlc
+a59c7edcc2674b70	global_store_dwordx3 v194, v[103:105], s[74:75] offset:-859 slc dlc
+cc8b7edc05384b06	global_store_dwordx3 v5, v[56:58], s[74:75] offset:-1076 slc
+cb9080dcbb6e6fa4	global_load_ubyte_d16 v164, v187, ttmp[2:3] offset:203 dlc
+ab8181dcb20a3c35	global_load_ubyte_d16 v53, v178, s[60:61] offset:427 glc
+c68481dc7f185d64	global_load_ubyte_d16 v100, v127, s[92:93] offset:1222 glc
+5b8083dc1f8a4e07	global_load_ubyte_d16 v7, v31, s[78:79] offset:91 glc slc
+d49883dc3cc64bb9	global_load_ubyte_d16 v185, v60, s[74:75] offset:-1836 glc slc dlc
+9e9080dc42be2d84	global_load_ubyte_d16 v132, v66, s[44:45] offset:158 dlc
+829a80dca1461ead	global_load_ubyte_d16 v173, v161, s[30:31] offset:-1406 dlc
+f58a80dcadc61223	global_load_ubyte_d16 v35, v173, s[18:19] offset:-1291
+6b8682dc0d795d43	global_load_ubyte_d16 v67, v13, s[92:93] offset:1643 slc
+2a9a83dcb70b12b9	global_load_ubyte_d16 v185, v183, s[18:19] offset:-1494 glc slc dlc
+388a85dc60513f28	global_load_ubyte_d16_hi v40, v96, s[62:63] offset:-1480 glc
+e58486dc7ba0180e	global_load_ubyte_d16_hi v14, v123, s[24:25] offset:1253 slc
+bb8e85dc7c853343	global_load_ubyte_d16_hi v67, v124, s[50:51] offset:-325 glc
+2e8c86dc26a54b54	global_load_ubyte_d16_hi v84, v38, s[74:75] offset:-978 slc
+648e84dc99152472	global_load_ubyte_d16_hi v114, v153, s[36:37] offset:-412
+7a9b87dc25a068ba	global_load_ubyte_d16_hi v186, v37, s[104:105] offset:-1158 glc slc dlc
+529887dca3326f35	global_load_ubyte_d16_hi v53, v163, ttmp[2:3] offset:-1966 glc slc dlc
+2e9886dc3998121e	global_load_ubyte_d16_hi v30, v57, s[18:19] offset:-2002 slc dlc
+de9685dc68082788	global_load_ubyte_d16_hi v136, v104, s[38:39] offset:1758 glc dlc
+f58a84dc61480cc6	global_load_ubyte_d16_hi v198, v97, s[12:13] offset:-1291
+078d88dc47914b7b	global_load_sbyte_d16 v123, v71, s[74:75] offset:-761
+7e8c8bdc559467a8	global_load_sbyte_d16 v168, v85, s[102:103] offset:-898 glc slc
+5c8d8bdcbc6f3c2b	global_load_sbyte_d16 v43, v188, s[60:61] offset:-676 glc slc
+fa818adc26770371	global_load_sbyte_d16 v113, v38, s[2:3] offset:506 slc
+a09f8bdc169b6c2a	global_load_sbyte_d16 v42, v22, ttmp[0:1] offset:-96 glc slc dlc
+0f888adc7bc51283	global_load_sbyte_d16 v131, v123, s[18:19] offset:-2033 slc
+289e88dc6eb60688	global_load_sbyte_d16 v136, v110, s[6:7] offset:-472 dlc
+038b8bdc37ac218f	global_load_sbyte_d16 v143, v55, s[32:33] offset:-1277 glc slc
+eb858adcbdaa18b4	global_load_sbyte_d16 v180, v189, s[24:25] offset:1515 slc
+ab888bdcbcb2670b	global_load_sbyte_d16 v11, v188, s[102:103] offset:-1877 glc slc
+a9998bdcc01f0055	global_load_sbyte_d16 v85, v192, s[0:1] offset:-1623 glc slc dlc
+498a8cdcb82b6ac0	global_load_sbyte_d16_hi v192, v184, vcc offset:-1463
+a1858ddcb7823c16	global_load_sbyte_d16_hi v22, v183, s[60:61] offset:1441 glc
+b8828fdc3ba47d60	global_load_sbyte_d16_hi v96, v[59:60], off offset:696 glc slc
+44938ddc16aa5d8c	global_load_sbyte_d16_hi v140, v22, s[92:93] offset:836 glc dlc
+1c9a8cdc10320f9f	global_load_sbyte_d16_hi v159, v16, s[14:15] offset:-1508 dlc
+c3858cdc187627a9	global_load_sbyte_d16_hi v169, v24, s[38:39] offset:1475
+1a978cdc47af128b	global_load_sbyte_d16_hi v139, v71, s[18:19] offset:1818 dlc
+ce9a8edc86ae12b1	global_load_sbyte_d16_hi v177, v134, s[18:19] offset:-1330 slc dlc
+478b8edc2c426f9c	global_load_sbyte_d16_hi v156, v44, ttmp[2:3] offset:-1209 slc
+9e8e8edcb458309d	global_load_sbyte_d16_hi v157, v180, s[48:49] offset:-354 slc
+278191dcafac0672	global_load_short_d16 v114, v175, s[6:7] offset:295 glc
+968b93dc2c565a57	global_load_short_d16 v87, v44, s[90:91] offset:-1130 glc slc
+c18893dc23825733	global_load_short_d16 v51, v35, s[86:87] offset:-1855 glc slc
+ca9d90dc6c202189	global_load_short_d16 v137, v108, s[32:33] offset:-566 dlc
+678391dc5b9c1e2f	global_load_short_d16 v47, v91, s[30:31] offset:871 glc
+249991dca979363b	global_load_short_d16 v59, v169, s[54:55] offset:-1756 glc dlc
+189d93dc7e9e1524	global_load_short_d16 v36, v126, s[20:21] offset:-744 glc slc dlc
+f58a93dc7d036f00	global_load_short_d16 v0, v125, ttmp[2:3] offset:-1291 glc slc
+f08590dc947b5196	global_load_short_d16 v150, v148, s[80:81] offset:1520
+628891dc4f823098	global_load_short_d16 v152, v79, s[48:49] offset:-1950 glc
+538b91dc51767278	global_load_short_d16 v120, v81, ttmp[6:7] offset:-1197 glc
+818795dcae262440	global_load_short_d16_hi v64, v174, s[36:37] offset:1921 glc
+0a9795dc1cbe3f11	global_load_short_d16_hi v17, v28, s[62:63] offset:1802 glc dlc
+c88c95dc568b3096	global_load_short_d16_hi v150, v86, s[48:49] offset:-824 glc
+189594dcac210f36	global_load_short_d16_hi v54, v172, s[14:15] offset:1304 dlc
+c08f94dc4902427f	global_load_short_d16_hi v127, v73, s[66:67] offset:-64
+bb9194dc1fad7b00	global_load_short_d16_hi v0, v31, ttmp[14:15] offset:443 dlc
+758297dc5b817d40	global_load_short_d16_hi v64, v[91:92], off offset:629 glc slc
+229996dc42186a17	global_load_short_d16_hi v23, v66, vcc offset:-1758 slc dlc
+6f9496dc965a7b3b	global_load_short_d16_hi v59, v150, ttmp[14:15] offset:1135 slc dlc
+f19cc1dc1fad0c7b	global_atomic_swap v123, v31, v173, s[12:13] offset:-783 glc dlc
+5b9dc0dc9e0b5ac0	global_atomic_swap v158, v11, s[90:91] offset:-677 dlc
+e197c1dcc6116706	global_atomic_swap v6, v198, v17, s[102:103] offset:2017 glc dlc
+cd81c0dc2468603c	global_atomic_swap v36, v104, s[96:97] offset:461
+1d9ec2dc02546f77	global_atomic_swap v2, v84, ttmp[2:3] offset:-483 slc dlc
+5b85c3dc0340151b	global_atomic_swap v27, v3, v64, s[20:21] offset:1371 glc slc
+7985c3dc751e69b3	global_atomic_swap v179, v117, v30, s[104:105] offset:1401 glc slc
+af9bc0dc68b36929	global_atomic_swap v104, v179, s[104:105] offset:-1105 dlc
+5697c7dcc6aa63c3	global_atomic_cmpswap v195, v198, v[170:171], s[98:99] offset:1878 glc slc dlc
+1790c4dc6e60127c	global_atomic_cmpswap v110, v[96:97], s[18:19] offset:23 dlc
+2b97c5dc83633682	global_atomic_cmpswap v130, v131, v[99:100], s[54:55] offset:1835 glc dlc
+3b9dc6dc218d4e0f	global_atomic_cmpswap v33, v[141:142], s[78:79] offset:-709 slc dlc
+aa99c5dc38c46737	global_atomic_cmpswap v55, v56, v[196:197], s[102:103] offset:-1622 glc dlc
+f889c7dc7f026f6f	global_atomic_cmpswap v111, v127, v[2:3], ttmp[2:3] offset:-1544 glc slc
+0995c6dc93c17b79	global_atomic_cmpswap v147, v[193:194], ttmp[14:15] offset:1289 slc dlc
+0785c6dc7c740054	global_atomic_cmpswap v124, v[116:117], s[0:1] offset:1287 slc
+6c9cc5dc842648a4	global_atomic_cmpswap v164, v132, v[38:39], s[72:73] offset:-916 glc dlc
+a09cc6dc3b3b544e	global_atomic_cmpswap v59, v[59:60], s[84:85] offset:-864 slc dlc
+fa84c5dc28253350	global_atomic_cmpswap v80, v40, v[37:38], s[50:51] offset:1274 glc
+8e8ccadc3e922a72	global_atomic_add v62, v146, s[42:43] offset:-882 slc
+9391cadc731751bc	global_atomic_add v115, v23, s[80:81] offset:403 slc dlc
+7086c9dc4eb3456e	global_atomic_add v110, v78, v179, s[68:69] offset:1648 glc
+029bcadc409e6611	global_atomic_add v64, v158, s[102:103] offset:-1278 slc dlc
+9d8bcbdc945a518f	global_atomic_add v143, v148, v90, s[80:81] offset:-1123 glc slc
+b881cbdc5d9f6059	global_atomic_add v89, v93, v159, s[96:97] offset:440 glc slc
+a895cadc8b131b8c	global_atomic_add v139, v19, s[26:27] offset:1448 slc dlc
+9588c9dc6402668e	global_atomic_add v142, v100, v2, s[102:103] offset:-1899 glc
+1481c8dc4ec71b97	global_atomic_add v78, v199, s[26:27] offset:276
+7a97c8dc73c20624	global_atomic_add v115, v194, s[6:7] offset:1914 dlc
+9a98c8dc22a42700	global_atomic_add v34, v164, s[38:39] offset:-1894 dlc
+bd83cfdc534f6c83	global_atomic_sub v131, v83, v79, ttmp[0:1] offset:957 glc slc
+249ecddc5b237281	global_atomic_sub v129, v91, v35, ttmp[6:7] offset:-476 glc dlc
+0589cddc23484533	global_atomic_sub v51, v35, v72, s[68:69] offset:-1787 glc
+2381cfdc8b29547b	global_atomic_sub v123, v139, v41, s[84:85] offset:291 glc slc
+f198ccdc87712aa5	global_atomic_sub v135, v113, s[42:43] offset:-1807 dlc
+9899cfdc9d1a7d64	global_atomic_sub v100, v[157:158], v26, off offset:-1640 glc slc dlc
+808accdc947b3c40	global_atomic_sub v148, v123, s[60:61] offset:-1408
+9d9ecfdc55316916	global_atomic_sub v22, v85, v49, s[104:105] offset:-355 glc slc dlc
+358ccedcb17d0081	global_atomic_sub v177, v125, s[0:1] offset:-971 slc
+c597ccdc4f5e6936	global_atomic_sub v79, v94, s[104:105] offset:1989 dlc
+a492d5dc3c3c6043	global_atomic_smin v67, v60, v60, s[96:97] offset:676 glc dlc
+ee89d5dc67490f80	global_atomic_smin v128, v103, v73, s[14:15] offset:-1554 glc
+bb80d4dc378c3fbe	global_atomic_smin v55, v140, s[62:63] offset:187
+1a96d5dc177b2a44	global_atomic_smin v68, v23, v123, s[42:43] offset:1562 glc dlc
+9a86d4dc6d77005a	global_atomic_smin v109, v119, s[0:1] offset:1690
+7493d4dc448c6a3e	global_atomic_smin v68, v140, vcc offset:884 dlc
+6b85d7dc8b2a5428	global_atomic_smin v40, v139, v42, s[84:85] offset:1387 glc slc
+f586d4dc27c45a37	global_atomic_smin v39, v196, s[90:91] offset:1781
+2f84d7dc363b6fc6	global_atomic_smin v198, v54, v59, ttmp[2:3] offset:1071 glc slc
+3c95d5dcae59033f	global_atomic_smin v63, v174, v89, s[2:3] offset:1340 glc dlc
+948edadc66380c96	global_atomic_umin v102, v56, s[12:13] offset:-364 slc
+dd90dbdc777e337a	global_atomic_umin v122, v119, v126, s[50:51] offset:221 glc slc dlc
+7491d8dc56c77889	global_atomic_umin v86, v199, ttmp[12:13] offset:372 dlc
+c097dadc8c884838	global_atomic_umin v140, v136, s[72:73] offset:1984 slc dlc
+2790dbdc702a7502	global_atomic_umin v2, v112, v42, ttmp[8:9] offset:39 glc slc dlc
+5481d9dc9e012d49	global_atomic_umin v73, v158, v1, s[44:45] offset:340 glc
+e483dadc44434293	global_atomic_umin v68, v67, s[66:67] offset:996 slc
+778ddbdc6909785a	global_atomic_umin v90, v105, v9, ttmp[12:13] offset:-649 glc slc
+879dd9dc0f322138	global_atomic_umin v56, v15, v50, s[32:33] offset:-633 glc dlc
+1996dbdc59ad72b0	global_atomic_umin v176, v89, v173, ttmp[6:7] offset:1561 glc slc dlc
+e692dddc709651a9	global_atomic_smax v169, v112, v150, s[80:81] offset:742 glc dlc
+d28adddc919c4b64	global_atomic_smax v100, v145, v156, s[74:75] offset:-1326 glc
+3b99dedc05bc3f5e	global_atomic_smax v5, v188, s[62:63] offset:-1733 slc dlc
+ce92dfdcb711729b	global_atomic_smax v155, v183, v17, ttmp[6:7] offset:718 glc slc dlc
+e88ddddc5f377d54	global_atomic_smax v84, v[95:96], v55, off offset:-536 glc
+4d86dcdcb9333379	global_atomic_smax v185, v51, s[50:51] offset:1613
+a295dcdc08936921	global_atomic_smax v8, v147, s[104:105] offset:1442 dlc
+0196dedc2a5409a0	global_atomic_smax v42, v84, s[8:9] offset:1537 slc dlc
+918edcdc5e4569ad	global_atomic_smax v94, v69, s[104:105] offset:-367
+d293dcdcbd283c79	global_atomic_smax v189, v40, s[60:61] offset:978 dlc
+c59adddc1a265a8e	global_atomic_smax v142, v26, v38, s[90:91] offset:-1339 glc dlc
+259edddcb4474858	global_atomic_smax v88, v180, v71, s[72:73] offset:-475 glc dlc
+699adcdc5d46219d	global_atomic_smax v93, v70, s[32:33] offset:-1431 dlc
+fe87dfdc845b3fa3	global_atomic_smax v163, v132, v91, s[62:63] offset:2046 glc slc
+d483e0dc10315a19	global_atomic_umax v16, v49, s[90:91] offset:980
+d583e1dc41c13c64	global_atomic_umax v100, v65, v193, s[60:61] offset:981 glc
+b280e2dc70050024	global_atomic_umax v112, v5, s[0:1] offset:178 slc
+8d90e3dc8f1f5a7a	global_atomic_umax v122, v143, v31, s[90:91] offset:141 glc slc dlc
+4299e3dca22c0352	global_atomic_umax v82, v162, v44, s[2:3] offset:-1726 glc slc dlc
+7098e0dc07292a0c	global_atomic_umax v7, v41, s[42:43] offset:-1936 dlc
+dc9fe0dc24671b54	global_atomic_umax v36, v103, s[26:27] offset:-36 dlc
+1c92e2dc61bd6967	global_atomic_umax v97, v189, s[104:105] offset:540 slc dlc
+0085e3dc7ec65759	global_atomic_umax v89, v126, v198, s[86:87] offset:1280 glc slc
+ba8de3dc38c4480e	global_atomic_umax v14, v56, v196, s[72:73] offset:-582 glc slc
+f79de2dca0025413	global_atomic_umax v160, v2, s[84:85] offset:-521 slc dlc
+e297e1dc5e726fb4	global_atomic_umax v180, v94, v114, ttmp[2:3] offset:2018 glc dlc
+ab8de1dc24bf5d75	global_atomic_umax v117, v36, v191, s[92:93] offset:-597 glc
+e888e5dcc3b22daf	global_atomic_and v175, v195, v178, s[44:45] offset:-1816 glc
+2e87e5dc7e143023	global_atomic_and v35, v126, v20, s[48:49] offset:1838 glc
+099ae6dcb84e7b4c	global_atomic_and v184, v78, ttmp[14:15] offset:-1527 slc dlc
+3f80e6dcb2886a84	global_atomic_and v178, v136, vcc offset:63 slc
+f29ae7dc886e0f6c	global_atomic_and v108, v136, v110, s[14:15] offset:-1294 glc slc dlc
+f08be6dc703d5d75	global_atomic_and v112, v61, s[92:93] offset:-1040 slc
+6999e5dc0c7760ab	global_atomic_and v171, v12, v119, s[96:97] offset:-1687 glc dlc
+c19fe5dc5d805d6c	global_atomic_and v108, v93, v128, s[92:93] offset:-63 glc dlc
+aa88eadc94a82dc1	global_atomic_or v148, v168, s[44:45] offset:-1878 slc
+d799eadc2d69788b	global_atomic_or v45, v105, ttmp[12:13] offset:-1577 slc dlc
+508ee8dc9c880339	global_atomic_or v156, v136, s[2:3] offset:-432
+b19cebdcc3ac7d10	global_atomic_or v16, v[195:196], v172, off offset:-847 glc slc dlc
+9c98e9dc9da4360d	global_atomic_or v13, v157, v164, s[54:55] offset:-1892 glc dlc
+4e82e8dc7faa390f	global_atomic_or v127, v170, s[56:57] offset:590
+ef95e9dc6d64423f	global_atomic_or v63, v109, v100, s[66:67] offset:1519 glc dlc
+4e80ebdc4b33331a	global_atomic_or v26, v75, v51, s[50:51] offset:78 glc slc
+5799e8dc80ab694b	global_atomic_or v128, v171, s[104:105] offset:-1705 dlc
+7796e9dca5b20037	global_atomic_or v55, v165, v178, s[0:1] offset:1655 glc dlc
+638ee9dc0d7a662d	global_atomic_or v45, v13, v122, s[102:103] offset:-413 glc
+a998ebdc3a6b2447	global_atomic_or v71, v58, v107, s[36:37] offset:-1879 glc slc dlc
+3a9aecdc93632101	global_atomic_xor v147, v99, s[32:33] offset:-1478 dlc
+d38cefdc059d303c	global_atomic_xor v60, v5, v157, s[48:49] offset:-813 glc slc
+d089eddcb72a0c7a	global_atomic_xor v122, v183, v42, s[12:13] offset:-1584 glc
+6483efdc038c3922	global_atomic_xor v34, v3, v140, s[56:57] offset:868 glc slc
+0d80eddc2c70787e	global_atomic_xor v126, v44, v112, ttmp[12:13] offset:13 glc
+4786eedcc42d3c31	global_atomic_xor v196, v45, s[60:61] offset:1607 slc
+6b8eeddcbe395152	global_atomic_xor v82, v190, v57, s[80:81] offset:-405 glc
+a796ecdc5a1d66c7	global_atomic_xor v90, v29, s[102:103] offset:1703 dlc
+728fecdc7350097a	global_atomic_xor v115, v80, s[8:9] offset:-142
+8588efdcb3a83945	global_atomic_xor v69, v179, v168, s[56:57] offset:-1915 glc slc
+648ceedc365178be	global_atomic_xor v54, v81, ttmp[12:13] offset:-924 slc
+659cecdc10145173	global_atomic_xor v16, v20, s[80:81] offset:-923 dlc
+2c84f0dc6a165108	global_atomic_inc v106, v22, s[80:81] offset:1068
+2a99f2dc16666344	global_atomic_inc v22, v102, s[98:99] offset:-1750 slc dlc
+4b8cf2dc1d6872a0	global_atomic_inc v29, v104, ttmp[6:7] offset:-949 slc
+a681f0dcb75a6003	global_atomic_inc v183, v90, s[96:97] offset:422
+a79bf3dc31573024	global_atomic_inc v36, v49, v87, s[48:49] offset:-1113 glc slc dlc
+5997f0dc93b97d7d	global_atomic_inc v[147:148], v185, off offset:1881 dlc
+b58bf0dc317668aa	global_atomic_inc v49, v118, s[104:105] offset:-1099
+fd94f1dcc6627574	global_atomic_inc v116, v198, v98, ttmp[8:9] offset:1277 glc dlc
+7487f2dc7d496085	global_atomic_inc v125, v73, s[96:97] offset:1908 slc
+7b92f1dc0445031b	global_atomic_inc v27, v4, v69, s[2:3] offset:635 glc dlc
+6987f2dc3050304d	global_atomic_inc v48, v80, s[48:49] offset:1897 slc
+f798f6dc039e694e	global_atomic_dec v3, v158, s[104:105] offset:-1801 slc dlc
+e986f4dc290968ba	global_atomic_dec v41, v9, s[104:105] offset:1769
+949af6dc4b792db3	global_atomic_dec v75, v121, s[44:45] offset:-1388 slc dlc
+748bf5dc232242be	global_atomic_dec v190, v35, v34, s[66:67] offset:-1164 glc
+d181f7dc893b0628	global_atomic_dec v40, v137, v59, s[6:7] offset:465 glc slc
+109df5dc1401486f	global_atomic_dec v111, v20, v1, s[72:73] offset:-752 glc dlc
+df97f6dc95047b2d	global_atomic_dec v149, v4, ttmp[14:15] offset:2015 slc dlc
+8f85f5dc15566f7a	global_atomic_dec v122, v21, v86, ttmp[2:3] offset:1423 glc
+6289f8dc3eb13f4e	global_atomic_fcmpswap v62, v[177:178], s[62:63] offset:-1694
+2282f9dc702c5a93	global_atomic_fcmpswap v147, v112, v[44:45], s[90:91] offset:546 glc
+4992fbdc02aa5470	global_atomic_fcmpswap v112, v2, v[170:171], s[84:85] offset:585 glc slc dlc
+d998f9dcaa8c0962	global_atomic_fcmpswap v98, v170, v[140:141], s[8:9] offset:-1831 glc dlc
+e781f8dcc78068a1	global_atomic_fcmpswap v199, v[128:129], s[104:105] offset:487
+589cfbdc747a158c	global_atomic_fcmpswap v140, v116, v[122:123], s[20:21] offset:-936 glc slc dlc
+a289f8dc99046a1d	global_atomic_fcmpswap v153, v[4:5], vcc offset:-1630
+4c9cfbdc27bf42c6	global_atomic_fcmpswap v198, v39, v[191:192], s[66:67] offset:-948 glc slc dlc
+e48ef9dc251206c5	global_atomic_fcmpswap v197, v37, v[18:19], s[6:7] offset:-284 glc
+e780f9dc045269bb	global_atomic_fcmpswap v187, v4, v[82:83], s[104:105] offset:231 glc
+5a94ffdc10475daa	global_atomic_fmin v170, v16, v71, s[92:93] offset:1114 glc slc dlc
+7e8ffddc468e6912	global_atomic_fmin v18, v70, v142, s[104:105] offset:-130 glc
+a698fcdc23c42a8c	global_atomic_fmin v35, v196, s[42:43] offset:-1882 dlc
+2786fedc08516cb0	global_atomic_fmin v8, v81, ttmp[0:1] offset:1575 slc
+9c8efedc590933b1	global_atomic_fmin v89, v9, s[50:51] offset:-356 slc
+3394ffdc54bd5187	global_atomic_fmin v135, v84, v189, s[80:81] offset:1075 glc slc dlc
+758afcdc387951b7	global_atomic_fmin v56, v121, s[80:81] offset:-1419
+c99bfedc104f24c0	global_atomic_fmin v16, v79, s[36:37] offset:-1079 slc dlc
+529a00dd220e7d8a	global_atomic_fmax v[34:35], v14, off offset:-1454 dlc
+4c8603dd3d4f39a5	global_atomic_fmax v165, v61, v79, s[56:57] offset:1612 glc slc
+869e02dd6fb1720e	global_atomic_fmax v111, v177, ttmp[6:7] offset:-378 slc dlc
+5e8c02dd42016685	global_atomic_fmax v66, v1, s[102:103] offset:-930 slc
+c19e00ddb1a909bd	global_atomic_fmax v177, v169, s[8:9] offset:-319 dlc
+818000dd494b5dc3	global_atomic_fmax v73, v75, s[92:93] offset:129
+989f01dd631560c5	global_atomic_fmax v197, v99, v21, s[96:97] offset:-104 glc dlc
+308901dd28933698	global_atomic_fmax v152, v40, v147, s[54:55] offset:-1744 glc
+5a8403dd3a576c67	global_atomic_fmax v103, v58, v87, ttmp[0:1] offset:1114 glc slc
+419503dd4e1b6c94	global_atomic_fmax v148, v78, v27, ttmp[0:1] offset:1345 glc slc dlc
+029641dd87187b78	global_atomic_swap_x2 v[120:121], v135, v[24:25], ttmp[14:15] offset:1538 glc dlc
+349a41dd8ac75a0e	global_atomic_swap_x2 v[14:15], v138, v[199:200], s[90:91] offset:-1484 glc dlc
+9a8642ddab5f1bc6	global_atomic_swap_x2 v171, v[95:96], s[26:27] offset:1690 slc
+a08440dda16c7828	global_atomic_swap_x2 v161, v[108:109], ttmp[12:13] offset:1184
+508943dd07c1064d	global_atomic_swap_x2 v[77:78], v7, v[193:194], s[6:7] offset:-1712 glc slc
+069042dd4faa637e	global_atomic_swap_x2 v79, v[170:171], s[98:99] offset:6 slc dlc
+db8943dd83544e49	global_atomic_swap_x2 v[73:74], v131, v[84:85], s[78:79] offset:-1573 glc slc
+eb8843ddc76b2dc1	global_atomic_swap_x2 v[193:194], v199, v[107:108], s[44:45] offset:-1813 glc slc
+768d42dd6b01152d	global_atomic_swap_x2 v107, v[1:2], s[20:21] offset:-650 slc
+859b40dd735a720e	global_atomic_swap_x2 v115, v[90:91], ttmp[6:7] offset:-1147 dlc
+098043dd48586036	global_atomic_swap_x2 v[54:55], v72, v[88:89], s[96:97] offset:9 glc slc
+eb9b42dd798a7d6e	global_atomic_swap_x2 v[121:122], v[138:139], off offset:-1045 slc dlc
+fe8f44ddb73c6f9c	global_atomic_cmpswap_x2 v183, v[60:63], ttmp[2:3] offset:-2
+5d9147ddb39b2a9c	global_atomic_cmpswap_x2 v[156:157], v179, v[155:158], s[42:43] offset:349 glc slc dlc
+2a8047dd51bc7d1f	global_atomic_cmpswap_x2 v[31:32], v[81:82], v[188:191], off offset:42 glc slc
+149246dd1a23032d	global_atomic_cmpswap_x2 v26, v[35:38], s[2:3] offset:532 slc dlc
+319945ddc011680f	global_atomic_cmpswap_x2 v[15:16], v192, v[17:20], s[104:105] offset:-1743 glc dlc
+c08445dda06c3624	global_atomic_cmpswap_x2 v[36:37], v160, v[108:111], s[54:55] offset:1216 glc
+3a8745dd7c7d420f	global_atomic_cmpswap_x2 v[15:16], v124, v[125:128], s[66:67] offset:1850 glc
+db9247ddc24e720f	global_atomic_cmpswap_x2 v[15:16], v194, v[78:81], ttmp[6:7] offset:731 glc slc dlc
+f38747ddb7a96672	global_atomic_cmpswap_x2 v[114:115], v183, v[169:172], s[102:103] offset:2035 glc slc
+139844dd646e75b8	global_atomic_cmpswap_x2 v100, v[110:113], ttmp[8:9] offset:-2029 dlc
+a29e49dd900636ab	global_atomic_add_x2 v[171:172], v144, v[6:7], s[54:55] offset:-350 glc dlc
+27934bdd57a76675	global_atomic_add_x2 v[117:118], v87, v[167:168], s[102:103] offset:807 glc slc dlc
+a9814add030d2daa	global_atomic_add_x2 v3, v[13:14], s[44:45] offset:425 slc
+7a9348dd48c139b9	global_atomic_add_x2 v72, v[193:194], s[56:57] offset:890 dlc
+5a924bdd355c7542	global_atomic_add_x2 v[66:67], v53, v[92:93], ttmp[8:9] offset:602 glc slc dlc
+4e834add137b1e7a	global_atomic_add_x2 v19, v[123:124], s[30:31] offset:846 slc
+909b48dd462f7258	global_atomic_add_x2 v70, v[47:48], ttmp[6:7] offset:-1136 dlc
+d0954add7b4e5467	global_atomic_add_x2 v123, v[78:79], s[84:85] offset:1488 slc dlc
+67984adda9bf7d6f	global_atomic_add_x2 v[169:170], v[191:192], off offset:-1945 slc dlc
+d59448dd21a24e2a	global_atomic_add_x2 v33, v[162:163], s[78:79] offset:1237 dlc
+1f8749dd6e18784f	global_atomic_add_x2 v[79:80], v110, v[24:25], ttmp[12:13] offset:1823 glc
+dd9e49dd18846f35	global_atomic_add_x2 v[53:54], v24, v[132:133], ttmp[2:3] offset:-291 glc dlc
+f88948dd1bba243d	global_atomic_add_x2 v27, v[186:187], s[36:37] offset:-1544
+8e894cdd05200359	global_atomic_sub_x2 v5, v[32:33], s[2:3] offset:-1650
+988b4eddc1203090	global_atomic_sub_x2 v193, v[32:33], s[48:49] offset:-1128 slc
+6d9f4edd81ba7db9	global_atomic_sub_x2 v[129:130], v[186:187], off offset:-147 slc dlc
+49824ddd9649782f	global_atomic_sub_x2 v[47:48], v150, v[73:74], ttmp[12:13] offset:585 glc
+be9e4cddb1ab69b2	global_atomic_sub_x2 v177, v[171:172], s[104:105] offset:-322 dlc
+4d944fdd2a872d43	global_atomic_sub_x2 v[67:68], v42, v[135:136], s[44:45] offset:1101 glc slc dlc
+f29e4edd5e0e68a2	global_atomic_sub_x2 v94, v[14:15], s[104:105] offset:-270 slc dlc
+e78d4cdd3eab001a	global_atomic_sub_x2 v62, v[171:172], s[0:1] offset:-537
+cc8e4fddaa0e396e	global_atomic_sub_x2 v[110:111], v170, v[14:15], s[56:57] offset:-308 glc slc
+46824edd033d7b84	global_atomic_sub_x2 v3, v[61:62], ttmp[14:15] offset:582 slc
+cb9457dd84720c66	global_atomic_smin_x2 v[102:103], v132, v[114:115], s[12:13] offset:1227 glc slc dlc
+1e8555dd996d6696	global_atomic_smin_x2 v[150:151], v153, v[109:110], s[102:103] offset:1310 glc
+1b8a54dd988f6f07	global_atomic_smin_x2 v152, v[143:144], ttmp[2:3] offset:-1509
+169656dd8d8e674f	global_atomic_smin_x2 v141, v[142:143], s[102:103] offset:1558 slc dlc
+dd9c56dd417f3901	global_atomic_smin_x2 v65, v[127:128], s[56:57] offset:-803 slc dlc
+d28e56dda6556ab6	global_atomic_smin_x2 v166, v[85:86], vcc offset:-302 slc
+3f9c56dd5dbd099b	global_atomic_smin_x2 v93, v[189:190], s[8:9] offset:-961 slc dlc
+719c54dd720d33bf	global_atomic_smin_x2 v114, v[13:14], s[50:51] offset:-911 dlc
+619054ddbb0c4862	global_atomic_smin_x2 v187, v[12:13], s[72:73] offset:97 dlc
+0b9d55dd84c77d05	global_atomic_smin_x2 v[5:6], v[132:133], v[199:200], off offset:-757 glc dlc
+7a8454dd25163960	global_atomic_smin_x2 v37, v[22:23], s[56:57] offset:1146
+009d55dd6b7b212a	global_atomic_smin_x2 v[42:43], v107, v[123:124], s[32:33] offset:-768 glc dlc
+fa8c5bdd90a92737	global_atomic_umin_x2 v[55:56], v144, v[169:170], s[38:39] offset:-774 glc slc
+018f5add8141696e	global_atomic_umin_x2 v129, v[65:66], s[104:105] offset:-255 slc
+8a9f59dda59d216b	global_atomic_umin_x2 v[107:108], v165, v[157:158], s[32:33] offset:-118 glc dlc
+68835bdd083b51a8	global_atomic_umin_x2 v[168:169], v8, v[59:60], s[80:81] offset:872 glc slc
+869b58dd344a3945	global_atomic_umin_x2 v52, v[74:75], s[56:57] offset:-1146 dlc
+278e59dd832c1b3b	global_atomic_umin_x2 v[59:60], v131, v[44:45], s[26:27] offset:-473 glc
+4a835bddadb26cb6	global_atomic_umin_x2 v[182:183], v173, v[178:179], ttmp[0:1] offset:842 glc slc
+7f815add3f1845ae	global_atomic_umin_x2 v63, v[24:25], s[68:69] offset:383 slc
+a7985ddd6e1c45b5	global_atomic_smax_x2 v[181:182], v110, v[28:29], s[68:69] offset:-1881 glc dlc
+898a5ddd03701e0d	global_atomic_smax_x2 v[13:14], v3, v[112:113], s[30:31] offset:-1399 glc
+8c8f5cdd2c68690c	global_atomic_smax_x2 v44, v[104:105], s[104:105] offset:-116
+15965edd6c645d06	global_atomic_smax_x2 v108, v[100:101], s[92:93] offset:1557 slc dlc
+39875cdd785500bc	global_atomic_smax_x2 v120, v[85:86], s[0:1] offset:1849
+74985edd03b3665f	global_atomic_smax_x2 v3, v[179:180], s[102:103] offset:-1932 slc dlc
+be9e5fdd461c2406	global_atomic_smax_x2 v[6:7], v70, v[28:29], s[36:37] offset:-322 glc slc dlc
+849d5eddb5a56a98	global_atomic_smax_x2 v181, v[165:166], vcc offset:-636 slc dlc
+c9805cddbc4a068c	global_atomic_smax_x2 v188, v[74:75], s[6:7] offset:201
+ec9c5cdd5f324b08	global_atomic_smax_x2 v95, v[50:51], s[74:75] offset:-788 dlc
+31875cdd77b67da3	global_atomic_smax_x2 v[119:120], v[182:183], off offset:1841
+96975edd270f2d07	global_atomic_smax_x2 v39, v[15:16], s[44:45] offset:1942 slc dlc
+3e8e63dd86893f29	global_atomic_umax_x2 v[41:42], v134, v[137:138], s[62:63] offset:-450 glc slc
+179c63dda4527db6	global_atomic_umax_x2 v[182:183], v[164:165], v[82:83], off offset:-1001 glc slc dlc
+1e8263ddc02d487e	global_atomic_umax_x2 v[126:127], v192, v[45:46], s[72:73] offset:542 glc slc
+218162dd03783f51	global_atomic_umax_x2 v3, v[120:121], s[62:63] offset:289 slc
+5c9862dd6f2b486f	global_atomic_umax_x2 v111, v[43:44], s[72:73] offset:-1956 slc dlc
+3a9a61dd27531526	global_atomic_umax_x2 v[38:39], v39, v[83:84], s[20:21] offset:-1478 glc dlc
+bc8563ddb9262771	global_atomic_umax_x2 v[113:114], v185, v[38:39], s[38:39] offset:1468 glc slc
+be9762ddc5591e95	global_atomic_umax_x2 v197, v[89:90], s[30:31] offset:1982 slc dlc
+a79b60dd81907d22	global_atomic_umax_x2 v[129:130], v[144:145], off offset:-1113 dlc
+8c9162ddc1b43974	global_atomic_umax_x2 v193, v[180:181], s[56:57] offset:396 slc dlc
+908261dd585e5449	global_atomic_umax_x2 v[73:74], v88, v[94:95], s[84:85] offset:656 glc
+c38a64dd316d6a50	global_atomic_and_x2 v49, v[109:110], vcc offset:-1341
+dc8b67dd5b68577d	global_atomic_and_x2 v[125:126], v91, v[104:105], s[86:87] offset:-1060 glc slc
+848266dd425e630f	global_atomic_and_x2 v66, v[94:95], s[98:99] offset:644 slc
+a78867dd86652111	global_atomic_and_x2 v[17:18], v134, v[101:102], s[32:33] offset:-1881 glc slc
+319564dd83671ebc	global_atomic_and_x2 v131, v[103:104], s[30:31] offset:1329 dlc
+549b66dd25566021	global_atomic_and_x2 v37, v[86:87], s[96:97] offset:-1196 slc dlc
+988964dd7d773991	global_atomic_and_x2 v125, v[119:120], s[56:57] offset:-1640
+e79a64ddab3d545b	global_atomic_and_x2 v171, v[61:62], s[84:85] offset:-1305 dlc
+e28166dd18c60363	global_atomic_and_x2 v24, v[198:199], s[2:3] offset:482 slc
+6f8964dd1539157a	global_atomic_and_x2 v21, v[57:58], s[20:21] offset:-1681
+0a8567dd80ab6773	global_atomic_and_x2 v[115:116], v128, v[171:172], s[102:103] offset:1290 glc slc
+b98b69dd67af3938	global_atomic_or_x2 v[56:57], v103, v[175:176], s[56:57] offset:-1095 glc
+ec996add9c1f5459	global_atomic_or_x2 v156, v[31:32], s[84:85] offset:-1556 slc dlc
+519f6bdd88bc4208	global_atomic_or_x2 v[8:9], v136, v[188:189], s[66:67] offset:-175 glc slc dlc
+649a6bdd53155d77	global_atomic_or_x2 v[119:120], v83, v[21:22], s[92:93] offset:-1436 glc slc dlc
+e7936bdd5e4e18a6	global_atomic_or_x2 v[166:167], v94, v[78:79], s[24:25] offset:999 glc slc dlc
+659c6add95c0156a	global_atomic_or_x2 v149, v[192:193], s[20:21] offset:-923 slc dlc
+65876bdd939a2d05	global_atomic_or_x2 v[5:6], v147, v[154:155], s[44:45] offset:1893 glc slc
+509469dd40b07d05	global_atomic_or_x2 v[5:6], v[64:65], v[176:177], off offset:1104 glc dlc
+1d9c6bddb71f512a	global_atomic_or_x2 v[42:43], v183, v[31:32], s[80:81] offset:-995 glc slc dlc
+019a6bdd5e49095c	global_atomic_or_x2 v[92:93], v94, v[73:74], s[8:9] offset:-1535 glc slc dlc
+839c68dd0d2d7b2c	global_atomic_or_x2 v13, v[45:46], ttmp[14:15] offset:-893 dlc
+b0966bdd49246663	global_atomic_or_x2 v[99:100], v73, v[36:37], s[102:103] offset:1712 glc slc dlc
+1f936edda0913953	global_atomic_xor_x2 v160, v[145:146], s[56:57] offset:799 slc dlc
+de896fdd3c143090	global_atomic_xor_x2 v[144:145], v60, v[20:21], s[48:49] offset:-1570 glc slc
+fd926edd815012af	global_atomic_xor_x2 v129, v[80:81], s[18:19] offset:765 slc dlc
+0b996fdd6b356612	global_atomic_xor_x2 v[18:19], v107, v[53:54], s[102:103] offset:-1781 glc slc dlc
+f4836cdd09463333	global_atomic_xor_x2 v9, v[70:71], s[50:51] offset:1012
+42806fdd79662788	global_atomic_xor_x2 v[136:137], v121, v[102:103], s[38:39] offset:66 glc slc
+66846cddb74c7dc6	global_atomic_xor_x2 v[183:184], v[76:77], off offset:1126
+bc9f6ddd77a7184d	global_atomic_xor_x2 v[77:78], v119, v[167:168], s[24:25] offset:-68 glc dlc
+639170dd23017d2e	global_atomic_inc_x2 v[35:36], v[1:2], off offset:355 dlc
+439b72dd851839b4	global_atomic_inc_x2 v133, v[24:25], s[56:57] offset:-1213 slc dlc
+4a9373dd32896617	global_atomic_inc_x2 v[23:24], v50, v[137:138], s[102:103] offset:842 glc slc dlc
+a08272dd66224874	global_atomic_inc_x2 v102, v[34:35], s[72:73] offset:672 slc
+448071dd0d0966ba	global_atomic_inc_x2 v[186:187], v13, v[9:10], s[102:103] offset:68 glc
+879571dd6f7d48c1	global_atomic_inc_x2 v[193:194], v111, v[125:126], s[72:73] offset:1415 glc dlc
+078672dd720c6cb8	global_atomic_inc_x2 v114, v[12:13], ttmp[0:1] offset:1543 slc
+aa8170dd1a9b2a5b	global_atomic_inc_x2 v26, v[155:156], s[42:43] offset:426
+3b9e70dd920b0f46	global_atomic_inc_x2 v146, v[11:12], s[14:15] offset:-453 dlc
+d29d71dd5fbd4e71	global_atomic_inc_x2 v[113:114], v95, v[189:190], s[78:79] offset:-558 glc dlc
+289173dd9c442d81	global_atomic_inc_x2 v[129:130], v156, v[68:69], s[44:45] offset:296 glc slc dlc
+fb8f75dd95513c9a	global_atomic_dec_x2 v[154:155], v149, v[81:82], s[60:61] offset:-5 glc
+a58f77dd09411e75	global_atomic_dec_x2 v[117:118], v9, v[65:66], s[30:31] offset:-91 glc slc
+e69576dd7f772a42	global_atomic_dec_x2 v127, v[119:120], s[42:43] offset:1510 slc dlc
+159476dd4d1467b6	global_atomic_dec_x2 v77, v[20:21], s[102:103] offset:1045 slc dlc
+859877dd44624815	global_atomic_dec_x2 v[21:22], v68, v[98:99], s[72:73] offset:-1915 glc slc dlc
+109a74ddc5964e96	global_atomic_dec_x2 v197, v[150:151], s[78:79] offset:-1520 dlc
+239074dd51913940	global_atomic_dec_x2 v81, v[145:146], s[56:57] offset:35 dlc
+248174dd8c5a2aa8	global_atomic_dec_x2 v140, v[90:91], s[42:43] offset:292
+098c75dd977c69c4	global_atomic_dec_x2 v[196:197], v151, v[124:125], s[104:105] offset:-1015 glc
+2e8377ddbf26334e	global_atomic_dec_x2 v[78:79], v191, v[38:39], s[50:51] offset:814 glc slc
+9d8875dda3007839	global_atomic_dec_x2 v[57:58], v163, v[0:1], ttmp[12:13] offset:-1891 glc
+a59b77ddabbc7bc7	global_atomic_dec_x2 v[199:200], v171, v[188:189], ttmp[14:15] offset:-1115 glc slc dlc
+bf8075dd051e4e3a	global_atomic_dec_x2 v[58:59], v5, v[30:31], s[78:79] offset:191 glc
+ba867bdd9c9e003a	global_atomic_fcmpswap_x2 v[58:59], v156, v[158:161], s[0:1] offset:1722 glc slc
+da997add6f6c7543	global_atomic_fcmpswap_x2 v111, v[108:111], ttmp[8:9] offset:-1574 slc dlc
+d89378dd1e204e3e	global_atomic_fcmpswap_x2 v30, v[32:35], s[78:79] offset:984 dlc
+b2897add452027bc	global_atomic_fcmpswap_x2 v69, v[32:35], s[38:39] offset:-1614 slc
+78847add1a51692d	global_atomic_fcmpswap_x2 v26, v[81:84], s[104:105] offset:1144 slc
+32927bdd8fa6609b	global_atomic_fcmpswap_x2 v[155:156], v143, v[166:169], s[96:97] offset:562 glc slc dlc
+c29179dd4cad361f	global_atomic_fcmpswap_x2 v[31:32], v76, v[173:176], s[54:55] offset:450 glc dlc
+8c8d7add47c74292	global_atomic_fcmpswap_x2 v71, v[199:202], s[66:67] offset:-628 slc
+d79678dd5a801842	global_atomic_fcmpswap_x2 v90, v[128:131], s[24:25] offset:1751 dlc
+c89a79dd771b6cb4	global_atomic_fcmpswap_x2 v[180:181], v119, v[27:30], ttmp[0:1] offset:-1336 glc dlc
+ea8278dda0b3305d	global_atomic_fcmpswap_x2 v160, v[179:182], s[48:49] offset:746
+3f877dddb1361802	global_atomic_fmin_x2 v[2:3], v177, v[54:55], s[24:25] offset:1855 glc
+e6877ddda1890c9d	global_atomic_fmin_x2 v[157:158], v161, v[137:138], s[12:13] offset:2022 glc
+529f7ddd6f42242d	global_atomic_fmin_x2 v[45:46], v111, v[66:67], s[36:37] offset:-174 glc dlc
+19987fdd902124bb	global_atomic_fmin_x2 v[187:188], v144, v[33:34], s[36:37] offset:-2023 glc slc dlc
+ef967eddc12057a2	global_atomic_fmin_x2 v193, v[32:33], s[86:87] offset:1775 slc dlc
+9b8f7ddd2792692c	global_atomic_fmin_x2 v[44:45], v39, v[146:147], s[104:105] offset:-101 glc
+139d7fdd8c5b397c	global_atomic_fmin_x2 v[124:125], v140, v[91:92], s[56:57] offset:-749 glc slc dlc
+42867ddd5750150a	global_atomic_fmin_x2 v[10:11], v87, v[80:81], s[20:21] offset:1602 glc
+57907cddc34b6790	global_atomic_fmin_x2 v195, v[75:76], s[102:103] offset:87 dlc
+089c7edd37b75a6e	global_atomic_fmin_x2 v55, v[183:184], s[90:91] offset:-1016 slc dlc
+92997edd6c0a4eb8	global_atomic_fmin_x2 v108, v[10:11], s[78:79] offset:-1646 slc dlc
+02837fdd6ab74875	global_atomic_fmin_x2 v[117:118], v106, v[183:184], s[72:73] offset:770 glc slc
+f29881dd68281baa	global_atomic_fmax_x2 v[170:171], v104, v[40:41], s[26:27] offset:-1806 glc dlc
+778783ddc03f7d28	global_atomic_fmax_x2 v[40:41], v[192:193], v[63:64], off offset:1911 glc slc
+319681dd9e7545ab	global_atomic_fmax_x2 v[171:172], v158, v[117:118], s[68:69] offset:1585 glc dlc
+4b8780dd462b6ca3	global_atomic_fmax_x2 v70, v[43:44], ttmp[0:1] offset:1867
+e29782dd30467d1a	global_atomic_fmax_x2 v[48:49], v[70:71], off offset:2018 slc dlc
+898c81dd26436f6b	global_atomic_fmax_x2 v[107:108], v38, v[67:68], ttmp[2:3] offset:-887 glc
+568f81dd2b4c6653	global_atomic_fmax_x2 v[83:84], v43, v[76:77], s[102:103] offset:-170 glc
+688f81dda8751872	global_atomic_fmax_x2 v[114:115], v168, v[117:118], s[24:25] offset:-152 glc
+3a9780dd517f699c	global_atomic_fmax_x2 v81, v[127:128], s[104:105] offset:1850 dlc
+e14e21dc05c76b95	scratch_load_ubyte v149, off, vcc_hi offset:-287 glc
+6d5921dc37767e6d	scratch_load_ubyte v109, off, exec_lo offset:-1683 glc dlc
+2e5621dc995d000a	scratch_load_ubyte v10, off, s0 offset:1582 glc dlc
+954523dc99ab7847	scratch_load_ubyte v71, off, ttmp12 offset:1429 glc slc
+a45620dc24930f07	scratch_load_ubyte v7, off, s15 offset:1700 dlc
+075023dcae9d242d	scratch_load_ubyte v45, off, s36 offset:7 glc slc dlc
+a35b21dc49297d3a	scratch_load_ubyte v58, v73, off offset:-1117 glc dlc
+fa4421dcaa7230b9	scratch_load_ubyte v185, off, s48 offset:1274 glc
+3c4e23dc68777da7	scratch_load_ubyte v167, v104, off offset:-452 glc slc
+177b21dc8f223c4c	scratch_load_ubyte off, s60 offset:-1257 glc dlc lds
+cc5320dc51ab302f	scratch_load_ubyte v47, off, s48 offset:972 dlc
+2a5d20dc66b41809	scratch_load_ubyte v9, off, s24 offset:-726 dlc
+d44f21dc2c07660d	scratch_load_ubyte v13, off, s102 offset:-44 glc
+085722dc8ca224a4	scratch_load_ubyte v164, off, s36 offset:1800 slc dlc
+665e24dc56963f04	scratch_load_sbyte v4, off, s63 offset:-410 dlc
+a97625dc522e031f	scratch_load_sbyte off, s3 offset:1705 glc dlc lds
+724b26dc08b16f56	scratch_load_sbyte v86, off, ttmp3 offset:-1166 slc
+2f6325dc69367279	scratch_load_sbyte off, ttmp6 offset:815 glc lds
+a35125dc6ac77d39	scratch_load_sbyte v57, v106, off offset:419 glc dlc
+535426dc5000634d	scratch_load_sbyte v77, off, s99 offset:1107 slc dlc
+1b7326dc17173ca7	scratch_load_sbyte off, s60 offset:795 slc dlc lds
+7d4c25dcae4b06a2	scratch_load_sbyte v162, off, s6 offset:-899 glc
+c84a26dc62782d52	scratch_load_sbyte v82, off, s45 offset:-1336 slc
+824527dc6236459f	scratch_load_sbyte v159, off, s69 offset:1410 glc slc
+f75024dca5bb4522	scratch_load_sbyte v34, off, s69 offset:247 dlc
+a54924dc88ad57a7	scratch_load_sbyte v167, off, s87 offset:-1627
+097027dcbf6e2116	scratch_load_sbyte off, s33 offset:9 glc slc dlc lds
+d95427dc568c3c3c	scratch_load_sbyte v60, off, s60 offset:1241 glc slc dlc
+8f442bdc68a07877	scratch_load_ushort v119, off, ttmp12 offset:1167 glc slc
+d8452bdc46814508	scratch_load_ushort v8, off, s69 offset:1496 glc slc
+ba582bdc850c5432	scratch_load_ushort v50, off, s84 offset:-1862 glc slc dlc
+547828dcb8a442ad	scratch_load_ushort off, s66 offset:-1964 dlc lds
+d0432bdc89b06faa	scratch_load_ushort v170, off, ttmp3 offset:976 glc slc
+705829dc71c77876	scratch_load_ushort v118, off, ttmp12 offset:-1936 glc dlc
+33512adc566b333d	scratch_load_ushort v61, off, s51 offset:307 slc dlc
+aa592adc8ac32a07	scratch_load_ushort v7, off, s42 offset:-1622 slc dlc
+13642bdcb38b7e85	scratch_load_ushort off, exec_lo offset:1043 glc slc lds
+86712adcc61f66b4	scratch_load_ushort off, s102 offset:390 slc dlc lds
+167b28dc71006727	scratch_load_ushort off, s103 offset:-1258 dlc lds
+76442bdc37ba7c22	scratch_load_ushort v34, off, m0 offset:1142 glc slc
+5e652adc86310c46	scratch_load_ushort off, s12 offset:1374 slc lds
+e8532bdc5e936c20	scratch_load_ushort v32, off, ttmp0 offset:1000 glc slc dlc
+985a2edc6e2f1b0f	scratch_load_sshort v15, off, s27 offset:-1384 slc dlc
+76422ddc85ab6f24	scratch_load_sshort v36, off, ttmp3 offset:630 glc
+294f2fdcc4a76ab6	scratch_load_sshort v182, off, vcc_lo offset:-215 glc slc
+195f2fdca5877d7a	scratch_load_sshort v122, v165, off offset:-231 glc slc dlc
+16562cdcbdba63ae	scratch_load_sshort v174, off, s99 offset:1558 dlc
+075f2edc14362184	scratch_load_sshort v132, off, s33 offset:-249 slc dlc
+305b2ddc1262481b	scratch_load_sshort v27, off, s72 offset:-1232 glc dlc
+8a412cdc1aa47c31	scratch_load_sshort v49, off, m0 offset:394
+e1712cdc724a6c34	scratch_load_sshort off, ttmp0 offset:481 dlc lds
+be592ddc6b7d4824	scratch_load_sshort v36, off, s72 offset:-1602 glc dlc
+9c422fdc2e587d16	scratch_load_sshort v22, v46, off offset:668 glc slc
+e07b2cdc169e1882	scratch_load_sshort off, s24 offset:-1056 dlc lds
+ed592ddc48c06cb4	scratch_load_sshort v180, off, ttmp0 offset:-1555 glc dlc
+6c4432dc648c7593	scratch_load_dword v147, off, ttmp9 offset:1132 slc
+894f30dc72656641	scratch_load_dword v65, off, s102 offset:-119
+3c4f31dcb5026b6d	scratch_load_dword v109, off, vcc_hi offset:-196 glc
+004630dca8ae7e16	scratch_load_dword v22, off, exec_lo offset:1536
+a84333dc2abf7e47	scratch_load_dword v71, off, exec_lo offset:936 glc slc
+635032dcc70345b3	scratch_load_dword v179, off, s69 offset:99 slc dlc
+3b5532dcc36263b8	scratch_load_dword v184, off, s99 offset:1339 slc dlc
+b95433dc862a6615	scratch_load_dword v21, off, s102 offset:1209 glc slc dlc
+825432dc0e757e93	scratch_load_dword v147, off, exec_lo offset:1154 slc dlc
+9f4433dc1f951ebd	scratch_load_dword v189, off, s30 offset:1183 glc slc
+325633dc38956c0d	scratch_load_dword v13, off, ttmp0 offset:1586 glc slc dlc
+2d5630dcb5a77d7f	scratch_load_dword v127, v181, off offset:1581 dlc
+2b4d31dc8a106c0a	scratch_load_dword v10, off, ttmp0 offset:-725 glc
+b75b34dc41ae6a1f	scratch_load_dwordx2 v[31:32], off, vcc_lo offset:-1097 dlc
+065437dc2b3a578f	scratch_load_dwordx2 v[143:144], off, s87 offset:1030 glc slc dlc
+9e4737dca90f0fa8	scratch_load_dwordx2 v[168:169], off, s15 offset:1950 glc slc
+194b34dc1baf6372	scratch_load_dwordx2 v[114:115], off, s99 offset:-1255
+d35037dc0971459f	scratch_load_dwordx2 v[159:160], off, s69 offset:211 glc slc dlc
+3b4236dc8c196a7a	scratch_load_dwordx2 v[122:123], off, vcc_lo offset:571 slc
+945e34dc83476c45	scratch_load_dwordx2 v[69:70], off, ttmp0 offset:-364 dlc
+564037dc78806662	scratch_load_dwordx2 v[98:99], off, s102 offset:86 glc slc
+a05436dcbe1f33b1	scratch_load_dwordx2 v[177:178], off, s51 offset:1184 slc dlc
+364636dcb89b5a14	scratch_load_dwordx2 v[20:21], off, s90 offset:1590 slc
+d85a37dc0b787c20	scratch_load_dwordx2 v[32:33], off, m0 offset:-1320 glc slc dlc
+7b5f35dc710b541d	scratch_load_dwordx2 v[29:30], off, s84 offset:-133 glc dlc
+884d3bdcc77c7c2d	scratch_load_dwordx4 v[45:48], off, m0 offset:-632 glc slc
+c34e39dc9e0b7da3	scratch_load_dwordx4 v[163:166], v158, off offset:-317 glc
+8e4c3adc9c89095c	scratch_load_dwordx4 v[92:95], off, s9 offset:-882 slc
+bf4039dca62963ad	scratch_load_dwordx4 v[173:176], off, s99 offset:191 glc
+5a4f39dcaa7a7e65	scratch_load_dwordx4 v[101:104], off, exec_lo offset:-166 glc
+e24e38dc221b698f	scratch_load_dwordx4 v[143:146], off, s105 offset:-286
+e04d3adc5a3c0677	scratch_load_dwordx4 v[119:122], off, s6 offset:-544 slc
+cd4639dc8ba56785	scratch_load_dwordx4 v[133:136], off, s103 offset:1741 glc
+665f3bdc863c6c8a	scratch_load_dwordx4 v[138:141], off, ttmp0 offset:-154 glc slc dlc
+085d3adc78ac1e62	scratch_load_dwordx4 v[98:101], off, s30 offset:-760 slc dlc
+784639dc209e3607	scratch_load_dwordx4 v[7:10], off, s54 offset:1656 glc
+a74938dcb60c276b	scratch_load_dwordx4 v[107:110], off, s39 offset:-1625
+535f3ddc25476a7c	scratch_load_dwordx3 v[124:126], off, vcc_lo offset:-173 glc dlc
+6e493ddc3c827c1e	scratch_load_dwordx3 v[30:32], off, m0 offset:-1682 glc
+ce483fdc5c983916	scratch_load_dwordx3 v[22:24], off, s57 offset:-1842 glc slc
+b24f3ddc8f49128a	scratch_load_dwordx3 v[138:140], off, s18 offset:-78 glc
+41403edc971f6714	scratch_load_dwordx3 v[20:22], off, s103 offset:65 slc
+a14f3fdc227d1b02	scratch_load_dwordx3 v[2:4], off, s27 offset:-95 glc slc
+3a473ddc22796090	scratch_load_dwordx3 v[144:146], off, s96 offset:1850 glc
+f6423edc4b757e1e	scratch_load_dwordx3 v[30:32], off, exec_lo offset:758 slc
+fe503ddc74b66390	scratch_load_dwordx3 v[144:146], off, s99 offset:254 glc dlc
+0d5562dc4c54061e	scratch_store_byte off, v84, s6 offset:1293 slc dlc
+964e62dc8d706a27	scratch_store_byte off, v112, vcc_lo offset:-362 slc
+fc5561dc33bd217f	scratch_store_byte off, v189, s33 offset:1532 glc dlc
+035c62dcba4e1811	scratch_store_byte off, v78, s24 offset:-1021 slc dlc
+494860dc4a3d1b7f	scratch_store_byte off, v61, s27 offset:-1975
+025863dc9d4a159e	scratch_store_byte off, v74, s21 offset:-2046 glc slc dlc
+a35763dc13c266b4	scratch_store_byte off, v194, s102 offset:1955 glc slc dlc
+fb5562dc939c7d0a	scratch_store_byte v147, v156, off offset:1531 slc dlc
+ca5862dc70833c98	scratch_store_byte off, v131, s60 offset:-1846 slc dlc
+8e4866dc528524b6	scratch_store_byte_d16_hi off, v133, s36 offset:-1906 slc
+d55a66dca3b66622	scratch_store_byte_d16_hi off, v182, s102 offset:-1323 slc dlc
+c34566dc892a0f37	scratch_store_byte_d16_hi off, v42, s15 offset:1475 slc
+884667dc4a142d3b	scratch_store_byte_d16_hi off, v20, s45 offset:1672 glc slc
+8b5f65dc27c66c7a	scratch_store_byte_d16_hi off, v198, ttmp0 offset:-117 glc dlc
+2b4066dc761b6965	scratch_store_byte_d16_hi off, v27, s105 offset:43 slc
+0f5566dc40a7309e	scratch_store_byte_d16_hi off, v167, s48 offset:1295 slc dlc
+d44e66dc70986a56	scratch_store_byte_d16_hi off, v152, vcc_lo offset:-300 slc
+1f5e67dc26686307	scratch_store_byte_d16_hi off, v104, s99 offset:-481 glc slc dlc
+6b4567dc6fa84296	scratch_store_byte_d16_hi off, v168, s66 offset:1387 glc slc
+9e4c64dc4527218b	scratch_store_byte_d16_hi off, v39, s33 offset:-866
+9d5d6bdc36467db2	scratch_store_short v54, v70, off offset:-611 glc slc dlc
+cd576bdcc6916603	scratch_store_short off, v145, s102 offset:1997 glc slc dlc
+a24668dc47145a5d	scratch_store_short off, v20, s90 offset:1698
+284869dc57bb7e23	scratch_store_short off, v187, exec_lo offset:-2008 glc
+1e4968dc9a1c7220	scratch_store_short off, v28, ttmp6 offset:-1762
+4b4968dc6e576300	scratch_store_short off, v87, s99 offset:-1717
+005068dc8a833383	scratch_store_short off, v131, s51 dlc
+ac5368dc5e167e84	scratch_store_short off, v22, exec_lo offset:940 dlc
+7d5569dc40276f1d	scratch_store_short off, v39, ttmp3 offset:1405 glc dlc
+4f446adc8f9f721e	scratch_store_short off, v159, ttmp6 offset:1103 slc
+f45369dc2bb66cc6	scratch_store_short off, v182, ttmp0 offset:1012 glc dlc
+fc576bdc189d2d4f	scratch_store_short off, v157, s45 offset:2044 glc slc dlc
+835e6edc5bbc7ea3	scratch_store_short_d16_hi off, v188, exec_lo offset:-381 slc dlc
+9e5a6edc993b09a3	scratch_store_short_d16_hi off, v59, s9 offset:-1378 slc dlc
+e3466edc0c693c44	scratch_store_short_d16_hi off, v105, s60 offset:1763 slc
+3f4f6cdc23c6722a	scratch_store_short_d16_hi off, v198, ttmp6 offset:-193
+2c516edc27657d02	scratch_store_short_d16_hi v39, v101, off offset:300 slc dlc
+ec466cdcbe3d3694	scratch_store_short_d16_hi off, v61, s54 offset:1772
+254e6ddc2c8f3385	scratch_store_short_d16_hi off, v143, s51 offset:-475 glc
+355a70dc9f350098	scratch_store_dword off, v53, s0 offset:-1483 dlc
+264073dca4597e65	scratch_store_dword off, v89, exec_lo offset:38 glc slc
+235d70dca0423363	scratch_store_dword off, v66, s51 offset:-733 dlc
+9f5070dc17667d4d	scratch_store_dword v23, v102, off offset:159 dlc
+194a73dc776e6b8d	scratch_store_dword off, v110, vcc_hi offset:-1511 glc slc
+565c71dc43547d40	scratch_store_dword v67, v84, off offset:-938 glc dlc
+c04770dc28b1665f	scratch_store_dword off, v177, s102 offset:1984
+a35072dc72a0002a	scratch_store_dword off, v160, s0 offset:163 slc dlc
+eb4870dca271186d	scratch_store_dword off, v113, s24 offset:-1813
+3e4770dc872d7e43	scratch_store_dword off, v45, exec_lo offset:1854
+695c74dc102948ad	scratch_store_dwordx2 off, v[41:42], s72 offset:-919 dlc
+6b5f74dc5958672c	scratch_store_dwordx2 off, v[88:89], s103 offset:-149 dlc
+3b4574dc5c5a6933	scratch_store_dwordx2 off, v[90:91], s105 offset:1339
+a05576dc6b227b32	scratch_store_dwordx2 off, v[34:35], ttmp15 offset:1440 slc dlc
+835b76dcb8b44b7f	scratch_store_dwordx2 off, v[180:181], s75 offset:-1149 slc dlc
+5b5577dc192a7d69	scratch_store_dwordx2 v25, v[42:43], off offset:1371 glc slc dlc
+7f4677dcb97d33b0	scratch_store_dwordx2 off, v[125:126], s51 offset:1663 glc slc
+b05175dc738d0697	scratch_store_dwordx2 off, v[141:142], s6 offset:432 glc dlc
+5f4474dc89207d3e	scratch_store_dwordx2 v137, v[32:33], off offset:1119
+f25877dc2eba001d	scratch_store_dwordx2 off, v[186:187], s0 offset:-1806 glc slc dlc
+6b4e77dc717a0042	scratch_store_dwordx2 off, v[122:123], s0 offset:-405 glc slc
+ec4b76dc61927d20	scratch_store_dwordx2 v97, v[146:147], off offset:-1044 slc
+0b5e7bdc58976fc1	scratch_store_dwordx4 off, v[151:154], ttmp3 offset:-501 glc slc dlc
+105c7bdc022d5423	scratch_store_dwordx4 off, v[45:48], s84 offset:-1008 glc slc dlc
+605c78dc73966630	scratch_store_dwordx4 off, v[150:153], s102 offset:-928 dlc
+df4c7adcaf771220	scratch_store_dwordx4 off, v[119:122], s18 offset:-801 slc
+50557adc953f518d	scratch_store_dwordx4 off, v[63:66], s81 offset:1360 slc dlc
+0f4379dc35247c16	scratch_store_dwordx4 off, v[36:39], m0 offset:783 glc
+684c78dc48402173	scratch_store_dwordx4 off, v[64:67], s33 offset:-920
+485679dc9228632a	scratch_store_dwordx4 off, v[40:43], s99 offset:1608 glc dlc
+f64079dca1385da8	scratch_store_dwordx4 off, v[56:59], s93 offset:246 glc
+ef5478dc25bc6624	scratch_store_dwordx4 off, v[188:191], s102 offset:1263 dlc
+344f79dc4f1c66be	scratch_store_dwordx4 off, v[28:31], s102 offset:-204 glc
+a24f7cdc12492406	scratch_store_dwordx3 off, v[73:75], s36 offset:-94
+db477fdc963f6a4c	scratch_store_dwordx3 off, v[63:65], vcc_lo offset:2011 glc slc
+dc507fdc5c7167c6	scratch_store_dwordx3 off, v[113:115], s103 offset:220 glc slc dlc
+b6537ddc763d4565	scratch_store_dwordx3 off, v[61:63], s69 offset:950 glc dlc
+d34e7fdc88a26a14	scratch_store_dwordx3 off, v[162:164], vcc_lo offset:-301 glc slc
+aa407fdc4371603f	scratch_store_dwordx3 off, v[113:115], s96 offset:170 glc slc
+a45b7fdc928d78b7	scratch_store_dwordx3 off, v[141:143], ttmp12 offset:-1116 glc slc dlc
+d1557cdca00d63a1	scratch_store_dwordx3 off, v[13:15], s99 offset:1489 dlc
+bb5b7cdc15b866b3	scratch_store_dwordx3 off, v[184:186], s102 offset:-1093 dlc
+72507fdc3f7a6ac0	scratch_store_dwordx3 off, v[122:124], vcc_lo offset:114 glc slc dlc
+335a7ddc61b17279	scratch_store_dwordx3 off, v[177:179], ttmp6 offset:-1485 glc dlc
+1a547edc264b7d6f	scratch_store_dwordx3 v38, v[75:77], off offset:1050 slc dlc
+c45081dc60016fba	scratch_load_ubyte_d16 v186, off, ttmp3 offset:196 glc dlc
+405e83dc6e6f7c54	scratch_load_ubyte_d16 v84, off, m0 offset:-448 glc slc dlc
+545580dc9e206cba	scratch_load_ubyte_d16 v186, off, ttmp0 offset:1364 dlc
+2c4782dc6a152496	scratch_load_ubyte_d16 v150, off, s36 offset:1836 slc
+075283dc511200b1	scratch_load_ubyte_d16 v177, off, s0 offset:519 glc slc dlc
+b15281dca7517d6e	scratch_load_ubyte_d16 v110, v167, off offset:689 glc dlc
+0d5e82dc97340f39	scratch_load_ubyte_d16 v57, off, s15 offset:-499 slc dlc
+204681dc4140422e	scratch_load_ubyte_d16 v46, off, s66 offset:1568 glc
+0e5e80dc6e427c99	scratch_load_ubyte_d16 v153, off, m0 offset:-498 dlc
+434683dc775d0c94	scratch_load_ubyte_d16 v148, off, s12 offset:1603 glc slc
+a35c81dc04a67e0d	scratch_load_ubyte_d16 v13, off, exec_lo offset:-861 glc dlc
+295483dca4076c9e	scratch_load_ubyte_d16 v158, off, ttmp0 offset:1065 glc slc dlc
+7e4c83dc96772abd	scratch_load_ubyte_d16 v189, off, s42 offset:-898 glc slc
+295486dc308a574d	scratch_load_ubyte_d16_hi v77, off, s87 offset:1065 slc dlc
+515285dc859715b4	scratch_load_ubyte_d16_hi v180, off, s21 offset:593 glc dlc
+ad5385dc487f300c	scratch_load_ubyte_d16_hi v12, off, s48 offset:941 glc dlc
+af5c84dc35801e4f	scratch_load_ubyte_d16_hi v79, off, s30 offset:-849 dlc
+304786dc56016aa2	scratch_load_ubyte_d16_hi v162, off, vcc_lo offset:1840 slc
+f45c84dcc46a7850	scratch_load_ubyte_d16_hi v80, off, ttmp12 offset:-780 dlc
+034e86dc91957d74	scratch_load_ubyte_d16_hi v116, v145, off offset:-509 slc
+0f5685dc6c324e93	scratch_load_ubyte_d16_hi v147, off, s78 offset:1551 glc dlc
+af4984dc1b556902	scratch_load_ubyte_d16_hi v2, off, s105 offset:-1617
+9e5e87dcb87f1eb0	scratch_load_ubyte_d16_hi v176, off, s30 offset:-354 glc slc dlc
+7a4c87dc632b3328	scratch_load_ubyte_d16_hi v40, off, s51 offset:-902 glc slc
+c34a86dc17bf7802	scratch_load_ubyte_d16_hi v2, off, ttmp12 offset:-1341 slc
+5c5888dc35257817	scratch_load_sbyte_d16 v23, off, ttmp12 offset:-1956 dlc
+a64888dc89026fb8	scratch_load_sbyte_d16 v184, off, ttmp3 offset:-1882
+324b8bdc6b186817	scratch_load_sbyte_d16 v23, off, s104 offset:-1230 glc slc
+f14688dc0a164b85	scratch_load_sbyte_d16 v133, off, s75 offset:1777
+704088dc01a16c2f	scratch_load_sbyte_d16 v47, off, ttmp0 offset:112
+f85a8bdc16032437	scratch_load_sbyte_d16 v55, off, s36 offset:-1288 glc slc dlc
+0d5289dc8a4d3051	scratch_load_sbyte_d16 v81, off, s48 offset:525 glc dlc
+1e5788dc19453399	scratch_load_sbyte_d16 v153, off, s51 offset:1822 dlc
+07558cdc795a1824	scratch_load_sbyte_d16_hi v36, off, s24 offset:1287 dlc
+65598ddc506a6a3f	scratch_load_sbyte_d16_hi v63, off, vcc_lo offset:-1691 glc dlc
+ed4d8fdc782f6b10	scratch_load_sbyte_d16_hi v16, off, vcc_hi offset:-531 glc slc
+e0458edc672c6cb2	scratch_load_sbyte_d16_hi v178, off, ttmp0 offset:1504 slc
+404d8edcb8436f70	scratch_load_sbyte_d16_hi v112, off, ttmp3 offset:-704 slc
+c3518edc678d2a6c	scratch_load_sbyte_d16_hi v108, off, s42 offset:451 slc dlc
+2c548edc2b5203a3	scratch_load_sbyte_d16_hi v163, off, s3 offset:1068 slc dlc
+054c8ddc03900f2c	scratch_load_sbyte_d16_hi v44, off, s15 offset:-1019 glc
+8d518fdc05c70c30	scratch_load_sbyte_d16_hi v48, off, s12 offset:397 glc slc dlc
+5c4a8edcc45b5743	scratch_load_sbyte_d16_hi v67, off, s87 offset:-1444 slc
+85468edc13826362	scratch_load_sbyte_d16_hi v98, off, s99 offset:1669 slc
+ef4e8fdc64373329	scratch_load_sbyte_d16_hi v41, off, s51 offset:-273 glc slc
+6a478ddc1e0f2714	scratch_load_sbyte_d16_hi v20, off, s39 offset:1898 glc
+524e93dc6faa1833	scratch_load_short_d16 v51, off, s24 offset:-430 glc slc
+694a91dc5d2c6f4e	scratch_load_short_d16 v78, off, ttmp3 offset:-1431 glc
+504592dc2b037e9f	scratch_load_short_d16 v159, off, exec_lo offset:1360 slc
+be4393dc304e4826	scratch_load_short_d16 v38, off, s72 offset:958 glc slc
+2d4390dcb7485a12	scratch_load_short_d16 v18, off, s90 offset:813
+185d93dc35095a7e	scratch_load_short_d16 v126, off, s90 offset:-744 glc slc dlc
+cb4a91dc303769b8	scratch_load_short_d16 v184, off, s105 offset:-1333 glc
+315c92dcae034202	scratch_load_short_d16 v2, off, s66 offset:-975 slc dlc
+735c91dc18130977	scratch_load_short_d16 v119, off, s9 offset:-909 glc dlc
+485290dc45171877	scratch_load_short_d16 v119, off, s24 offset:584 dlc
+154b91dc8c051bb7	scratch_load_short_d16 v183, off, s27 offset:-1259 glc
+914a91dc17590073	scratch_load_short_d16 v115, off, s0 offset:-1391 glc
+9e4390dc70863f12	scratch_load_short_d16 v18, off, s63 offset:926
+d35996dc76633682	scratch_load_short_d16_hi v130, off, s54 offset:-1581 slc dlc
+b44c97dcafbb69b3	scratch_load_short_d16_hi v179, off, s105 offset:-844 glc slc
+a85c97dc03630333	scratch_load_short_d16_hi v51, off, s3 offset:-856 glc slc dlc
+3c5e96dc675e3684	scratch_load_short_d16_hi v132, off, s54 offset:-452 slc dlc
+964e95dcbea22d5e	scratch_load_short_d16_hi v94, off, s45 offset:-362 glc
+094b95dc919c2171	scratch_load_short_d16_hi v113, off, s33 offset:-1271 glc
+b84596dc24b26a18	scratch_load_short_d16_hi v24, off, vcc_lo offset:1464 slc
+964c97dc0a946cbd	scratch_load_short_d16_hi v189, off, ttmp0 offset:-874 glc slc
+f15096dc489654ac	scratch_load_short_d16_hi v172, off, s84 offset:241 slc dlc
+745997dcb517677f	scratch_load_short_d16_hi v127, off, s103 offset:-1676 glc slc dlc
+c05794dc2d091b63	scratch_load_short_d16_hi v99, off, s27 offset:1984 dlc
+475496dc7a42485f	scratch_load_short_d16_hi v95, off, s72 offset:1095 slc dlc
+d84796dc0f7460ad	scratch_load_short_d16_hi v173, off, s96 offset:2008 slc

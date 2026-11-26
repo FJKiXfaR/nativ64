@@ -185,6 +185,15 @@ fn typed_errors() {
     // v_pk_add_i16 v1, v4, v5 with neg_lo on a third source it does not have
     let e = decode(&dw(&[0xcc02_0001, 0x8000_0000 | 261 << 9 | 260]), 0).unwrap_err();
     assert!(matches!(e.kind, ErrorKind::BadField(_)), "{e}");
+    // the reserved FLAT segment, a flat access with a scalar base, a store with lds
+    for d in [
+        0xdc00_c000,
+        0xdc00_0000 | 0xc << 18,
+        0xdc00_2000 | 0x1c << 18 | 2 << 14,
+    ] {
+        let e = decode(&dw(&[d, 2 << 16]), 0).unwrap_err();
+        assert!(matches!(e.kind, ErrorKind::BadField(_)), "{d:#x}: {e}");
+    }
     // MIMG opcode 0x06 is not an instruction
     let e = decode(&dw(&[0xf000_0000 | 6 << 18, 0]), 0).unwrap_err();
     assert_eq!(

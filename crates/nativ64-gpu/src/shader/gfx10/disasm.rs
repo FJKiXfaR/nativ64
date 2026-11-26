@@ -3,8 +3,9 @@
 //! prints them.
 
 use super::ops::{
-    Slot, FLAG_CLAMP, FLAG_DLC, FLAG_DS_OFFSET2, FLAG_DS_SWIZZLE, FLAG_FMODS_SHIFT, FLAG_GLC,
-    FLAG_IMG_BVH, FLAG_LIT16, FLAG_OMOD, FLAG_OPSEL, FLAG_P_MIX, FLAG_SUFFIX,
+    Slot, FLAG_CLAMP, FLAG_DLC, FLAG_DS_OFFSET2, FLAG_DS_SWIZZLE, FLAG_FLAT_ATOMIC,
+    FLAG_FMODS_SHIFT, FLAG_GLC, FLAG_IMG_BVH, FLAG_LIT16, FLAG_OMOD, FLAG_OPSEL, FLAG_P_MIX,
+    FLAG_SUFFIX,
 };
 use super::table_ext;
 use super::{decode_wave, DecodeError, DppKind, Enc, Instr, Operand};
@@ -110,6 +111,7 @@ pub fn disasm_instr(i: &Instr) -> String {
         Enc::Mtbuf => return mtbuf(i, s, ops),
         Enc::Ds => return ds(i, s, ops),
         Enc::Vop3p => return vop3p(i, s, ops),
+        Enc::Flat => return flat(i, s, ops),
         _ => {}
     }
     if !ops.is_empty() {
@@ -654,6 +656,37 @@ fn vop3p(i: &Instr, mut s: String, ops: Vec<String>) -> String {
     }
     if m.clamp {
         s.push_str(" clamp");
+    }
+    s
+}
+
+fn flat(i: &Instr, mut s: String, ops: Vec<String>) -> String {
+    let m = &i.mem;
+    let atomic = i.info.flags & FLAG_FLAT_ATOMIC != 0;
+    let parts: Vec<String> = i
+        .info
+        .slots
+        .iter()
+        .zip(ops)
+        // atomics return a value only with glc; the LDS forms write no register
+        .filter(|(sl, _)| !matches!(sl, Slot::VDst(_)) || !((atomic && !m.glc) || m.lds))
+        .map(|(_, t)| t)
+        .collect();
+    s.push(' ');
+    s.push_str(&parts.join(", "));
+    if m.offset != 0 {
+        let _ = write!(s, " offset:{}", m.offset);
+    }
+    for (on, t) in [
+        (m.glc, "glc"),
+        (m.slc, "slc"),
+        (m.dlc, "dlc"),
+        (m.lds, "lds"),
+    ] {
+        if on {
+            s.push(' ');
+            s.push_str(t);
+        }
     }
     s
 }

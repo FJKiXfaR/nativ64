@@ -49,6 +49,7 @@ pub enum Enc {
     Mtbuf,
     Ds,
     Vop3p,
+    Flat,
 }
 
 impl Enc {
@@ -71,6 +72,7 @@ impl Enc {
             Self::Mtbuf => "MTBUF",
             Self::Ds => "DS",
             Self::Vop3p => "VOP3P",
+            Self::Flat => "FLAT",
         }
     }
 }
@@ -179,6 +181,8 @@ pub struct Mem {
     /// DS: the second 8-bit offset (`offset` holds the 16 bits of both) and the GDS bit.
     pub offset1: u8,
     pub gds: bool,
+    /// FLAT / GLOBAL / SCRATCH: 0 flat, 1 scratch, 2 global.
+    pub seg: u8,
 }
 
 /// MIMG fields. `vaddr` lists the address VGPRs in order (all of them for the NSA form; the
