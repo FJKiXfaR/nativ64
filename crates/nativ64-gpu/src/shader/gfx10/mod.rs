@@ -47,6 +47,7 @@ pub enum Enc {
     Mubuf,
     Mimg,
     Mtbuf,
+    Ds,
 }
 
 impl Enc {
@@ -67,6 +68,7 @@ impl Enc {
             Self::Mubuf => "MUBUF",
             Self::Mimg => "MIMG",
             Self::Mtbuf => "MTBUF",
+            Self::Ds => "DS",
         }
     }
 }
@@ -170,6 +172,9 @@ pub struct Mem {
     pub tfe: bool,
     /// MTBUF unified data / numeric format.
     pub format: u8,
+    /// DS: the second 8-bit offset (`offset` holds the 16 bits of both) and the GDS bit.
+    pub offset1: u8,
+    pub gds: bool,
 }
 
 /// MIMG fields. `vaddr` lists the address VGPRs in order (all of them for the NSA form; the

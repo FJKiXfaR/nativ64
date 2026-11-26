@@ -2449,3 +2449,1373 @@ f17cabe92b444597	tbuffer_load_format_xyzw v[68:71], v[43:44], s[20:23], 23 forma
 c98f20e893b146a5	tbuffer_load_format_x v177, off, s[24:27], 37 format:[BUF_FMT_8_SSCALED] offset:4041 slc dlc
 17eed0eab562208c	tbuffer_load_format_d16_x v98, v181, s[0:3], 12 format:90 idxen offset:3607 glc dlc
 fec5ceea4fbc6048	tbuffer_store_format_d16_xyz v[188:189], off, s[0:3], s72 format:89 offset:1534 glc slc dlc
+010200d804100000	ds_add_u32 v4, v16 offset:513
+794400d8c34c0000	ds_add_u32 v195, v76 offset:17529
+fc6d00d889800000	ds_add_u32 v137, v128 offset:28156
+cb3600d836820000	ds_add_u32 v54, v130 offset:14027
+206600d8202d0000	ds_add_u32 v32, v45 offset:26144
+a72400d816460000	ds_add_u32 v22, v70 offset:9383
+f7f300d8254f0000	ds_add_u32 v37, v79 offset:62455
+007400d8a82c0000	ds_add_u32 v168, v44 offset:29696
+185500d875720000	ds_add_u32 v117, v114 offset:21784
+010204d804100000	ds_sub_u32 v4, v16 offset:513
+b95706d8619a0000	ds_sub_u32 v97, v154 offset:22457 gds
+a6fb04d871020000	ds_sub_u32 v113, v2 offset:64422
+b87b04d87c440000	ds_sub_u32 v124, v68 offset:31672
+b99a06d80b030000	ds_sub_u32 v11, v3 offset:39609 gds
+8c1806d8b7540000	ds_sub_u32 v183, v84 offset:6284 gds
+2fdc06d85ac30000	ds_sub_u32 v90, v195 offset:56367 gds
+484704d814b90000	ds_sub_u32 v20, v185 offset:18248
+a67304d8bf2c0000	ds_sub_u32 v191, v44 offset:29606
+010208d804100000	ds_rsub_u32 v4, v16 offset:513
+a50a08d831ac0000	ds_rsub_u32 v49, v172 offset:2725
+5c7b08d8a3520000	ds_rsub_u32 v163, v82 offset:31580
+c5780ad88a5f0000	ds_rsub_u32 v138, v95 offset:30917 gds
+141c0ad81f860000	ds_rsub_u32 v31, v134 offset:7188 gds
+46540ad8a6780000	ds_rsub_u32 v166, v120 offset:21574 gds
+019508d8678a0000	ds_rsub_u32 v103, v138 offset:38145
+40d608d874430000	ds_rsub_u32 v116, v67 offset:54848
+ec090ad86f2a0000	ds_rsub_u32 v111, v42 offset:2540 gds
+01020cd804100000	ds_inc_u32 v4, v16 offset:513
+3ebd0cd87dc60000	ds_inc_u32 v125, v198 offset:48446
+17b40cd877690000	ds_inc_u32 v119, v105 offset:46103
+f0220cd88d8b0000	ds_inc_u32 v141, v139 offset:8944
+a22f0cd892ba0000	ds_inc_u32 v146, v186 offset:12194
+63290ed8ae360000	ds_inc_u32 v174, v54 offset:10595 gds
+128a0cd80baf0000	ds_inc_u32 v11, v175 offset:35346
+1a5d0cd8594d0000	ds_inc_u32 v89, v77 offset:23834
+8ce40ed88e690000	ds_inc_u32 v142, v105 offset:58508 gds
+010210d804100000	ds_dec_u32 v4, v16 offset:513
+43cf12d8631d0000	ds_dec_u32 v99, v29 offset:53059 gds
+94bc10d8c4c20000	ds_dec_u32 v196, v194 offset:48276
+2f0612d84b4a0000	ds_dec_u32 v75, v74 offset:1583 gds
+6eb210d8184d0000	ds_dec_u32 v24, v77 offset:45678
+626210d898870000	ds_dec_u32 v152, v135 offset:25186
+4d2110d887360000	ds_dec_u32 v135, v54 offset:8525
+356410d8557e0000	ds_dec_u32 v85, v126 offset:25653
+d92d10d883890000	ds_dec_u32 v131, v137 offset:11737
+010214d804100000	ds_min_i32 v4, v16 offset:513
+294216d88d8e0000	ds_min_i32 v141, v142 offset:16937 gds
+9f0214d86b040000	ds_min_i32 v107, v4 offset:671
+d45a14d870560000	ds_min_i32 v112, v86 offset:23252
+2f6f14d810b10000	ds_min_i32 v16, v177 offset:28463
+cad614d851c60000	ds_min_i32 v81, v198 offset:54986
+f93416d8c53f0000	ds_min_i32 v197, v63 offset:13561 gds
+835e14d8b0b70000	ds_min_i32 v176, v183 offset:24195
+782014d88d8c0000	ds_min_i32 v141, v140 offset:8312
+010218d804100000	ds_max_i32 v4, v16 offset:513
+ec4b18d8b65e0000	ds_max_i32 v182, v94 offset:19436
+2f0918d824a90000	ds_max_i32 v36, v169 offset:2351
+73f518d865440000	ds_max_i32 v101, v68 offset:62835
+796118d81b9d0000	ds_max_i32 v27, v157 offset:24953
+82ee1ad8bd070000	ds_max_i32 v189, v7 offset:61058 gds
+8b541ad8b98c0000	ds_max_i32 v185, v140 offset:21643 gds
+c0051ad802680000	ds_max_i32 v2, v104 offset:1472 gds
+2e5c18d8858f0000	ds_max_i32 v133, v143 offset:23598
+01021cd804100000	ds_min_u32 v4, v16 offset:513
+22051cd87d710000	ds_min_u32 v125, v113 offset:1314
+4c921cd815020000	ds_min_u32 v21, v2 offset:37452
+2f3d1cd8847a0000	ds_min_u32 v132, v122 offset:15663
+b23b1cd838c30000	ds_min_u32 v56, v195 offset:15282
+6a541ed835820000	ds_min_u32 v53, v130 offset:21610 gds
+2b681cd838bb0000	ds_min_u32 v56, v187 offset:26667
+7e0b1cd8b83e0000	ds_min_u32 v184, v62 offset:2942
+6b561ed8a75b0000	ds_min_u32 v167, v91 offset:22123 gds
+010220d804100000	ds_max_u32 v4, v16 offset:513
+db6920d8a2040000	ds_max_u32 v162, v4 offset:27099
+3a5420d895350000	ds_max_u32 v149, v53 offset:21562
+678122d8c5b20000	ds_max_u32 v197, v178 offset:33127 gds
+951f20d857620000	ds_max_u32 v87, v98 offset:8085
+d63d20d8b5260000	ds_max_u32 v181, v38 offset:15830
+b60f20d87da50000	ds_max_u32 v125, v165 offset:4022
+352220d8c0970000	ds_max_u32 v192, v151 offset:8757
+6ebf22d8b7950000	ds_max_u32 v183, v149 offset:49006 gds
+010224d804100000	ds_and_b32 v4, v16 offset:513
+807f26d8c1040000	ds_and_b32 v193, v4 offset:32640 gds
+b7e026d8959a0000	ds_and_b32 v149, v154 offset:57527 gds
+08de24d811200000	ds_and_b32 v17, v32 offset:56840
+259d26d83d180000	ds_and_b32 v61, v24 offset:40229 gds
+5af824d830810000	ds_and_b32 v48, v129 offset:63578
+d34224d8a7c40000	ds_and_b32 v167, v196 offset:17107
+318b26d8adba0000	ds_and_b32 v173, v186 offset:35633 gds
+8ca526d849680000	ds_and_b32 v73, v104 offset:42380 gds
+010228d804100000	ds_or_b32 v4, v16 offset:513
+8b302ad84c0b0000	ds_or_b32 v76, v11 offset:12427 gds
+491528d860c40000	ds_or_b32 v96, v196 offset:5449
+93d328d8af2e0000	ds_or_b32 v175, v46 offset:54163
+83ed28d8993a0000	ds_or_b32 v153, v58 offset:60803
+74ec2ad845c20000	ds_or_b32 v69, v194 offset:60532 gds
+9b7b28d842050000	ds_or_b32 v66, v5 offset:31643
+7dbc28d86cbd0000	ds_or_b32 v108, v189 offset:48253
+47a52ad858bf0000	ds_or_b32 v88, v191 offset:42311 gds
+01022cd804100000	ds_xor_b32 v4, v16 offset:513
+ab332cd832820000	ds_xor_b32 v50, v130 offset:13227
+77062ed823570000	ds_xor_b32 v35, v87 offset:1655 gds
+f55f2ed860860000	ds_xor_b32 v96, v134 offset:24565 gds
+4dce2cd896a80000	ds_xor_b32 v150, v168 offset:52813
+8a6b2cd834480000	ds_xor_b32 v52, v72 offset:27530
+a3722cd86d9e0000	ds_xor_b32 v109, v158 offset:29347
+20ee2cd854300000	ds_xor_b32 v84, v48 offset:60960
+8f962cd881000000	ds_xor_b32 v129, v0 offset:38543
+010230d804102000	ds_mskor_b32 v4, v16, v32 offset:513
+bfa330d80b252b00	ds_mskor_b32 v11, v37, v43 offset:41919
+7efc30d88b99b300	ds_mskor_b32 v139, v153, v179 offset:64638
+245130d8a3b76400	ds_mskor_b32 v163, v183, v100 offset:20772
+280c30d878a23b00	ds_mskor_b32 v120, v162, v59 offset:3112
+6d2f30d80d450f00	ds_mskor_b32 v13, v69, v15 offset:12141
+4e3830d831768100	ds_mskor_b32 v49, v118, v129 offset:14414
+ddcc30d86e170c00	ds_mskor_b32 v110, v23, v12 offset:52445
+289232d859930300	ds_mskor_b32 v89, v147, v3 offset:37416 gds
+010234d804100000	ds_write_b32 v4, v16 offset:513
+d99b36d820970000	ds_write_b32 v32, v151 offset:39897 gds
+dbcc34d84e560000	ds_write_b32 v78, v86 offset:52443
+2eec34d81e760000	ds_write_b32 v30, v118 offset:60462
+878a34d8a7310000	ds_write_b32 v167, v49 offset:35463
+b5aa36d882910000	ds_write_b32 v130, v145 offset:43701 gds
+771f34d88e6f0000	ds_write_b32 v142, v111 offset:8055
+2fef34d893450000	ds_write_b32 v147, v69 offset:61231
+14d534d8b5180000	ds_write_b32 v181, v24 offset:54548
+010238d804102000	ds_write2_b32 v4, v16, v32 offset0:1 offset1:2
+bc2138d864652700	ds_write2_b32 v100, v101, v39 offset0:188 offset1:33
+47dd3ad8783a2b00	ds_write2_b32 v120, v58, v43 offset0:71 offset1:221 gds
+156d3ad886649b00	ds_write2_b32 v134, v100, v155 offset0:21 offset1:109 gds
+afd438d8baa54000	ds_write2_b32 v186, v165, v64 offset0:175 offset1:212
+432e3ad84d6f3f00	ds_write2_b32 v77, v111, v63 offset0:67 offset1:46 gds
+06f338d85e34aa00	ds_write2_b32 v94, v52, v170 offset0:6 offset1:243
+93783ad861c43800	ds_write2_b32 v97, v196, v56 offset0:147 offset1:120 gds
+1b4838d88e6a5d00	ds_write2_b32 v142, v106, v93 offset0:27 offset1:72
+01023cd804102000	ds_write2st64_b32 v4, v16, v32 offset0:1 offset1:2
+b91f3cd8c2697600	ds_write2st64_b32 v194, v105, v118 offset0:185 offset1:31
+6a3d3cd87cac7600	ds_write2st64_b32 v124, v172, v118 offset0:106 offset1:61
+c6d73cd8484f0100	ds_write2st64_b32 v72, v79, v1 offset0:198 offset1:215
+1cd33cd839ab5f00	ds_write2st64_b32 v57, v171, v95 offset0:28 offset1:211
+cee73cd860b42200	ds_write2st64_b32 v96, v180, v34 offset0:206 offset1:231
+765a3cd8434c5d00	ds_write2st64_b32 v67, v76, v93 offset0:118 offset1:90
+dbbd3cd80c683600	ds_write2st64_b32 v12, v104, v54 offset0:219 offset1:189
+88b53cd84e562100	ds_write2st64_b32 v78, v86, v33 offset0:136 offset1:181
+010240d804102000	ds_cmpst_b32 v4, v16, v32 offset:513
+ebb742d82d986100	ds_cmpst_b32 v45, v152, v97 offset:47083 gds
+7fd240d87784c000	ds_cmpst_b32 v119, v132, v192 offset:53887
+ed8240d88f991a00	ds_cmpst_b32 v143, v153, v26 offset:33517
+e0aa40d892468c00	ds_cmpst_b32 v146, v70, v140 offset:43744
+695d40d8b0602300	ds_cmpst_b32 v176, v96, v35 offset:23913
+9c2a40d88a580300	ds_cmpst_b32 v138, v88, v3 offset:10908
+5ab940d8bd3e1100	ds_cmpst_b32 v189, v62, v17 offset:47450
+5aab40d8b25c6d00	ds_cmpst_b32 v178, v92, v109 offset:43866
+010244d804102000	ds_cmpst_f32 v4, v16, v32 offset:513
+ca0746d84b4eb200	ds_cmpst_f32 v75, v78, v178 offset:1994 gds
+02f244d8c0b18a00	ds_cmpst_f32 v192, v177, v138 offset:61954
+b4f046d8480e8300	ds_cmpst_f32 v72, v14, v131 offset:61620 gds
+21e744d891430e00	ds_cmpst_f32 v145, v67, v14 offset:59169
+2c8744d8847ab400	ds_cmpst_f32 v132, v122, v180 offset:34604
+680d44d8812bb800	ds_cmpst_f32 v129, v43, v184 offset:3432
+4c2946d889878b00	ds_cmpst_f32 v137, v135, v139 offset:10572 gds
+e32f44d8b9c30d00	ds_cmpst_f32 v185, v195, v13 offset:12259
+010248d804100000	ds_min_f32 v4, v16 offset:513
+ace148d89d210000	ds_min_f32 v157, v33 offset:57772
+15fc48d896070000	ds_min_f32 v150, v7 offset:64533
+2a694ad831b60000	ds_min_f32 v49, v182 offset:26922 gds
+057448d82fa60000	ds_min_f32 v47, v166 offset:29701
+23f64ad8983a0000	ds_min_f32 v152, v58 offset:63011 gds
+a9a048d88a980000	ds_min_f32 v138, v152 offset:41129
+bc5548d8c7570000	ds_min_f32 v199, v87 offset:21948
+d2b148d8bb7c0000	ds_min_f32 v187, v124 offset:45522
+01024cd804100000	ds_max_f32 v4, v16 offset:513
+5ef14cd874120000	ds_max_f32 v116, v18 offset:61790
+9fb14cd846040000	ds_max_f32 v70, v4 offset:45471
+6c2c4ed8abbd0000	ds_max_f32 v171, v189 offset:11372 gds
+be2d4cd8b78b0000	ds_max_f32 v183, v139 offset:11710
+66264ed846610000	ds_max_f32 v70, v97 offset:9830 gds
+ef454ed8246a0000	ds_max_f32 v36, v106 offset:17903 gds
+47d64cd876740000	ds_max_f32 v118, v116 offset:54855
+fcd94cd84c8f0000	ds_max_f32 v76, v143 offset:55804
+010254d804100000	ds_add_f32 v4, v16 offset:513
+d5ea56d854910000	ds_add_f32 v84, v145 offset:60117 gds
+080356d8000d0000	ds_add_f32 v0, v13 offset:776 gds
+e8a854d8521d0000	ds_add_f32 v82, v29 offset:43240
+9eea56d8a3640000	ds_add_f32 v163, v100 offset:60062 gds
+2a8954d894720000	ds_add_f32 v148, v114 offset:35114
+505854d8aa640000	ds_add_f32 v170, v100 offset:22608
+6e0354d8c3410000	ds_add_f32 v195, v65 offset:878
+ae8e54d87d840000	ds_add_f32 v125, v132 offset:36526
+010262d800000000	ds_gws_sema_release_all offset:513 gds
+bd4b62d800000000	ds_gws_sema_release_all offset:19389 gds
+36e162d800000000	ds_gws_sema_release_all offset:57654 gds
+0c2e62d800000000	ds_gws_sema_release_all offset:11788 gds
+766562d800000000	ds_gws_sema_release_all offset:25974 gds
+5be362d800000000	ds_gws_sema_release_all offset:58203 gds
+bc0c62d800000000	ds_gws_sema_release_all offset:3260 gds
+6a9f62d800000000	ds_gws_sema_release_all offset:40810 gds
+34b462d800000000	ds_gws_sema_release_all offset:46132 gds
+010266d804000000	ds_gws_init v4 offset:513 gds
+dd7c66d843000000	ds_gws_init v67 offset:31965 gds
+1d7e66d86b000000	ds_gws_init v107 offset:32285 gds
+f85666d852000000	ds_gws_init v82 offset:22264 gds
+632f66d824000000	ds_gws_init v36 offset:12131 gds
+7cb766d8a1000000	ds_gws_init v161 offset:46972 gds
+a0b366d846000000	ds_gws_init v70 offset:45984 gds
+a9ab66d858000000	ds_gws_init v88 offset:43945 gds
+5ddf66d804000000	ds_gws_init v4 offset:57181 gds
+01026ad800000000	ds_gws_sema_v offset:513 gds
+63356ad800000000	ds_gws_sema_v offset:13667 gds
+b9076ad800000000	ds_gws_sema_v offset:1977 gds
+a8326ad800000000	ds_gws_sema_v offset:12968 gds
+b9306ad800000000	ds_gws_sema_v offset:12473 gds
+b5036ad800000000	ds_gws_sema_v offset:949 gds
+91656ad800000000	ds_gws_sema_v offset:26001 gds
+d5246ad800000000	ds_gws_sema_v offset:9429 gds
+8ab06ad800000000	ds_gws_sema_v offset:45194 gds
+01026ed804000000	ds_gws_sema_br v4 offset:513 gds
+5fa56ed85d000000	ds_gws_sema_br v93 offset:42335 gds
+d2776ed8a4000000	ds_gws_sema_br v164 offset:30674 gds
+26d16ed82d000000	ds_gws_sema_br v45 offset:53542 gds
+17e46ed841000000	ds_gws_sema_br v65 offset:58391 gds
+33b96ed843000000	ds_gws_sema_br v67 offset:47411 gds
+a9d26ed852000000	ds_gws_sema_br v82 offset:53929 gds
+08576ed83d000000	ds_gws_sema_br v61 offset:22280 gds
+d37a6ed81a000000	ds_gws_sema_br v26 offset:31443 gds
+010272d800000000	ds_gws_sema_p offset:513 gds
+e21a72d800000000	ds_gws_sema_p offset:6882 gds
+a94772d800000000	ds_gws_sema_p offset:18345 gds
+07d472d800000000	ds_gws_sema_p offset:54279 gds
+904b72d800000000	ds_gws_sema_p offset:19344 gds
+00fd72d800000000	ds_gws_sema_p offset:64768 gds
+199972d800000000	ds_gws_sema_p offset:39193 gds
+453972d800000000	ds_gws_sema_p offset:14661 gds
+ad0772d800000000	ds_gws_sema_p offset:1965 gds
+010276d804000000	ds_gws_barrier v4 offset:513 gds
+748476d82a000000	ds_gws_barrier v42 offset:33908 gds
+ce9e76d85c000000	ds_gws_barrier v92 offset:40654 gds
+69fb76d87c000000	ds_gws_barrier v124 offset:64361 gds
+026676d805000000	ds_gws_barrier v5 offset:26114 gds
+b98076d81b000000	ds_gws_barrier v27 offset:32953 gds
+44c876d807000000	ds_gws_barrier v7 offset:51268 gds
+109076d8bc000000	ds_gws_barrier v188 offset:36880 gds
+4fee76d860000000	ds_gws_barrier v96 offset:61007 gds
+010278d804100000	ds_write_b8 v4, v16 offset:513
+4b5778d853160000	ds_write_b8 v83, v22 offset:22347
+ecb178d85a000000	ds_write_b8 v90, v0 offset:45548
+ee107ad8bb790000	ds_write_b8 v187, v121 offset:4334 gds
+dd3a78d88a320000	ds_write_b8 v138, v50 offset:15069
+051078d8c5850000	ds_write_b8 v197, v133 offset:4101
+f23178d807c20000	ds_write_b8 v7, v194 offset:12786
+03167ad8173a0000	ds_write_b8 v23, v58 offset:5635 gds
+d01178d89c8d0000	ds_write_b8 v156, v141 offset:4560
+01027cd804100000	ds_write_b16 v4, v16 offset:513
+87b77cd8b09a0000	ds_write_b16 v176, v154 offset:46983
+eef67cd874100000	ds_write_b16 v116, v16 offset:63214
+cc317cd87fae0000	ds_write_b16 v127, v174 offset:12748
+ef9a7cd8a5aa0000	ds_write_b16 v165, v170 offset:39663
+c9c37cd892630000	ds_write_b16 v146, v99 offset:50121
+a3d07cd8c2400000	ds_write_b16 v194, v64 offset:53411
+383c7cd8850b0000	ds_write_b16 v133, v11 offset:15416
+dd1c7ed816bb0000	ds_write_b16 v22, v187 offset:7389 gds
+010280d804100030	ds_add_rtn_u32 v48, v4, v16 offset:513
+944480d88c6400bf	ds_add_rtn_u32 v191, v140, v100 offset:17556
+623b80d8b11b00be	ds_add_rtn_u32 v190, v177, v27 offset:15202
+171180d8040a0097	ds_add_rtn_u32 v151, v4, v10 offset:4375
+1a9782d8215f0082	ds_add_rtn_u32 v130, v33, v95 offset:38682 gds
+752b80d885240015	ds_add_rtn_u32 v21, v133, v36 offset:11125
+a36880d8aa49006e	ds_add_rtn_u32 v110, v170, v73 offset:26787
+fed880d8bb7d0036	ds_add_rtn_u32 v54, v187, v125 offset:55550
+0e8c80d8bf5a0071	ds_add_rtn_u32 v113, v191, v90 offset:35854
+010284d804100030	ds_sub_rtn_u32 v48, v4, v16 offset:513
+e69c86d8385c0081	ds_sub_rtn_u32 v129, v56, v92 offset:40166 gds
+bad186d84cbb0063	ds_sub_rtn_u32 v99, v76, v187 offset:53690 gds
+1c7584d801110000	ds_sub_rtn_u32 v0, v1, v17 offset:29980
+df6a84d828c0003f	ds_sub_rtn_u32 v63, v40, v192 offset:27359
+1d3d84d86d460047	ds_sub_rtn_u32 v71, v109, v70 offset:15645
+14ee84d85fae0024	ds_sub_rtn_u32 v36, v95, v174 offset:60948
+ac3e84d8462a0071	ds_sub_rtn_u32 v113, v70, v42 offset:16044
+66f484d8590400a4	ds_sub_rtn_u32 v164, v89, v4 offset:62566
+010288d804100030	ds_rsub_rtn_u32 v48, v4, v16 offset:513
+71548ad89c4a0012	ds_rsub_rtn_u32 v18, v156, v74 offset:21617 gds
+d3bc88d86b8d00b6	ds_rsub_rtn_u32 v182, v107, v141 offset:48339
+52488ad85b9300be	ds_rsub_rtn_u32 v190, v91, v147 offset:18514 gds
+823b88d8ad9b00b3	ds_rsub_rtn_u32 v179, v173, v155 offset:15234
+3b788ad88a78005b	ds_rsub_rtn_u32 v91, v138, v120 offset:30779 gds
+0cc988d8131200c3	ds_rsub_rtn_u32 v195, v19, v18 offset:51468
+38c188d8541400a0	ds_rsub_rtn_u32 v160, v84, v20 offset:49464
+596788d807ab0085	ds_rsub_rtn_u32 v133, v7, v171 offset:26457
+01028cd804100030	ds_inc_rtn_u32 v48, v4, v16 offset:513
+7f3d8ed87c580032	ds_inc_rtn_u32 v50, v124, v88 offset:15743 gds
+46c58ed873c20091	ds_inc_rtn_u32 v145, v115, v194 offset:50502 gds
+9b6f8cd83a4c0010	ds_inc_rtn_u32 v16, v58, v76 offset:28571
+c8178cd81d960023	ds_inc_rtn_u32 v35, v29, v150 offset:6088
+72798cd85d340056	ds_inc_rtn_u32 v86, v93, v52 offset:31090
+9c6b8ed89246004a	ds_inc_rtn_u32 v74, v146, v70 offset:27548 gds
+9b2d8cd83a6f00a9	ds_inc_rtn_u32 v169, v58, v111 offset:11675
+9c658cd8999c0056	ds_inc_rtn_u32 v86, v153, v156 offset:26012
+010290d804100030	ds_dec_rtn_u32 v48, v4, v16 offset:513
+c64592d883250045	ds_dec_rtn_u32 v69, v131, v37 offset:17862 gds
+adc590d8aa6700b9	ds_dec_rtn_u32 v185, v170, v103 offset:50605
+c5ca92d80a2900c1	ds_dec_rtn_u32 v193, v10, v41 offset:51909 gds
+011b90d82eb700c7	ds_dec_rtn_u32 v199, v46, v183 offset:6913
+75cd90d816be0004	ds_dec_rtn_u32 v4, v22, v190 offset:52597
+c19390d8b244005b	ds_dec_rtn_u32 v91, v178, v68 offset:37825
+245290d8c0940022	ds_dec_rtn_u32 v34, v192, v148 offset:21028
+812290d8704200b7	ds_dec_rtn_u32 v183, v112, v66 offset:8833
+010294d804100030	ds_min_rtn_i32 v48, v4, v16 offset:513
+c09a94d8a2c20096	ds_min_rtn_i32 v150, v162, v194 offset:39616
+18c094d86c020007	ds_min_rtn_i32 v7, v108, v2 offset:49176
+b76a94d85cbe0098	ds_min_rtn_i32 v152, v92, v190 offset:27319
+48d696d86c7000c1	ds_min_rtn_i32 v193, v108, v112 offset:54856 gds
+1f5094d8088a0075	ds_min_rtn_i32 v117, v8, v138 offset:20511
+b97194d842440019	ds_min_rtn_i32 v25, v66, v68 offset:29113
+6a4c94d84c5a000c	ds_min_rtn_i32 v12, v76, v90 offset:19562
+027894d886bf0071	ds_min_rtn_i32 v113, v134, v191 offset:30722
+010298d804100030	ds_max_rtn_i32 v48, v4, v16 offset:513
+190f98d82f7b0074	ds_max_rtn_i32 v116, v47, v123 offset:3865
+0aee98d8a8010070	ds_max_rtn_i32 v112, v168, v1 offset:60938
+629898d838600002	ds_max_rtn_i32 v2, v56, v96 offset:39010
+87c498d834a70030	ds_max_rtn_i32 v48, v52, v167 offset:50311
+215d9ad89f07004d	ds_max_rtn_i32 v77, v159, v7 offset:23841 gds
+289598d835590062	ds_max_rtn_i32 v98, v53, v89 offset:38184
+c8a598d8338700bf	ds_max_rtn_i32 v191, v51, v135 offset:42440
+60e498d85f3600ad	ds_max_rtn_i32 v173, v95, v54 offset:58464
+01029cd804100030	ds_min_rtn_u32 v48, v4, v16 offset:513
+df949cd8096c0010	ds_min_rtn_u32 v16, v9, v108 offset:38111
+54499cd8bc500073	ds_min_rtn_u32 v115, v188, v80 offset:18772
+f28b9ed86711004c	ds_min_rtn_u32 v76, v103, v17 offset:35826 gds
+2b259cd81b780029	ds_min_rtn_u32 v41, v27, v120 offset:9515
+f3699ed82337003f	ds_min_rtn_u32 v63, v35, v55 offset:27123 gds
+a01e9cd8ab9b00bc	ds_min_rtn_u32 v188, v171, v155 offset:7840
+b3999cd89ab10054	ds_min_rtn_u32 v84, v154, v177 offset:39347
+d1079cd867790028	ds_min_rtn_u32 v40, v103, v121 offset:2001
+0102a0d804100030	ds_max_rtn_u32 v48, v4, v16 offset:513
+f92da0d880bb0061	ds_max_rtn_u32 v97, v128, v187 offset:11769
+5868a2d858570052	ds_max_rtn_u32 v82, v88, v87 offset:26712 gds
+3505a2d81ea50072	ds_max_rtn_u32 v114, v30, v165 offset:1333 gds
+94c2a2d8402c0029	ds_max_rtn_u32 v41, v64, v44 offset:49812 gds
+303ea0d8213d00b6	ds_max_rtn_u32 v182, v33, v61 offset:15920
+27e6a0d8865c003d	ds_max_rtn_u32 v61, v134, v92 offset:58919
+e0c7a0d84d61001f	ds_max_rtn_u32 v31, v77, v97 offset:51168
+1395a2d844c2000b	ds_max_rtn_u32 v11, v68, v194 offset:38163 gds
+0102a4d804100030	ds_and_rtn_b32 v48, v4, v16 offset:513
+b37aa4d8a54d0009	ds_and_rtn_b32 v9, v165, v77 offset:31411
+265ea4d8ba320092	ds_and_rtn_b32 v146, v186, v50 offset:24102
+8494a6d8a9b500a9	ds_and_rtn_b32 v169, v169, v181 offset:38020 gds
+0b34a4d880070053	ds_and_rtn_b32 v83, v128, v7 offset:13323
+fba4a4d82d4d000e	ds_and_rtn_b32 v14, v45, v77 offset:42235
+8976a6d80c450034	ds_and_rtn_b32 v52, v12, v69 offset:30345 gds
+ea94a4d83606004c	ds_and_rtn_b32 v76, v54, v6 offset:38122
+846ea4d85b6c0096	ds_and_rtn_b32 v150, v91, v108 offset:28292
+0102a8d804100030	ds_or_rtn_b32 v48, v4, v16 offset:513
+9ffba8d85d650091	ds_or_rtn_b32 v145, v93, v101 offset:64415
+9afeaad83e40006a	ds_or_rtn_b32 v106, v62, v64 offset:65178 gds
+1f5da8d843ab007a	ds_or_rtn_b32 v122, v67, v171 offset:23839
+af67a8d88b5200bb	ds_or_rtn_b32 v187, v139, v82 offset:26543
+2707a8d84b620063	ds_or_rtn_b32 v99, v75, v98 offset:1831
+5c7fa8d8973e0018	ds_or_rtn_b32 v24, v151, v62 offset:32604
+2fe2a8d83bac006e	ds_or_rtn_b32 v110, v59, v172 offset:57903
+6137a8d81822003a	ds_or_rtn_b32 v58, v24, v34 offset:14177
+0102acd804100030	ds_xor_rtn_b32 v48, v4, v16 offset:513
+c62dacd863a7001f	ds_xor_rtn_b32 v31, v99, v167 offset:11718
+01ffaed80b2a0048	ds_xor_rtn_b32 v72, v11, v42 offset:65281 gds
+b681aed81e9000b2	ds_xor_rtn_b32 v178, v30, v144 offset:33206 gds
+6601acd888b0007c	ds_xor_rtn_b32 v124, v136, v176 offset:358
+1848acd8104c00b8	ds_xor_rtn_b32 v184, v16, v76 offset:18456
+df22acd807170063	ds_xor_rtn_b32 v99, v7, v23 offset:8927
+1d82aed80eb9009c	ds_xor_rtn_b32 v156, v14, v185 offset:33309 gds
+d0aeacd85e210040	ds_xor_rtn_b32 v64, v94, v33 offset:44752
+0102b0d804102030	ds_mskor_rtn_b32 v48, v4, v16, v32 offset:513
+7da0b2d8862ea752	ds_mskor_rtn_b32 v82, v134, v46, v167 offset:41085 gds
+cc30b2d8b33e0dc5	ds_mskor_rtn_b32 v197, v179, v62, v13 offset:12492 gds
+77d8b0d8230e9c7e	ds_mskor_rtn_b32 v126, v35, v14, v156 offset:55415
+a03fb0d846003f48	ds_mskor_rtn_b32 v72, v70, v0, v63 offset:16288
+f31eb2d822af17b1	ds_mskor_rtn_b32 v177, v34, v175, v23 offset:7923 gds
+61bbb2d86344479e	ds_mskor_rtn_b32 v158, v99, v68, v71 offset:47969 gds
+a6dcb0d81d563357	ds_mskor_rtn_b32 v87, v29, v86, v51 offset:56486
+b13eb0d8938456c5	ds_mskor_rtn_b32 v197, v147, v132, v86 offset:16049
+0102b4d804100030	ds_wrxchg_rtn_b32 v48, v4, v16 offset:513
+1cf9b4d8c46b0029	ds_wrxchg_rtn_b32 v41, v196, v107 offset:63772
+8844b6d86c9b001e	ds_wrxchg_rtn_b32 v30, v108, v155 offset:17544 gds
+baa7b4d82c980019	ds_wrxchg_rtn_b32 v25, v44, v152 offset:42938
+8b9eb4d8908a004b	ds_wrxchg_rtn_b32 v75, v144, v138 offset:40587
+8dc0b4d83c57006e	ds_wrxchg_rtn_b32 v110, v60, v87 offset:49293
+7e5cb6d88b210093	ds_wrxchg_rtn_b32 v147, v139, v33 offset:23678 gds
+aa04b4d81d8c002e	ds_wrxchg_rtn_b32 v46, v29, v140 offset:1194
+646bb4d841690085	ds_wrxchg_rtn_b32 v133, v65, v105 offset:27492
+0102b8d804102030	ds_wrxchg2_rtn_b32 v[48:49], v4, v16, v32 offset0:1 offset1:2
+404dbad8106b36be	ds_wrxchg2_rtn_b32 v[190:191], v16, v107, v54 offset0:64 offset1:77 gds
+026dbad889363600	ds_wrxchg2_rtn_b32 v[0:1], v137, v54, v54 offset0:2 offset1:109 gds
+ad59b8d81a71a645	ds_wrxchg2_rtn_b32 v[69:70], v26, v113, v166 offset0:173 offset1:89
+79e8bad86f0a2005	ds_wrxchg2_rtn_b32 v[5:6], v111, v10, v32 offset0:121 offset1:232 gds
+0098bad858658bb0	ds_wrxchg2_rtn_b32 v[176:177], v88, v101, v139 offset1:152 gds
+7bbfbad8c296349f	ds_wrxchg2_rtn_b32 v[159:160], v194, v150, v52 offset0:123 offset1:191 gds
+43b3b8d80f8d8a4d	ds_wrxchg2_rtn_b32 v[77:78], v15, v141, v138 offset0:67 offset1:179
+9e0fb8d84d41756c	ds_wrxchg2_rtn_b32 v[108:109], v77, v65, v117 offset0:158 offset1:15
+0102bcd804102030	ds_wrxchg2st64_rtn_b32 v[48:49], v4, v16, v32 offset0:1 offset1:2
+3b41bcd875aab813	ds_wrxchg2st64_rtn_b32 v[19:20], v117, v170, v184 offset0:59 offset1:65
+3b53bcd84c52ad0d	ds_wrxchg2st64_rtn_b32 v[13:14], v76, v82, v173 offset0:59 offset1:83
+28d8bed8a824b084	ds_wrxchg2st64_rtn_b32 v[132:133], v168, v36, v176 offset0:40 offset1:216 gds
+ffadbcd832666451	ds_wrxchg2st64_rtn_b32 v[81:82], v50, v102, v100 offset0:255 offset1:173
+585cbcd85eabb011	ds_wrxchg2st64_rtn_b32 v[17:18], v94, v171, v176 offset0:88 offset1:92
+e17ebcd854b7b2b9	ds_wrxchg2st64_rtn_b32 v[185:186], v84, v183, v178 offset0:225 offset1:126
+071cbcd807c01c36	ds_wrxchg2st64_rtn_b32 v[54:55], v7, v192, v28 offset0:7 offset1:28
+976abed858ab7a66	ds_wrxchg2st64_rtn_b32 v[102:103], v88, v171, v122 offset0:151 offset1:106 gds
+0102c0d804102030	ds_cmpst_rtn_b32 v48, v4, v16, v32 offset:513
+3052c0d8250f6d05	ds_cmpst_rtn_b32 v5, v37, v15, v109 offset:21040
+aa51c0d86a954285	ds_cmpst_rtn_b32 v133, v106, v149, v66 offset:20906
+428cc0d87abf6c43	ds_cmpst_rtn_b32 v67, v122, v191, v108 offset:35906
+8bc4c2d8031bb2bd	ds_cmpst_rtn_b32 v189, v3, v27, v178 offset:50315 gds
+3c91c2d85f4cada2	ds_cmpst_rtn_b32 v162, v95, v76, v173 offset:37180 gds
+3ba8c0d87f8601c0	ds_cmpst_rtn_b32 v192, v127, v134, v1 offset:43067
+89e0c0d855a01bc1	ds_cmpst_rtn_b32 v193, v85, v160, v27 offset:57481
+8738c0d8bba01313	ds_cmpst_rtn_b32 v19, v187, v160, v19 offset:14471
+0102c4d804102030	ds_cmpst_rtn_f32 v48, v4, v16, v32 offset:513
+3fe1c4d8a1bb385e	ds_cmpst_rtn_f32 v94, v161, v187, v56 offset:57663
+7764c4d8750f1588	ds_cmpst_rtn_f32 v136, v117, v15, v21 offset:25719
+25a7c4d8790e2d20	ds_cmpst_rtn_f32 v32, v121, v14, v45 offset:42789
+7bdfc4d8140a0f57	ds_cmpst_rtn_f32 v87, v20, v10, v15 offset:57211
+407ec4d89194b350	ds_cmpst_rtn_f32 v80, v145, v148, v179 offset:32320
+9b1fc4d8a78f2483	ds_cmpst_rtn_f32 v131, v167, v143, v36 offset:8091
+5a5dc4d874adbaa0	ds_cmpst_rtn_f32 v160, v116, v173, v186 offset:23898
+bf47c4d83f6b06bd	ds_cmpst_rtn_f32 v189, v63, v107, v6 offset:18367
+0102c8d804100030	ds_min_rtn_f32 v48, v4, v16 offset:513
+f51bc8d87db40088	ds_min_rtn_f32 v136, v125, v180 offset:7157
+a437cad8011f0098	ds_min_rtn_f32 v152, v1, v31 offset:14244 gds
+aa1bc8d8426d0016	ds_min_rtn_f32 v22, v66, v109 offset:7082
+9af8c8d888b90075	ds_min_rtn_f32 v117, v136, v185 offset:63642
+87bfc8d808b8003c	ds_min_rtn_f32 v60, v8, v184 offset:49031
+2593cad89471007b	ds_min_rtn_f32 v123, v148, v113 offset:37669 gds
+135cc8d8588d0075	ds_min_rtn_f32 v117, v88, v141 offset:23571
+f145c8d842630009	ds_min_rtn_f32 v9, v66, v99 offset:17905
+0102ccd804100030	ds_max_rtn_f32 v48, v4, v16 offset:513
+b703ccd81db200c2	ds_max_rtn_f32 v194, v29, v178 offset:951
+65a9ccd837560041	ds_max_rtn_f32 v65, v55, v86 offset:43365
+9c1fccd81a51002b	ds_max_rtn_f32 v43, v26, v81 offset:8092
+6c6accd823c700b3	ds_max_rtn_f32 v179, v35, v199 offset:27244
+21cbccd8872400b6	ds_max_rtn_f32 v182, v135, v36 offset:52001
+d79dced813210006	ds_max_rtn_f32 v6, v19, v33 offset:40407 gds
+1fa7ccd80852001a	ds_max_rtn_f32 v26, v8, v82 offset:42783
+31f6ced87f2f007f	ds_max_rtn_f32 v127, v127, v47 offset:63025 gds
+0102d0d804102030	ds_wrap_rtn_b32 v48, v4, v16, v32 offset:513
+d51cd0d87a702e52	ds_wrap_rtn_b32 v82, v122, v112, v46 offset:7381
+5f4ed0d8ad291c21	ds_wrap_rtn_b32 v33, v173, v41, v28 offset:20063
+3cbed0d8907dbd38	ds_wrap_rtn_b32 v56, v144, v125, v189 offset:48700
+de9ad2d8717a316d	ds_wrap_rtn_b32 v109, v113, v122, v49 offset:39646 gds
+1694d0d84e708d18	ds_wrap_rtn_b32 v24, v78, v112, v141 offset:37910
+9942d0d869ad3c69	ds_wrap_rtn_b32 v105, v105, v173, v60 offset:17049
+7b75d0d86b532cc7	ds_wrap_rtn_b32 v199, v107, v83, v44 offset:30075
+5f8ed2d809627532	ds_wrap_rtn_b32 v50, v9, v98, v117 offset:36447 gds
+0102d4d804000030	ds_swizzle_b32 v48, v4 offset:swizzle(BITMASK_PERM,"1000p")
+2b6ed4d82c000060	ds_swizzle_b32 v96, v44 offset:swizzle(BITMASK_PERM,"0i0i0")
+1f20d4d85b000027	ds_swizzle_b32 v39, v91 offset:swizzle(SWAP,8)
+ab80d6d81d0000a2	ds_swizzle_b32 v162, v29 offset:swizzle(QUAD_PERM,3,2,2,2) gds
+3001d4d817000080	ds_swizzle_b32 v128, v23 offset:swizzle(BROADCAST,16,9)
+7c00d4d884000038	ds_swizzle_b32 v56, v132 offset:swizzle(BROADCAST,4,3)
+1f1cd4d8770000a6	ds_swizzle_b32 v166, v119 offset:swizzle(REVERSE,8)
+1f20d4d83f000009	ds_swizzle_b32 v9, v63 offset:swizzle(SWAP,8)
+1f0cd4d808000049	ds_swizzle_b32 v73, v8 offset:swizzle(REVERSE,4)
+0102d8d804000030	ds_read_b32 v48, v4 offset:513
+ff75dad807000091	ds_read_b32 v145, v7 offset:30207 gds
+3189d8d88d0000ba	ds_read_b32 v186, v141 offset:35121
+e9b7dad888000098	ds_read_b32 v152, v136 offset:47081 gds
+f07ed8d814000005	ds_read_b32 v5, v20 offset:32496
+fb51d8d860000023	ds_read_b32 v35, v96 offset:20987
+ca2bd8d8a500009c	ds_read_b32 v156, v165 offset:11210
+b5c6d8d8bc000009	ds_read_b32 v9, v188 offset:50869
+4c82d8d87800004f	ds_read_b32 v79, v120 offset:33356
+0102dcd804000030	ds_read2_b32 v[48:49], v4 offset0:1 offset1:2
+48ffdcd8b6000037	ds_read2_b32 v[55:56], v182 offset0:72 offset1:255
+6832dcd840000000	ds_read2_b32 v[0:1], v64 offset0:104 offset1:50
+c655dcd8850000b9	ds_read2_b32 v[185:186], v133 offset0:198 offset1:85
+c53dded87300006b	ds_read2_b32 v[107:108], v115 offset0:197 offset1:61 gds
+c91ddcd879000016	ds_read2_b32 v[22:23], v121 offset0:201 offset1:29
+5983dcd874000080	ds_read2_b32 v[128:129], v116 offset0:89 offset1:131
+8144dcd81a000030	ds_read2_b32 v[48:49], v26 offset0:129 offset1:68
+e447dcd8940000b7	ds_read2_b32 v[183:184], v148 offset0:228 offset1:71
+0102e0d804000030	ds_read2st64_b32 v[48:49], v4 offset0:1 offset1:2
+cf33e0d82e0000ba	ds_read2st64_b32 v[186:187], v46 offset0:207 offset1:51
+4143e2d8ac000036	ds_read2st64_b32 v[54:55], v172 offset0:65 offset1:67 gds
+6eb8e0d8530000a9	ds_read2st64_b32 v[169:170], v83 offset0:110 offset1:184
+a648e2d82000008b	ds_read2st64_b32 v[139:140], v32 offset0:166 offset1:72 gds
+dafee0d84f0000b3	ds_read2st64_b32 v[179:180], v79 offset0:218 offset1:254
+4332e0d84f000014	ds_read2st64_b32 v[20:21], v79 offset0:67 offset1:50
+f627e2d84900000f	ds_read2st64_b32 v[15:16], v73 offset0:246 offset1:39 gds
+f51ee0d817000080	ds_read2st64_b32 v[128:129], v23 offset0:245 offset1:30
+0102e4d804000030	ds_read_i8 v48, v4 offset:513
+afd4e6d869000080	ds_read_i8 v128, v105 offset:54447 gds
+9abfe4d89f00008b	ds_read_i8 v139, v159 offset:49050
+f170e4d865000020	ds_read_i8 v32, v101 offset:28913
+8c56e4d884000050	ds_read_i8 v80, v132 offset:22156
+0813e4d85d0000ad	ds_read_i8 v173, v93 offset:4872
+9658e6d8ba00002d	ds_read_i8 v45, v186 offset:22678 gds
+0ce8e6d897000025	ds_read_i8 v37, v151 offset:59404 gds
+a79ce6d8b50000a7	ds_read_i8 v167, v181 offset:40103 gds
+0102e8d804000030	ds_read_u8 v48, v4 offset:513
+e970e8d8c5000013	ds_read_u8 v19, v197 offset:28905
+99eaead87b00006c	ds_read_u8 v108, v123 offset:60057 gds
+80bde8d847000048	ds_read_u8 v72, v71 offset:48512
+5708e8d839000076	ds_read_u8 v118, v57 offset:2135
+b0a0e8d80100001c	ds_read_u8 v28, v1 offset:41136
+68cce8d88c000062	ds_read_u8 v98, v140 offset:52328
+b51ee8d88e0000b5	ds_read_u8 v181, v142 offset:7861
+ebbbe8d83800003c	ds_read_u8 v60, v56 offset:48107
+0102ecd804000030	ds_read_i16 v48, v4 offset:513
+899eeed8550000b5	ds_read_i16 v181, v85 offset:40585 gds
+162beed8c2000037	ds_read_i16 v55, v194 offset:11030 gds
+3c41ecd842000041	ds_read_i16 v65, v66 offset:16700
+c2ffecd811000002	ds_read_i16 v2, v17 offset:65474
+b631eed85e0000bd	ds_read_i16 v189, v94 offset:12726 gds
+e8f8ecd807000056	ds_read_i16 v86, v7 offset:63720
+9edbecd81200004d	ds_read_i16 v77, v18 offset:56222
+8ac7ecd803000062	ds_read_i16 v98, v3 offset:51082
+0102f0d804000030	ds_read_u16 v48, v4 offset:513
+ce8cf0d83000005b	ds_read_u16 v91, v48 offset:36046
+9db7f0d8aa0000a5	ds_read_u16 v165, v170 offset:47005
+61f3f2d88200007f	ds_read_u16 v127, v130 offset:62305 gds
+2cfdf0d88c0000b0	ds_read_u16 v176, v140 offset:64812
+ed73f0d8760000c2	ds_read_u16 v194, v118 offset:29677
+6a35f2d876000075	ds_read_u16 v117, v118 offset:13674 gds
+cb31f2d8a000005c	ds_read_u16 v92, v160 offset:12747 gds
+c419f0d84100008a	ds_read_u16 v138, v65 offset:6596
+0102f4d800000030	ds_consume v48 offset:513
+0c7ff6d800000011	ds_consume v17 offset:32524 gds
+40d0f4d800000021	ds_consume v33 offset:53312
+2e72f4d8000000a4	ds_consume v164 offset:29230
+436ef6d8000000a5	ds_consume v165 offset:28227 gds
+6cb4f4d80000009a	ds_consume v154 offset:46188
+8911f4d800000053	ds_consume v83 offset:4489
+f45ff6d800000051	ds_consume v81 offset:24564 gds
+6baef6d80000004b	ds_consume v75 offset:44651 gds
+0102f8d800000030	ds_append v48 offset:513
+03fef8d800000013	ds_append v19 offset:65027
+4b64f8d80000005a	ds_append v90 offset:25675
+2d4efad80000005d	ds_append v93 offset:20013 gds
+26b4f8d8000000a7	ds_append v167 offset:46118
+bd82fad800000011	ds_append v17 offset:33469 gds
+8ad5fad800000054	ds_append v84 offset:54666 gds
+c426f8d800000024	ds_append v36 offset:9924
+eeb4fad80000004d	ds_append v77 offset:46318 gds
+0102fed804000030	ds_ordered_count v48, v4 offset:513 gds
+0f8dfed83800001f	ds_ordered_count v31, v56 offset:36111 gds
+d343fed8c0000092	ds_ordered_count v146, v192 offset:17363 gds
+d5ccfed85c0000a5	ds_ordered_count v165, v92 offset:52437 gds
+9c24fed81900005d	ds_ordered_count v93, v25 offset:9372 gds
+a389fed885000047	ds_ordered_count v71, v133 offset:35235 gds
+a6b2fed82400007e	ds_ordered_count v126, v36 offset:45734 gds
+ab42fed854000094	ds_ordered_count v148, v84 offset:17067 gds
+6d8ffed834000035	ds_ordered_count v53, v52 offset:36717 gds
+010200d904100000	ds_add_u64 v4, v[16:17] offset:513
+7a1e00d983890000	ds_add_u64 v131, v[137:138] offset:7802
+889e00d99d1b0000	ds_add_u64 v157, v[27:28] offset:40584
+b18002d97c000000	ds_add_u64 v124, v[0:1] offset:32945 gds
+f62800d98c250000	ds_add_u64 v140, v[37:38] offset:10486
+c1d202d910470000	ds_add_u64 v16, v[71:72] offset:53953 gds
+aa0500d917100000	ds_add_u64 v23, v[16:17] offset:1450
+4f7300d9a40f0000	ds_add_u64 v164, v[15:16] offset:29519
+c55500d9ab7b0000	ds_add_u64 v171, v[123:124] offset:21957
+010204d904100000	ds_sub_u64 v4, v[16:17] offset:513
+1f3804d93dc60000	ds_sub_u64 v61, v[198:199] offset:14367
+021d04d995000000	ds_sub_u64 v149, v[0:1] offset:7426
+9ee906d9494c0000	ds_sub_u64 v73, v[76:77] offset:59806 gds
+94c504d94ea50000	ds_sub_u64 v78, v[165:166] offset:50580
+871906d9aebe0000	ds_sub_u64 v174, v[190:191] offset:6535 gds
+65e904d9a46f0000	ds_sub_u64 v164, v[111:112] offset:59749
+bfce04d98a9d0000	ds_sub_u64 v138, v[157:158] offset:52927
+8e9a04d966420000	ds_sub_u64 v102, v[66:67] offset:39566
+010208d904100000	ds_rsub_u64 v4, v[16:17] offset:513
+50670ad907450000	ds_rsub_u64 v7, v[69:70] offset:26448 gds
+182a08d9aba40000	ds_rsub_u64 v171, v[164:165] offset:10776
+5cc308d95ca30000	ds_rsub_u64 v92, v[163:164] offset:50012
+b27808d92d2f0000	ds_rsub_u64 v45, v[47:48] offset:30898
+c9ba08d982520000	ds_rsub_u64 v130, v[82:83] offset:47817
+baf608d93c980000	ds_rsub_u64 v60, v[152:153] offset:63162
+06eb08d970440000	ds_rsub_u64 v112, v[68:69] offset:60166
+30d708d97b330000	ds_rsub_u64 v123, v[51:52] offset:55088
+01020cd904100000	ds_inc_u64 v4, v[16:17] offset:513
+9b380cd959070000	ds_inc_u64 v89, v[7:8] offset:14491
+aad60ed96a910000	ds_inc_u64 v106, v[145:146] offset:54954 gds
+fa640ed9a4090000	ds_inc_u64 v164, v[9:10] offset:25850 gds
+41210ed9c7040000	ds_inc_u64 v199, v[4:5] offset:8513 gds
+e7d30cd986a40000	ds_inc_u64 v134, v[164:165] offset:54247
+048f0cd949540000	ds_inc_u64 v73, v[84:85] offset:36612
+946a0cd96a070000	ds_inc_u64 v106, v[7:8] offset:27284
+429a0cd9033f0000	ds_inc_u64 v3, v[63:64] offset:39490
+010210d904100000	ds_dec_u64 v4, v[16:17] offset:513
+59d712d90a4d0000	ds_dec_u64 v10, v[77:78] offset:55129 gds
+140610d91b350000	ds_dec_u64 v27, v[53:54] offset:1556
+cd7110d900bb0000	ds_dec_u64 v0, v[187:188] offset:29133
+7b8d10d97e970000	ds_dec_u64 v126, v[151:152] offset:36219
+0a0d10d947af0000	ds_dec_u64 v71, v[175:176] offset:3338
+5e8110d9214b0000	ds_dec_u64 v33, v[75:76] offset:33118
+1e6112d991a10000	ds_dec_u64 v145, v[161:162] offset:24862 gds
+162112d9a9b40000	ds_dec_u64 v169, v[180:181] offset:8470 gds
+010214d904100000	ds_min_i64 v4, v[16:17] offset:513
+49f914d9868a0000	ds_min_i64 v134, v[138:139] offset:63817
+07d314d970650000	ds_min_i64 v112, v[101:102] offset:54023
+8ccc16d913450000	ds_min_i64 v19, v[69:70] offset:52364 gds
+2d8714d913b20000	ds_min_i64 v19, v[178:179] offset:34605
+b77114d9abbf0000	ds_min_i64 v171, v[191:192] offset:29111
+891e16d9ac5c0000	ds_min_i64 v172, v[92:93] offset:7817 gds
+22d414d93d720000	ds_min_i64 v61, v[114:115] offset:54306
+121114d9adc30000	ds_min_i64 v173, v[195:196] offset:4370
+010218d904100000	ds_max_i64 v4, v[16:17] offset:513
+f88718d982090000	ds_max_i64 v130, v[9:10] offset:34808
+0fb418d9760d0000	ds_max_i64 v118, v[13:14] offset:46095
+1cc91ad92a3a0000	ds_max_i64 v42, v[58:59] offset:51484 gds
+dc9618d986560000	ds_max_i64 v134, v[86:87] offset:38620
+d46818d998450000	ds_max_i64 v152, v[69:70] offset:26836
+4d1818d9ba750000	ds_max_i64 v186, v[117:118] offset:6221
+9c6318d96d9b0000	ds_max_i64 v109, v[155:156] offset:25500
+e42318d98f720000	ds_max_i64 v143, v[114:115] offset:9188
+01021cd904100000	ds_min_u64 v4, v[16:17] offset:513
+4e641ed9c6990000	ds_min_u64 v198, v[153:154] offset:25678 gds
+01b71ed9023f0000	ds_min_u64 v2, v[63:64] offset:46849 gds
+1d711ed9990f0000	ds_min_u64 v153, v[15:16] offset:28957 gds
+aab61ed9a35c0000	ds_min_u64 v163, v[92:93] offset:46762 gds
+817d1cd933900000	ds_min_u64 v51, v[144:145] offset:32129
+34c31cd969c00000	ds_min_u64 v105, v[192:193] offset:49972
+c3271cd917900000	ds_min_u64 v23, v[144:145] offset:10179
+8eac1ed9ad5b0000	ds_min_u64 v173, v[91:92] offset:44174 gds
+010220d904100000	ds_max_u64 v4, v[16:17] offset:513
+930720d95d5f0000	ds_max_u64 v93, v[95:96] offset:1939
+3b8420d9ab9f0000	ds_max_u64 v171, v[159:160] offset:33851
+2d6d22d9154b0000	ds_max_u64 v21, v[75:76] offset:27949 gds
+6c3c20d962340000	ds_max_u64 v98, v[52:53] offset:15468
+f9b722d979a60000	ds_max_u64 v121, v[166:167] offset:47097 gds
+b5ba22d962450000	ds_max_u64 v98, v[69:70] offset:47797 gds
+4f8e20d9c7860000	ds_max_u64 v199, v[134:135] offset:36431
+5d7220d9791f0000	ds_max_u64 v121, v[31:32] offset:29277
+010224d904100000	ds_and_b64 v4, v[16:17] offset:513
+734a24d905210000	ds_and_b64 v5, v[33:34] offset:19059
+270524d9300c0000	ds_and_b64 v48, v[12:13] offset:1319
+641124d9b3970000	ds_and_b64 v179, v[151:152] offset:4452
+874e24d9b5860000	ds_and_b64 v181, v[134:135] offset:20103
+bdc826d9588c0000	ds_and_b64 v88, v[140:141] offset:51389 gds
+e32f24d906130000	ds_and_b64 v6, v[19:20] offset:12259
+305924d92a070000	ds_and_b64 v42, v[7:8] offset:22832
+a95726d9c1b70000	ds_and_b64 v193, v[183:184] offset:22441 gds
+010228d904100000	ds_or_b64 v4, v[16:17] offset:513
+90b528d94c3b0000	ds_or_b64 v76, v[59:60] offset:46480
+69162ad9a6930000	ds_or_b64 v166, v[147:148] offset:5737 gds
+293b28d9357b0000	ds_or_b64 v53, v[123:124] offset:15145
+4c8828d961810000	ds_or_b64 v97, v[129:130] offset:34892
+cd5328d94d620000	ds_or_b64 v77, v[98:99] offset:21453
+cf8928d983600000	ds_or_b64 v131, v[96:97] offset:35279
+dd4928d984200000	ds_or_b64 v132, v[32:33] offset:18909
+f5982ad906b80000	ds_or_b64 v6, v[184:185] offset:39157 gds
+01022cd904100000	ds_xor_b64 v4, v[16:17] offset:513
+d3ee2ed9bb3f0000	ds_xor_b64 v187, v[63:64] offset:61139 gds
+33ec2ed9261a0000	ds_xor_b64 v38, v[26:27] offset:60467 gds
+b8952ed97d720000	ds_xor_b64 v125, v[114:115] offset:38328 gds
+8e342cd964a60000	ds_xor_b64 v100, v[166:167] offset:13454
+f46e2cd9ba250000	ds_xor_b64 v186, v[37:38] offset:28404
+fd982cd9c5520000	ds_xor_b64 v197, v[82:83] offset:39165
+7e252cd99e080000	ds_xor_b64 v158, v[8:9] offset:9598
+df152cd9b6170000	ds_xor_b64 v182, v[23:24] offset:5599
+010230d904102000	ds_mskor_b64 v4, v[16:17], v[32:33] offset:513
+ae7d30d99c442f00	ds_mskor_b64 v156, v[68:69], v[47:48] offset:32174
+e8fc30d93aa75400	ds_mskor_b64 v58, v[167:168], v[84:85] offset:64744
+13c030d99c4b7500	ds_mskor_b64 v156, v[75:76], v[117:118] offset:49171
+6dc130d9148d5800	ds_mskor_b64 v20, v[141:142], v[88:89] offset:49517
+025f32d9653d8900	ds_mskor_b64 v101, v[61:62], v[137:138] offset:24322 gds
+138d30d90e349100	ds_mskor_b64 v14, v[52:53], v[145:146] offset:36115
+d0cc32d99b32af00	ds_mskor_b64 v155, v[50:51], v[175:176] offset:52432 gds
+c0b732d936268500	ds_mskor_b64 v54, v[38:39], v[133:134] offset:47040 gds
+010234d904100000	ds_write_b64 v4, v[16:17] offset:513
+aa1d34d909790000	ds_write_b64 v9, v[121:122] offset:7594
+82ed36d958220000	ds_write_b64 v88, v[34:35] offset:60802 gds
+7efa34d9272f0000	ds_write_b64 v39, v[47:48] offset:64126
+868a34d9698f0000	ds_write_b64 v105, v[143:144] offset:35462
+e77836d95d200000	ds_write_b64 v93, v[32:33] offset:30951 gds
+d9fa34d9a0630000	ds_write_b64 v160, v[99:100] offset:64217
+7fb634d96a230000	ds_write_b64 v106, v[35:36] offset:46719
+0c0e36d939890000	ds_write_b64 v57, v[137:138] offset:3596 gds
+010238d904102000	ds_write2_b64 v4, v[16:17], v[32:33] offset0:1 offset1:2
+35c938d917c72300	ds_write2_b64 v23, v[199:200], v[35:36] offset0:53 offset1:201
+0ae038d997812500	ds_write2_b64 v151, v[129:130], v[37:38] offset0:10 offset1:224
+ab173ad92d58a000	ds_write2_b64 v45, v[88:89], v[160:161] offset0:171 offset1:23 gds
+b2bb38d9bba50e00	ds_write2_b64 v187, v[165:166], v[14:15] offset0:178 offset1:187
+fccd38d95c658d00	ds_write2_b64 v92, v[101:102], v[141:142] offset0:252 offset1:205
+335b38d999b29b00	ds_write2_b64 v153, v[178:179], v[155:156] offset0:51 offset1:91
+21ae3ad96e0b8e00	ds_write2_b64 v110, v[11:12], v[142:143] offset0:33 offset1:174 gds
+da0f38d9c5be8b00	ds_write2_b64 v197, v[190:191], v[139:140] offset0:218 offset1:15
+01023cd904102000	ds_write2st64_b64 v4, v[16:17], v[32:33] offset0:1 offset1:2
+01783ed900573900	ds_write2st64_b64 v0, v[87:88], v[57:58] offset0:1 offset1:120 gds
+1a953cd9a6c4b000	ds_write2st64_b64 v166, v[196:197], v[176:177] offset0:26 offset1:149
+12c53cd972c63700	ds_write2st64_b64 v114, v[198:199], v[55:56] offset0:18 offset1:197
+ae603ed991559400	ds_write2st64_b64 v145, v[85:86], v[148:149] offset0:174 offset1:96 gds
+6a4e3cd92e028b00	ds_write2st64_b64 v46, v[2:3], v[139:140] offset0:106 offset1:78
+ee353cd983491400	ds_write2st64_b64 v131, v[73:74], v[20:21] offset0:238 offset1:53
+dabd3ed923501c00	ds_write2st64_b64 v35, v[80:81], v[28:29] offset0:218 offset1:189 gds
+fb983ed90d908f00	ds_write2st64_b64 v13, v[144:145], v[143:144] offset0:251 offset1:152 gds
+010240d904102000	ds_cmpst_b64 v4, v[16:17], v[32:33] offset:513
+7e3a40d924a06800	ds_cmpst_b64 v36, v[160:161], v[104:105] offset:14974
+1a3e42d933baa300	ds_cmpst_b64 v51, v[186:187], v[163:164] offset:15898 gds
+493b40d92c585d00	ds_cmpst_b64 v44, v[88:89], v[93:94] offset:15177
+01bf40d95805a100	ds_cmpst_b64 v88, v[5:6], v[161:162] offset:48897
+17d940d95e0d9e00	ds_cmpst_b64 v94, v[13:14], v[158:159] offset:55575
+04f940d95b3b6800	ds_cmpst_b64 v91, v[59:60], v[104:105] offset:63748
+e1d040d994be9d00	ds_cmpst_b64 v148, v[190:191], v[157:158] offset:53473
+c32640d961835d00	ds_cmpst_b64 v97, v[131:132], v[93:94] offset:9923
+010244d904102000	ds_cmpst_f64 v4, v[16:17], v[32:33] offset:513
+08d344d964908600	ds_cmpst_f64 v100, v[144:145], v[134:135] offset:54024
+201846d9b6c6b700	ds_cmpst_f64 v182, v[198:199], v[183:184] offset:6176 gds
+699344d94354c200	ds_cmpst_f64 v67, v[84:85], v[194:195] offset:37737
+67a244d924902800	ds_cmpst_f64 v36, v[144:145], v[40:41] offset:41575
+49a944d93d051000	ds_cmpst_f64 v61, v[5:6], v[16:17] offset:43337
+f8c644d946140700	ds_cmpst_f64 v70, v[20:21], v[7:8] offset:50936
+e45f46d9a5327900	ds_cmpst_f64 v165, v[50:51], v[121:122] offset:24548 gds
+dccc44d952784500	ds_cmpst_f64 v82, v[120:121], v[69:70] offset:52444
+010248d904100000	ds_min_f64 v4, v[16:17] offset:513
+b6a448d925040000	ds_min_f64 v37, v[4:5] offset:42166
+601848d944760000	ds_min_f64 v68, v[118:119] offset:6240
+2bff48d983180000	ds_min_f64 v131, v[24:25] offset:65323
+458748d9850f0000	ds_min_f64 v133, v[15:16] offset:34629
+94b048d92c5b0000	ds_min_f64 v44, v[91:92] offset:45204
+7bc448d9a5960000	ds_min_f64 v165, v[150:151] offset:50299
+73bb4ad9578a0000	ds_min_f64 v87, v[138:139] offset:47987 gds
+ea0248d9c4480000	ds_min_f64 v196, v[72:73] offset:746
+01024cd904100000	ds_max_f64 v4, v[16:17] offset:513
+c6134ed938690000	ds_max_f64 v56, v[105:106] offset:5062 gds
+38094ed95f970000	ds_max_f64 v95, v[151:152] offset:2360 gds
+8fda4ed907370000	ds_max_f64 v7, v[55:56] offset:55951 gds
+135e4cd9b96c0000	ds_max_f64 v185, v[108:109] offset:24083
+ad294cd97e110000	ds_max_f64 v126, v[17:18] offset:10669
+ad454ed926840000	ds_max_f64 v38, v[132:133] offset:17837 gds
+3b644cd9722b0000	ds_max_f64 v114, v[43:44] offset:25659
+c8fc4cd930400000	ds_max_f64 v48, v[64:65] offset:64712
+010254d904100030	ds_add_rtn_f32 v48, v4, v16 offset:513
+3eef54d9023f0060	ds_add_rtn_f32 v96, v2, v63 offset:61246
+89bf54d9536a00a6	ds_add_rtn_f32 v166, v83, v106 offset:49033
+811054d98b160011	ds_add_rtn_f32 v17, v139, v22 offset:4225
+96a056d92e520028	ds_add_rtn_f32 v40, v46, v82 offset:41110 gds
+f8f156d9437300c7	ds_add_rtn_f32 v199, v67, v115 offset:61944 gds
+ca6254d9a2500024	ds_add_rtn_f32 v36, v162, v80 offset:25290
+92cc56d95c2200a6	ds_add_rtn_f32 v166, v92, v34 offset:52370 gds
+2bc854d9ba4800c0	ds_add_rtn_f32 v192, v186, v72 offset:51243
+010280d904100030	ds_add_rtn_u64 v[48:49], v4, v[16:17] offset:513
+3c1880d9890c0026	ds_add_rtn_u64 v[38:39], v137, v[12:13] offset:6204
+bd9980d924c5002c	ds_add_rtn_u64 v[44:45], v36, v[197:198] offset:39357
+15df80d9416a0000	ds_add_rtn_u64 v[0:1], v65, v[106:107] offset:57109
+9ee580d95c4e0010	ds_add_rtn_u64 v[16:17], v92, v[78:79] offset:58782
+ebb582d9b34d00a1	ds_add_rtn_u64 v[161:162], v179, v[77:78] offset:46571 gds
+c4cf80d9a8580076	ds_add_rtn_u64 v[118:119], v168, v[88:89] offset:53188
+ad8080d9098e0002	ds_add_rtn_u64 v[2:3], v9, v[142:143] offset:32941
+b1e882d978340026	ds_add_rtn_u64 v[38:39], v120, v[52:53] offset:59569 gds
+010284d904100030	ds_sub_rtn_u64 v[48:49], v4, v[16:17] offset:513
+4b0584d919440061	ds_sub_rtn_u64 v[97:98], v25, v[68:69] offset:1355
+f9d984d96e140014	ds_sub_rtn_u64 v[20:21], v110, v[20:21] offset:55801
+643b86d905be0034	ds_sub_rtn_u64 v[52:53], v5, v[190:191] offset:15204 gds
+b33384d921570080	ds_sub_rtn_u64 v[128:129], v33, v[87:88] offset:13235
+303d84d97b410008	ds_sub_rtn_u64 v[8:9], v123, v[65:66] offset:15664
+737484d9a6750081	ds_sub_rtn_u64 v[129:130], v166, v[117:118] offset:29811
+6f6084d989b000be	ds_sub_rtn_u64 v[190:191], v137, v[176:177] offset:24687
+26de84d9a16b006c	ds_sub_rtn_u64 v[108:109], v161, v[107:108] offset:56870
+010288d904100030	ds_rsub_rtn_u64 v[48:49], v4, v[16:17] offset:513
+029488d999a40052	ds_rsub_rtn_u64 v[82:83], v153, v[164:165] offset:37890
+330288d9076f006f	ds_rsub_rtn_u64 v[111:112], v7, v[111:112] offset:563
+97e688d9485b0073	ds_rsub_rtn_u64 v[115:116], v72, v[91:92] offset:59031
+bbcf88d91cbb0051	ds_rsub_rtn_u64 v[81:82], v28, v[187:188] offset:53179
+37f188d90004003f	ds_rsub_rtn_u64 v[63:64], v0, v[4:5] offset:61751
+9b2d88d93e290053	ds_rsub_rtn_u64 v[83:84], v62, v[41:42] offset:11675
+e4f888d9964f0082	ds_rsub_rtn_u64 v[130:131], v150, v[79:80] offset:63716
+5dd68ad9b2aa0075	ds_rsub_rtn_u64 v[117:118], v178, v[170:171] offset:54877 gds
+01028cd904100030	ds_inc_rtn_u64 v[48:49], v4, v[16:17] offset:513
+5d5b8ed9bcaa006e	ds_inc_rtn_u64 v[110:111], v188, v[170:171] offset:23389 gds
+86478cd972c20016	ds_inc_rtn_u64 v[22:23], v114, v[194:195] offset:18310
+25e88ed9353a0085	ds_inc_rtn_u64 v[133:134], v53, v[58:59] offset:59429 gds
+15e68cd9ab86007f	ds_inc_rtn_u64 v[127:128], v171, v[134:135] offset:58901
+77a78ed918270035	ds_inc_rtn_u64 v[53:54], v24, v[39:40] offset:42871 gds
+24dd8cd93ac700c7	ds_inc_rtn_u64 v[199:200], v58, v[199:200] offset:56612
+0e7f8cd9105b0090	ds_inc_rtn_u64 v[144:145], v16, v[91:92] offset:32526
+cd368cd979820087	ds_inc_rtn_u64 v[135:136], v121, v[130:131] offset:14029
+010290d904100030	ds_dec_rtn_u64 v[48:49], v4, v[16:17] offset:513
+ca0c90d96996002e	ds_dec_rtn_u64 v[46:47], v105, v[150:151] offset:3274
+726e92d9109600bb	ds_dec_rtn_u64 v[187:188], v16, v[150:151] offset:28274 gds
+960790d9784700c2	ds_dec_rtn_u64 v[194:195], v120, v[71:72] offset:1942
+37e592d9b35c007d	ds_dec_rtn_u64 v[125:126], v179, v[92:93] offset:58679 gds
+b94c92d9bb580010	ds_dec_rtn_u64 v[16:17], v187, v[88:89] offset:19641 gds
+bbd890d90c4900c1	ds_dec_rtn_u64 v[193:194], v12, v[73:74] offset:55483
+463990d90196004b	ds_dec_rtn_u64 v[75:76], v1, v[150:151] offset:14662
+35bf90d90b0800ad	ds_dec_rtn_u64 v[173:174], v11, v[8:9] offset:48949
+010294d904100030	ds_min_rtn_i64 v[48:49], v4, v[16:17] offset:513
+0ee194d9910b0067	ds_min_rtn_i64 v[103:104], v145, v[11:12] offset:57614
+b6df96d99d15005d	ds_min_rtn_i64 v[93:94], v157, v[21:22] offset:57270 gds
+cd4394d9632c008a	ds_min_rtn_i64 v[138:139], v99, v[44:45] offset:17357
+8fbf96d9b667006e	ds_min_rtn_i64 v[110:111], v182, v[103:104] offset:49039 gds
+fdd694d9b04d005f	ds_min_rtn_i64 v[95:96], v176, v[77:78] offset:55037
+b4cd96d9bbab00a9	ds_min_rtn_i64 v[169:170], v187, v[171:172] offset:52660 gds
+ca0694d917890019	ds_min_rtn_i64 v[25:26], v23, v[137:138] offset:1738
+f30796d932170090	ds_min_rtn_i64 v[144:145], v50, v[23:24] offset:2035 gds
+010298d904100030	ds_max_rtn_i64 v[48:49], v4, v[16:17] offset:513
+f5689ad92e2c0075	ds_max_rtn_i64 v[117:118], v46, v[44:45] offset:26869 gds
+892d98d95981006b	ds_max_rtn_i64 v[107:108], v89, v[129:130] offset:11657
+008798d98c240005	ds_max_rtn_i64 v[5:6], v140, v[36:37] offset:34560
+4d5a98d94aa7005e	ds_max_rtn_i64 v[94:95], v74, v[167:168] offset:23117
+a97198d968a900c7	ds_max_rtn_i64 v[199:200], v104, v[169:170] offset:29097
+97d798d994800051	ds_max_rtn_i64 v[81:82], v148, v[128:129] offset:55191
+a24598d960bc0036	ds_max_rtn_i64 v[54:55], v96, v[188:189] offset:17826
+7d979ad9743a005f	ds_max_rtn_i64 v[95:96], v116, v[58:59] offset:38781 gds
+01029cd904100030	ds_min_rtn_u64 v[48:49], v4, v[16:17] offset:513
+21649ed90d35004f	ds_min_rtn_u64 v[79:80], v13, v[53:54] offset:25633 gds
+afd39cd9a99d0092	ds_min_rtn_u64 v[146:147], v169, v[157:158] offset:54191
+5b9f9cd9312100aa	ds_min_rtn_u64 v[170:171], v49, v[33:34] offset:40795
+ba019cd93707008c	ds_min_rtn_u64 v[140:141], v55, v[7:8] offset:442
+bfdf9ed990090092	ds_min_rtn_u64 v[146:147], v144, v[9:10] offset:57279 gds
+35889cd9a5a000a2	ds_min_rtn_u64 v[162:163], v165, v[160:161] offset:34869
+a5539cd95b5a0087	ds_min_rtn_u64 v[135:136], v91, v[90:91] offset:21413
+47c89cd9396b0015	ds_min_rtn_u64 v[21:22], v57, v[107:108] offset:51271
+0102a0d904100030	ds_max_rtn_u64 v[48:49], v4, v[16:17] offset:513
+8a7ea0d91703004c	ds_max_rtn_u64 v[76:77], v23, v[3:4] offset:32394
+c4f3a0d96b9800a0	ds_max_rtn_u64 v[160:161], v107, v[152:153] offset:62404
+0133a2d91345000f	ds_max_rtn_u64 v[15:16], v19, v[69:70] offset:13057 gds
+f2f4a2d9b84d00a6	ds_max_rtn_u64 v[166:167], v184, v[77:78] offset:62706 gds
+256ba2d9105600b2	ds_max_rtn_u64 v[178:179], v16, v[86:87] offset:27429 gds
+9b77a0d9a9200073	ds_max_rtn_u64 v[115:116], v169, v[32:33] offset:30619
+963ba0d9a74000a5	ds_max_rtn_u64 v[165:166], v167, v[64:65] offset:15254
+bb17a0d907a90032	ds_max_rtn_u64 v[50:51], v7, v[169:170] offset:6075
+0102a4d904100030	ds_and_rtn_b64 v[48:49], v4, v[16:17] offset:513
+81d4a6d980740081	ds_and_rtn_b64 v[129:130], v128, v[116:117] offset:54401 gds
+0d73a4d925010027	ds_and_rtn_b64 v[39:40], v37, v[1:2] offset:29453
+982ba4d9c5430048	ds_and_rtn_b64 v[72:73], v197, v[67:68] offset:11160
+8f9aa4d9bdb800b0	ds_and_rtn_b64 v[176:177], v189, v[184:185] offset:39567
+6274a4d95db60079	ds_and_rtn_b64 v[121:122], v93, v[182:183] offset:29794
+2f6ba4d982ad000a	ds_and_rtn_b64 v[10:11], v130, v[173:174] offset:27439
+e38aa4d968090001	ds_and_rtn_b64 v[1:2], v104, v[9:10] offset:35555
+cce1a4d9bd960045	ds_and_rtn_b64 v[69:70], v189, v[150:151] offset:57804
+0102a8d904100030	ds_or_rtn_b64 v[48:49], v4, v[16:17] offset:513
+1ad2aad9ae770077	ds_or_rtn_b64 v[119:120], v174, v[119:120] offset:53786 gds
+eed7a8d966060025	ds_or_rtn_b64 v[37:38], v102, v[6:7] offset:55278
+def8aad947810029	ds_or_rtn_b64 v[41:42], v71, v[129:130] offset:63710 gds
+8578a8d951640039	ds_or_rtn_b64 v[57:58], v81, v[100:101] offset:30853
+2f15a8d9a99f008a	ds_or_rtn_b64 v[138:139], v169, v[159:160] offset:5423
+f182aad9059d0066	ds_or_rtn_b64 v[102:103], v5, v[157:158] offset:33521 gds
+24cca8d982800045	ds_or_rtn_b64 v[69:70], v130, v[128:129] offset:52260
+6324a8d9a163005e	ds_or_rtn_b64 v[94:95], v161, v[99:100] offset:9315
+0102acd904100030	ds_xor_rtn_b64 v[48:49], v4, v[16:17] offset:513
+187eacd95f5f0096	ds_xor_rtn_b64 v[150:151], v95, v[95:96] offset:32280
+9611aed9b86f0071	ds_xor_rtn_b64 v[113:114], v184, v[111:112] offset:4502 gds
+1b98acd9924b002b	ds_xor_rtn_b64 v[43:44], v146, v[75:76] offset:38939
+905eaed9158100c2	ds_xor_rtn_b64 v[194:195], v21, v[129:130] offset:24208 gds
+e69bacd90958002d	ds_xor_rtn_b64 v[45:46], v9, v[88:89] offset:39910
+0242acd9bb62000d	ds_xor_rtn_b64 v[13:14], v187, v[98:99] offset:16898
+111cacd9c4120056	ds_xor_rtn_b64 v[86:87], v196, v[18:19] offset:7185
+5a60acd9a946004f	ds_xor_rtn_b64 v[79:80], v169, v[70:71] offset:24666
+0102b0d904102030	ds_mskor_rtn_b64 v[48:49], v4, v[16:17], v[32:33] offset:513
+128ab0d939a2861e	ds_mskor_rtn_b64 v[30:31], v57, v[162:163], v[134:135] offset:35346
+4bafb0d90f6dc1bb	ds_mskor_rtn_b64 v[187:188], v15, v[109:110], v[193:194] offset:44875
+feefb0d9c65aaa21	ds_mskor_rtn_b64 v[33:34], v198, v[90:91], v[170:171] offset:61438
+ee17b0d924645947	ds_mskor_rtn_b64 v[71:72], v36, v[100:101], v[89:90] offset:6126
+43dcb0d9029f9606	ds_mskor_rtn_b64 v[6:7], v2, v[159:160], v[150:151] offset:56387
+483fb0d966b7c68a	ds_mskor_rtn_b64 v[138:139], v102, v[183:184], v[198:199] offset:16200
+d14db2d90e460b98	ds_mskor_rtn_b64 v[152:153], v14, v[70:71], v[11:12] offset:19921 gds
+001fb0d9928dbbae	ds_mskor_rtn_b64 v[174:175], v146, v[141:142], v[187:188] offset:7936
+0102b4d904100030	ds_wrxchg_rtn_b64 v[48:49], v4, v[16:17] offset:513
+426fb4d9501e000a	ds_wrxchg_rtn_b64 v[10:11], v80, v[30:31] offset:28482
+fb8db4d91c1e00c2	ds_wrxchg_rtn_b64 v[194:195], v28, v[30:31] offset:36347
+6b84b4d949350042	ds_wrxchg_rtn_b64 v[66:67], v73, v[53:54] offset:33899
+a477b6d9b4c60061	ds_wrxchg_rtn_b64 v[97:98], v180, v[198:199] offset:30628 gds
+6b4fb4d9036b0012	ds_wrxchg_rtn_b64 v[18:19], v3, v[107:108] offset:20331
+7480b4d94758006e	ds_wrxchg_rtn_b64 v[110:111], v71, v[88:89] offset:32884
+a99db4d99f260015	ds_wrxchg_rtn_b64 v[21:22], v159, v[38:39] offset:40361
+4c59b4d9c76d00c6	ds_wrxchg_rtn_b64 v[198:199], v199, v[109:110] offset:22860
+0102b8d904102030	ds_wrxchg2_rtn_b64 v[48:51], v4, v[16:17], v[32:33] offset0:1 offset1:2
+3a02bad92f7d3bad	ds_wrxchg2_rtn_b64 v[173:176], v47, v[125:126], v[59:60] offset0:58 offset1:2 gds
+ec0ab8d93a4a492b	ds_wrxchg2_rtn_b64 v[43:46], v58, v[74:75], v[73:74] offset0:236 offset1:10
+2224b8d97fb59c8b	ds_wrxchg2_rtn_b64 v[139:142], v127, v[181:182], v[156:157] offset0:34 offset1:36
+937eb8d96db08b2a	ds_wrxchg2_rtn_b64 v[42:45], v109, v[176:177], v[139:140] offset0:147 offset1:126
+4dc3b8d96f699a67	ds_wrxchg2_rtn_b64 v[103:106], v111, v[105:106], v[154:155] offset0:77 offset1:195
+9b4bbad9990c7abb	ds_wrxchg2_rtn_b64 v[187:190], v153, v[12:13], v[122:123] offset0:155 offset1:75 gds
+98c2b8d93f90b154	ds_wrxchg2_rtn_b64 v[84:87], v63, v[144:145], v[177:178] offset0:152 offset1:194
+d09eb8d9ba9532a1	ds_wrxchg2_rtn_b64 v[161:164], v186, v[149:150], v[50:51] offset0:208 offset1:158
+0102bcd904102030	ds_wrxchg2st64_rtn_b64 v[48:51], v4, v[16:17], v[32:33] offset0:1 offset1:2
+4e12bcd9826b8431	ds_wrxchg2st64_rtn_b64 v[49:52], v130, v[107:108], v[132:133] offset0:78 offset1:18
+e986bcd9686e9ba8	ds_wrxchg2st64_rtn_b64 v[168:171], v104, v[110:111], v[155:156] offset0:233 offset1:134
+1551bcd91bb2a537	ds_wrxchg2st64_rtn_b64 v[55:58], v27, v[178:179], v[165:166] offset0:21 offset1:81
+0eb1bcd913391d03	ds_wrxchg2st64_rtn_b64 v[3:6], v19, v[57:58], v[29:30] offset0:14 offset1:177
+6590bcd909886a7f	ds_wrxchg2st64_rtn_b64 v[127:130], v9, v[136:137], v[106:107] offset0:101 offset1:144
+b727bcd94c23bc3d	ds_wrxchg2st64_rtn_b64 v[61:64], v76, v[35:36], v[188:189] offset0:183 offset1:39
+3924bcd9352d3fbb	ds_wrxchg2st64_rtn_b64 v[187:190], v53, v[45:46], v[63:64] offset0:57 offset1:36
+efc4bcd981c20262	ds_wrxchg2st64_rtn_b64 v[98:101], v129, v[194:195], v[2:3] offset0:239 offset1:196
+0102c0d904102030	ds_cmpst_rtn_b64 v[48:49], v4, v[16:17], v[32:33] offset:513
+e3efc0d9143f6d37	ds_cmpst_rtn_b64 v[55:56], v20, v[63:64], v[109:110] offset:61411
+e1f3c2d91d1b542c	ds_cmpst_rtn_b64 v[44:45], v29, v[27:28], v[84:85] offset:62433 gds
+1fa6c2d994344695	ds_cmpst_rtn_b64 v[149:150], v148, v[52:53], v[70:71] offset:42527 gds
+221bc0d98f864178	ds_cmpst_rtn_b64 v[120:121], v143, v[134:135], v[65:66] offset:6946
+7b2bc0d94b984d08	ds_cmpst_rtn_b64 v[8:9], v75, v[152:153], v[77:78] offset:11131
+e927c0d9b85b8455	ds_cmpst_rtn_b64 v[85:86], v184, v[91:92], v[132:133] offset:10217
+ed3dc0d9c50994b9	ds_cmpst_rtn_b64 v[185:186], v197, v[9:10], v[148:149] offset:15853
+3152c0d9959892bb	ds_cmpst_rtn_b64 v[187:188], v149, v[152:153], v[146:147] offset:21041
+0102c4d904102030	ds_cmpst_rtn_f64 v[48:49], v4, v[16:17], v[32:33] offset:513
+f8c6c4d929549e50	ds_cmpst_rtn_f64 v[80:81], v41, v[84:85], v[158:159] offset:50936
+89c0c4d97e8509ae	ds_cmpst_rtn_f64 v[174:175], v126, v[133:134], v[9:10] offset:49289
+931cc6d994673d03	ds_cmpst_rtn_f64 v[3:4], v148, v[103:104], v[61:62] offset:7315 gds
+9964c4d9a5c23773	ds_cmpst_rtn_f64 v[115:116], v165, v[194:195], v[55:56] offset:25753
+a4acc4d977366316	ds_cmpst_rtn_f64 v[22:23], v119, v[54:55], v[99:100] offset:44196
+fa3ac4d9bf787d1b	ds_cmpst_rtn_f64 v[27:28], v191, v[120:121], v[125:126] offset:15098
+2be2c4d9134b0e1e	ds_cmpst_rtn_f64 v[30:31], v19, v[75:76], v[14:15] offset:57899
+766ac4d9aa145d01	ds_cmpst_rtn_f64 v[1:2], v170, v[20:21], v[93:94] offset:27254
+0102c8d904100030	ds_min_rtn_f64 v[48:49], v4, v[16:17] offset:513
+54e5c8d9a9980014	ds_min_rtn_f64 v[20:21], v169, v[152:153] offset:58708
+85aac8d99842007b	ds_min_rtn_f64 v[123:124], v152, v[66:67] offset:43653
+cbcdcad99e5400b0	ds_min_rtn_f64 v[176:177], v158, v[84:85] offset:52683 gds
+a295c8d900b80061	ds_min_rtn_f64 v[97:98], v0, v[184:185] offset:38306
+0315c8d9970800a6	ds_min_rtn_f64 v[166:167], v151, v[8:9] offset:5379
+dbd6c8d990b200ad	ds_min_rtn_f64 v[173:174], v144, v[178:179] offset:55003
+30fdc8d902c700a0	ds_min_rtn_f64 v[160:161], v2, v[199:200] offset:64816
+86b1c8d999b900a9	ds_min_rtn_f64 v[169:170], v153, v[185:186] offset:45446
+0102ccd904100030	ds_max_rtn_f64 v[48:49], v4, v[16:17] offset:513
+db99ccd970660053	ds_max_rtn_f64 v[83:84], v112, v[102:103] offset:39387
+b819ced91e87001c	ds_max_rtn_f64 v[28:29], v30, v[135:136] offset:6584 gds
+1577ced99057007b	ds_max_rtn_f64 v[123:124], v144, v[87:88] offset:30485 gds
+8f83ced90362005c	ds_max_rtn_f64 v[92:93], v3, v[98:99] offset:33679 gds
+4adeccd96298002f	ds_max_rtn_f64 v[47:48], v98, v[152:153] offset:56906
+3822ccd9aa240011	ds_max_rtn_f64 v[17:18], v170, v[36:37] offset:8760
+2d29ccd9b1b800bb	ds_max_rtn_f64 v[187:188], v177, v[184:185] offset:10541
+6a1accd9779a0049	ds_max_rtn_f64 v[73:74], v119, v[154:155] offset:6762
+0102d8d904000030	ds_read_b64 v[48:49], v4 offset:513
+6fffd8d94200002a	ds_read_b64 v[42:43], v66 offset:65391
+3ce6d8d9b0000035	ds_read_b64 v[53:54], v176 offset:58940
+0539dad9ba00003d	ds_read_b64 v[61:62], v186 offset:14597 gds
+a6dedad94c0000be	ds_read_b64 v[190:191], v76 offset:56998 gds
+1240d8d962000024	ds_read_b64 v[36:37], v98 offset:16402
+8f0ad8d906000020	ds_read_b64 v[32:33], v6 offset:2703
+28a5dad9ab00001e	ds_read_b64 v[30:31], v171 offset:42280 gds
+090fd8d93d0000a8	ds_read_b64 v[168:169], v61 offset:3849
+0102dcd904000030	ds_read2_b64 v[48:51], v4 offset0:1 offset1:2
+b011dcd96a000066	ds_read2_b64 v[102:105], v106 offset0:176 offset1:17
+5217dcd978000093	ds_read2_b64 v[147:150], v120 offset0:82 offset1:23
+e98bdcd928000036	ds_read2_b64 v[54:57], v40 offset0:233 offset1:139
+b93bdcd94800004c	ds_read2_b64 v[76:79], v72 offset0:185 offset1:59
+dbceded967000017	ds_read2_b64 v[23:26], v103 offset0:219 offset1:206 gds
+ccb1dcd931000023	ds_read2_b64 v[35:38], v49 offset0:204 offset1:177
+b98ddcd9bd00004f	ds_read2_b64 v[79:82], v189 offset0:185 offset1:141
+e289ded94900005a	ds_read2_b64 v[90:93], v73 offset0:226 offset1:137 gds
+0102e0d904000030	ds_read2st64_b64 v[48:51], v4 offset0:1 offset1:2
+b08fe0d99000007f	ds_read2st64_b64 v[127:130], v144 offset0:176 offset1:143
+7683e0d941000034	ds_read2st64_b64 v[52:55], v65 offset0:118 offset1:131
+a151e2d966000059	ds_read2st64_b64 v[89:92], v102 offset0:161 offset1:81 gds
+258be2d9c00000c2	ds_read2st64_b64 v[194:197], v192 offset0:37 offset1:139 gds
+5985e0d950000028	ds_read2st64_b64 v[40:43], v80 offset0:89 offset1:133
+43fde2d9490000ba	ds_read2st64_b64 v[186:189], v73 offset0:67 offset1:253 gds
+2709e0d965000074	ds_read2st64_b64 v[116:119], v101 offset0:39 offset1:9
+9ae4e0d93b00009e	ds_read2st64_b64 v[158:161], v59 offset0:154 offset1:228
+0102f8d904100030	ds_condxchg32_rtn_b64 v[48:49], v4, v[16:17] offset:513
+cde5f8d9100d006b	ds_condxchg32_rtn_b64 v[107:108], v16, v[13:14] offset:58829
+16f0fad9819500c3	ds_condxchg32_rtn_b64 v[195:196], v129, v[149:150] offset:61462 gds
+f783f8d90e11007b	ds_condxchg32_rtn_b64 v[123:124], v14, v[17:18] offset:33783
+52e3f8d905150019	ds_condxchg32_rtn_b64 v[25:26], v5, v[21:22] offset:58194
+f99ef8d990b60094	ds_condxchg32_rtn_b64 v[148:149], v144, v[182:183] offset:40697
+97c6f8d9419b002f	ds_condxchg32_rtn_b64 v[47:48], v65, v[155:156] offset:50839
+5b77fad9466f0034	ds_condxchg32_rtn_b64 v[52:53], v70, v[111:112] offset:30555 gds
+e74bf8d92678000f	ds_condxchg32_rtn_b64 v[15:16], v38, v[120:121] offset:19431
+010200da04000000	ds_add_src2_u32 v4 offset:513
+556400da7a000000	ds_add_src2_u32 v122 offset:25685
+334502da0a000000	ds_add_src2_u32 v10 offset:17715 gds
+038900da2d000000	ds_add_src2_u32 v45 offset:35075
+1cca00da47000000	ds_add_src2_u32 v71 offset:51740
+dcc100da77000000	ds_add_src2_u32 v119 offset:49628
+6df600da22000000	ds_add_src2_u32 v34 offset:63085
+9a3600da81000000	ds_add_src2_u32 v129 offset:13978
+e81900da84000000	ds_add_src2_u32 v132 offset:6632
+010204da04000000	ds_sub_src2_u32 v4 offset:513
+8c0904da19000000	ds_sub_src2_u32 v25 offset:2444
+da7204da18000000	ds_sub_src2_u32 v24 offset:29402
+c9cc04da24000000	ds_sub_src2_u32 v36 offset:52425
+423204da09000000	ds_sub_src2_u32 v9 offset:12866
+88b206da29000000	ds_sub_src2_u32 v41 offset:45704 gds
+9d0c04da34000000	ds_sub_src2_u32 v52 offset:3229
+4f1306da17000000	ds_sub_src2_u32 v23 offset:4943 gds
+190806da24000000	ds_sub_src2_u32 v36 offset:2073 gds
+010208da04000000	ds_rsub_src2_u32 v4 offset:513
+800c08da72000000	ds_rsub_src2_u32 v114 offset:3200
+450208da5b000000	ds_rsub_src2_u32 v91 offset:581
+66330ada61000000	ds_rsub_src2_u32 v97 offset:13158 gds
+72c308da74000000	ds_rsub_src2_u32 v116 offset:50034
+76110ada9c000000	ds_rsub_src2_u32 v156 offset:4470 gds
+3e6c0ada95000000	ds_rsub_src2_u32 v149 offset:27710 gds
+6f2508da28000000	ds_rsub_src2_u32 v40 offset:9583
+5f1708da59000000	ds_rsub_src2_u32 v89 offset:5983
+01020cda04000000	ds_inc_src2_u32 v4 offset:513
+d44f0cda13000000	ds_inc_src2_u32 v19 offset:20436
+47590cdab2000000	ds_inc_src2_u32 v178 offset:22855
+bb130cda22000000	ds_inc_src2_u32 v34 offset:5051
+7ece0edabe000000	ds_inc_src2_u32 v190 offset:52862 gds
+63e80edaba000000	ds_inc_src2_u32 v186 offset:59491 gds
+3d710cda73000000	ds_inc_src2_u32 v115 offset:28989
+fc380cda35000000	ds_inc_src2_u32 v53 offset:14588
+ec940cda14000000	ds_inc_src2_u32 v20 offset:38124
+010210da04000000	ds_dec_src2_u32 v4 offset:513
+f67410da1f000000	ds_dec_src2_u32 v31 offset:29942
+d0aa10dac7000000	ds_dec_src2_u32 v199 offset:43728
+de7510da44000000	ds_dec_src2_u32 v68 offset:30174
+658e12da90000000	ds_dec_src2_u32 v144 offset:36453 gds
+f2f910dab1000000	ds_dec_src2_u32 v177 offset:63986
+ab8710da34000000	ds_dec_src2_u32 v52 offset:34731
+bf1c10da54000000	ds_dec_src2_u32 v84 offset:7359
+1b0010da03000000	ds_dec_src2_u32 v3 offset:27
+010214da04000000	ds_min_src2_i32 v4 offset:513
+c9e214da04000000	ds_min_src2_i32 v4 offset:58057
+bad114da22000000	ds_min_src2_i32 v34 offset:53690
+2f1514da51000000	ds_min_src2_i32 v81 offset:5423
+51d714da99000000	ds_min_src2_i32 v153 offset:55121
+ae2916da23000000	ds_min_src2_i32 v35 offset:10670 gds
+bddb14da66000000	ds_min_src2_i32 v102 offset:56253
+8f5c14da4f000000	ds_min_src2_i32 v79 offset:23695
+61b314da67000000	ds_min_src2_i32 v103 offset:45921
+010218da04000000	ds_max_src2_i32 v4 offset:513
+544e1adac5000000	ds_max_src2_i32 v197 offset:20052 gds
+1f1318da65000000	ds_max_src2_i32 v101 offset:4895
+d45118da35000000	ds_max_src2_i32 v53 offset:20948
+903418dac2000000	ds_max_src2_i32 v194 offset:13456
+a89618da30000000	ds_max_src2_i32 v48 offset:38568
+91641ada06000000	ds_max_src2_i32 v6 offset:25745 gds
+ec9918da20000000	ds_max_src2_i32 v32 offset:39404
+631f18da41000000	ds_max_src2_i32 v65 offset:8035
+01021cda04000000	ds_min_src2_u32 v4 offset:513
+fa201cda51000000	ds_min_src2_u32 v81 offset:8442
+2fcf1cda6c000000	ds_min_src2_u32 v108 offset:53039
+89c31eda99000000	ds_min_src2_u32 v153 offset:50057 gds
+a4861eda48000000	ds_min_src2_u32 v72 offset:34468 gds
+57731cda0f000000	ds_min_src2_u32 v15 offset:29527
+0f1d1eda52000000	ds_min_src2_u32 v82 offset:7439 gds
+7f801cda1a000000	ds_min_src2_u32 v26 offset:32895
+84511cda05000000	ds_min_src2_u32 v5 offset:20868
+010220da04000000	ds_max_src2_u32 v4 offset:513
+384820da7e000000	ds_max_src2_u32 v126 offset:18488
+33f722da3f000000	ds_max_src2_u32 v63 offset:63283 gds
+2e8a20da68000000	ds_max_src2_u32 v104 offset:35374
+c1ff20da21000000	ds_max_src2_u32 v33 offset:65473
+b09320da3f000000	ds_max_src2_u32 v63 offset:37808
+2f0922dabe000000	ds_max_src2_u32 v190 offset:2351 gds
+7a9720da71000000	ds_max_src2_u32 v113 offset:38778
+c2ca22da4d000000	ds_max_src2_u32 v77 offset:51906 gds
+010224da04000000	ds_and_src2_b32 v4 offset:513
+0cda26daa7000000	ds_and_src2_b32 v167 offset:55820 gds
+529f24da47000000	ds_and_src2_b32 v71 offset:40786
+09ea24da7d000000	ds_and_src2_b32 v125 offset:59913
+699924da98000000	ds_and_src2_b32 v152 offset:39273
+9a1a24da84000000	ds_and_src2_b32 v132 offset:6810
+4ee026da61000000	ds_and_src2_b32 v97 offset:57422 gds
+ca4224da5e000000	ds_and_src2_b32 v94 offset:17098
+086b26da0f000000	ds_and_src2_b32 v15 offset:27400 gds
+010228da04000000	ds_or_src2_b32 v4 offset:513
+ba8828dab6000000	ds_or_src2_b32 v182 offset:35002
+b47e2ada1f000000	ds_or_src2_b32 v31 offset:32436 gds
+1c3b28dab3000000	ds_or_src2_b32 v179 offset:15132
+e37628da34000000	ds_or_src2_b32 v52 offset:30435
+b12f2ada09000000	ds_or_src2_b32 v9 offset:12209 gds
+7f942ada87000000	ds_or_src2_b32 v135 offset:38015 gds
+dad42ada99000000	ds_or_src2_b32 v153 offset:54490 gds
+020128da84000000	ds_or_src2_b32 v132 offset:258
+01022cda04000000	ds_xor_src2_b32 v4 offset:513
+83432cda1f000000	ds_xor_src2_b32 v31 offset:17283
+544b2cda00000000	ds_xor_src2_b32 v0 offset:19284
+059d2eda27000000	ds_xor_src2_b32 v39 offset:40197 gds
+60e02cda4f000000	ds_xor_src2_b32 v79 offset:57440
+a5892eda21000000	ds_xor_src2_b32 v33 offset:35237 gds
+67512eda8b000000	ds_xor_src2_b32 v139 offset:20839 gds
+680b2eda4c000000	ds_xor_src2_b32 v76 offset:2920 gds
+6a2c2cda6c000000	ds_xor_src2_b32 v108 offset:11370
+010234da04000000	ds_write_src2_b32 v4 offset:513
+0e9534da92000000	ds_write_src2_b32 v146 offset:38158
+168a34da8b000000	ds_write_src2_b32 v139 offset:35350
+084d34da63000000	ds_write_src2_b32 v99 offset:19720
+56b834da3e000000	ds_write_src2_b32 v62 offset:47190
+6e2c34da2a000000	ds_write_src2_b32 v42 offset:11374
+512334dac1000000	ds_write_src2_b32 v193 offset:9041
+aa0b34da0c000000	ds_write_src2_b32 v12 offset:2986
+e14f34da29000000	ds_write_src2_b32 v41 offset:20449
+010248da04000000	ds_min_src2_f32 v4 offset:513
+91e448dab1000000	ds_min_src2_f32 v177 offset:58513
+98f248daa5000000	ds_min_src2_f32 v165 offset:62104
+24674ada5b000000	ds_min_src2_f32 v91 offset:26404 gds
+4cd448da0b000000	ds_min_src2_f32 v11 offset:54348
+7c074ada9e000000	ds_min_src2_f32 v158 offset:1916 gds
+75194ada3c000000	ds_min_src2_f32 v60 offset:6517 gds
+2ada48da9b000000	ds_min_src2_f32 v155 offset:55850
+c8884ada4c000000	ds_min_src2_f32 v76 offset:35016 gds
+01024cda04000000	ds_max_src2_f32 v4 offset:513
+c0134cda09000000	ds_max_src2_f32 v9 offset:5056
+7ede4cdaaf000000	ds_max_src2_f32 v175 offset:56958
+7cc74cda68000000	ds_max_src2_f32 v104 offset:51068
+19a74cdab8000000	ds_max_src2_f32 v184 offset:42777
+b2714eda54000000	ds_max_src2_f32 v84 offset:29106 gds
+f2414cdaa4000000	ds_max_src2_f32 v164 offset:16882
+88284eda65000000	ds_max_src2_f32 v101 offset:10376 gds
+3e0b4cda0e000000	ds_max_src2_f32 v14 offset:2878
+010254da04000000	ds_add_src2_f32 v4 offset:513
+6ee656da8d000000	ds_add_src2_f32 v141 offset:58990 gds
+3bfb54da4f000000	ds_add_src2_f32 v79 offset:64315
+d7b154da20000000	ds_add_src2_f32 v32 offset:45527
+6cae54daaa000000	ds_add_src2_f32 v170 offset:44652
+99d854da1a000000	ds_add_src2_f32 v26 offset:55449
+0b0154da44000000	ds_add_src2_f32 v68 offset:267
+2e4154da93000000	ds_add_src2_f32 v147 offset:16686
+aff054dabc000000	ds_add_src2_f32 v188 offset:61615
+010280da04100000	ds_write_b8_d16_hi v4, v16 offset:513
+861e80daa3c60000	ds_write_b8_d16_hi v163, v198 offset:7814
+f30880da0e320000	ds_write_b8_d16_hi v14, v50 offset:2291
+b4a580da88bc0000	ds_write_b8_d16_hi v136, v188 offset:42420
+bab782da5c360000	ds_write_b8_d16_hi v92, v54 offset:47034 gds
+9d5482da5b2d0000	ds_write_b8_d16_hi v91, v45 offset:21661 gds
+da0582daa87c0000	ds_write_b8_d16_hi v168, v124 offset:1498 gds
+8a0480da05a40000	ds_write_b8_d16_hi v5, v164 offset:1162
+eab282da94a60000	ds_write_b8_d16_hi v148, v166 offset:45802 gds
+010284da04100000	ds_write_b16_d16_hi v4, v16 offset:513
+489684da6da40000	ds_write_b16_d16_hi v109, v164 offset:38472
+603384da741c0000	ds_write_b16_d16_hi v116, v28 offset:13152
+515b84da1e5d0000	ds_write_b16_d16_hi v30, v93 offset:23377
+96af84daacaf0000	ds_write_b16_d16_hi v172, v175 offset:44950
+4a3586dac3a10000	ds_write_b16_d16_hi v195, v161 offset:13642 gds
+731f84dac1b40000	ds_write_b16_d16_hi v193, v180 offset:8051
+325184da3e930000	ds_write_b16_d16_hi v62, v147 offset:20786
+9e7284da0f230000	ds_write_b16_d16_hi v15, v35 offset:29342
+010288da04000030	ds_read_u8_d16 v48, v4 offset:513
+808a88da69000057	ds_read_u8_d16 v87, v105 offset:35456
+8dd488da340000b6	ds_read_u8_d16 v182, v52 offset:54413
+f79188da910000a8	ds_read_u8_d16 v168, v145 offset:37367
+ba3f88da4000006a	ds_read_u8_d16 v106, v64 offset:16314
+b2c288daad000014	ds_read_u8_d16 v20, v173 offset:49842
+1fef88da2200004e	ds_read_u8_d16 v78, v34 offset:61215
+4fca8ada30000091	ds_read_u8_d16 v145, v48 offset:51791 gds
+8d0588da8200003e	ds_read_u8_d16 v62, v130 offset:1421
+01028cda04000030	ds_read_u8_d16_hi v48, v4 offset:513
+c8d08edabe000099	ds_read_u8_d16_hi v153, v190 offset:53448 gds
+48158cda800000a3	ds_read_u8_d16_hi v163, v128 offset:5448
+3d808eda30000003	ds_read_u8_d16_hi v3, v48 offset:32829 gds
+9ae58eda780000b6	ds_read_u8_d16_hi v182, v120 offset:58778 gds
+56a68cda0b00006b	ds_read_u8_d16_hi v107, v11 offset:42582
+a6568cda7b00007b	ds_read_u8_d16_hi v123, v123 offset:22182
+52608cda8d0000a6	ds_read_u8_d16_hi v166, v141 offset:24658
+f2788cda16000036	ds_read_u8_d16_hi v54, v22 offset:30962
+010290da04000030	ds_read_i8_d16 v48, v4 offset:513
+b0bf90da5f000034	ds_read_i8_d16 v52, v95 offset:49072
+1e6290dab50000bc	ds_read_i8_d16 v188, v181 offset:25118
+366592da0d00009a	ds_read_i8_d16 v154, v13 offset:25910 gds
+489d90da39000040	ds_read_i8_d16 v64, v57 offset:40264
+58a290da85000053	ds_read_i8_d16 v83, v133 offset:41560
+ed0a90dabd00007c	ds_read_i8_d16 v124, v189 offset:2797
+c4de90daa500000a	ds_read_i8_d16 v10, v165 offset:57028
+79a892da07000035	ds_read_i8_d16 v53, v7 offset:43129 gds
+010294da04000030	ds_read_i8_d16_hi v48, v4 offset:513
+ed9c94da42000077	ds_read_i8_d16_hi v119, v66 offset:40173
+d11796da190000a3	ds_read_i8_d16_hi v163, v25 offset:6097 gds
+dcaf94da53000037	ds_read_i8_d16_hi v55, v83 offset:45020
+f7eb94da8f00001b	ds_read_i8_d16_hi v27, v143 offset:60407
+b86694da0b000053	ds_read_i8_d16_hi v83, v11 offset:26296
+de8694dab0000006	ds_read_i8_d16_hi v6, v176 offset:34526
+527e96da4e000061	ds_read_i8_d16_hi v97, v78 offset:32338 gds
+389f94dab10000ba	ds_read_i8_d16_hi v186, v177 offset:40760
+010298da04000030	ds_read_u16_d16 v48, v4 offset:513
+6bc198da1100000d	ds_read_u16_d16 v13, v17 offset:49515
+da8e98da400000b2	ds_read_u16_d16 v178, v64 offset:36570
+f6bc98da99000067	ds_read_u16_d16 v103, v153 offset:48374
+8d739ada260000b5	ds_read_u16_d16 v181, v38 offset:29581 gds
+62c998da9000009a	ds_read_u16_d16 v154, v144 offset:51554
+4d9998dac3000000	ds_read_u16_d16 v0, v195 offset:39245
+11d198da64000088	ds_read_u16_d16 v136, v100 offset:53521
+c8e398da1c0000c6	ds_read_u16_d16 v198, v28 offset:58312
+01029cda04000030	ds_read_u16_d16_hi v48, v4 offset:513
+6cab9eda3300001c	ds_read_u16_d16_hi v28, v51 offset:43884 gds
+946d9cdaa40000a0	ds_read_u16_d16_hi v160, v164 offset:28052
+dde29eda450000ad	ds_read_u16_d16_hi v173, v69 offset:58077 gds
+03e29cda3a00003c	ds_read_u16_d16_hi v60, v58 offset:57859
+e1de9cdabf00005b	ds_read_u16_d16_hi v91, v191 offset:57057
+ad059cdaaa0000b2	ds_read_u16_d16_hi v178, v170 offset:1453
+b0c19cdaa1000091	ds_read_u16_d16_hi v145, v161 offset:49584
+d8ec9cda1d000045	ds_read_u16_d16_hi v69, v29 offset:60632
+0102c0da00100000	ds_write_addtid_b32 v16 offset:513
+e792c0da00050000	ds_write_addtid_b32 v5 offset:37607
+4f41c0da007f0000	ds_write_addtid_b32 v127 offset:16719
+a451c0da00c70000	ds_write_addtid_b32 v199 offset:20900
+9790c2da005c0000	ds_write_addtid_b32 v92 offset:37015 gds
+288ac0da00600000	ds_write_addtid_b32 v96 offset:35368
+d239c0da002a0000	ds_write_addtid_b32 v42 offset:14802
+19bbc2da00a80000	ds_write_addtid_b32 v168 offset:47897 gds
+bdc9c0da00580000	ds_write_addtid_b32 v88 offset:51645
+0102c4da00000030	ds_read_addtid_b32 v48 offset:513
+89f4c6da0000002c	ds_read_addtid_b32 v44 offset:62601 gds
+2b56c4da0000008f	ds_read_addtid_b32 v143 offset:22059
+b43cc6da000000af	ds_read_addtid_b32 v175 offset:15540 gds
+2f93c4da00000015	ds_read_addtid_b32 v21 offset:37679
+cbcac6da00000066	ds_read_addtid_b32 v102 offset:51915 gds
+921bc4da0000002c	ds_read_addtid_b32 v44 offset:7058
+d672c4da00000016	ds_read_addtid_b32 v22 offset:29398
+a953c4da000000c3	ds_read_addtid_b32 v195 offset:21417
+0102c8da04100030	ds_permute_b32 v48, v4, v16 offset:513
+efe4c8dab31b008c	ds_permute_b32 v140, v179, v27 offset:58607
+ba0fc8da82750085	ds_permute_b32 v133, v130, v117 offset:4026
+0102ccda04100030	ds_bpermute_b32 v48, v4, v16 offset:513
+05a3ccda7e230010	ds_bpermute_b32 v16, v126, v35 offset:41733
+b65cccda2a9a0074	ds_bpermute_b32 v116, v42, v154 offset:23734
+a627ccda686d00c7	ds_bpermute_b32 v199, v104, v109 offset:10150
+c901ccda5d000079	ds_bpermute_b32 v121, v93, v0 offset:457
+3b0dccda7c6e003c	ds_bpermute_b32 v60, v124, v110 offset:3387
+d0d2ccda397200a8	ds_bpermute_b32 v168, v57, v114 offset:53968
+9c7accdab7970073	ds_bpermute_b32 v115, v183, v151 offset:31388
+010200db04000000	ds_add_src2_u64 v4 offset:513
+49b400db32000000	ds_add_src2_u64 v50 offset:46153
+23bc02db37000000	ds_add_src2_u64 v55 offset:48163 gds
+110300db11000000	ds_add_src2_u64 v17 offset:785
+505402db2a000000	ds_add_src2_u64 v42 offset:21584 gds
+b88f00db21000000	ds_add_src2_u64 v33 offset:36792
+4add00dbb0000000	ds_add_src2_u64 v176 offset:56650
+203702db0b000000	ds_add_src2_u64 v11 offset:14112 gds
+af3200db41000000	ds_add_src2_u64 v65 offset:12975
+010204db04000000	ds_sub_src2_u64 v4 offset:513
+46eb04db2a000000	ds_sub_src2_u64 v42 offset:60230
+d06f06db58000000	ds_sub_src2_u64 v88 offset:28624 gds
+a26504db27000000	ds_sub_src2_u64 v39 offset:26018
+2d6f04db08000000	ds_sub_src2_u64 v8 offset:28461
+e1b406db1a000000	ds_sub_src2_u64 v26 offset:46305 gds
+1d9104db35000000	ds_sub_src2_u64 v53 offset:37149
+20d306db6e000000	ds_sub_src2_u64 v110 offset:54048 gds
+243304db22000000	ds_sub_src2_u64 v34 offset:13092
+010208db04000000	ds_rsub_src2_u64 v4 offset:513
+e76008dba0000000	ds_rsub_src2_u64 v160 offset:24807
+8f190adb8a000000	ds_rsub_src2_u64 v138 offset:6543 gds
+1c710adba9000000	ds_rsub_src2_u64 v169 offset:28956 gds
+fde10adbae000000	ds_rsub_src2_u64 v174 offset:57853 gds
+d79508dbc3000000	ds_rsub_src2_u64 v195 offset:38359
+fc6108db84000000	ds_rsub_src2_u64 v132 offset:25084
+d6fd08db8f000000	ds_rsub_src2_u64 v143 offset:64982
+551908db79000000	ds_rsub_src2_u64 v121 offset:6485
+01020cdb04000000	ds_inc_src2_u64 v4 offset:513
+a3510cdb2a000000	ds_inc_src2_u64 v42 offset:20899
+32170cdb9b000000	ds_inc_src2_u64 v155 offset:5938
+1c250edb36000000	ds_inc_src2_u64 v54 offset:9500 gds
+55020cdb9a000000	ds_inc_src2_u64 v154 offset:597
+36660edb34000000	ds_inc_src2_u64 v52 offset:26166 gds
+44b30cdbbb000000	ds_inc_src2_u64 v187 offset:45892
+be540edb2a000000	ds_inc_src2_u64 v42 offset:21694 gds
+e8310edb0c000000	ds_inc_src2_u64 v12 offset:12776 gds
+010210db04000000	ds_dec_src2_u64 v4 offset:513
+3ddc10db3b000000	ds_dec_src2_u64 v59 offset:56381
+a02a12dbc0000000	ds_dec_src2_u64 v192 offset:10912 gds
+81a812db6f000000	ds_dec_src2_u64 v111 offset:43137 gds
+64a110db22000000	ds_dec_src2_u64 v34 offset:41316
+1c6010db90000000	ds_dec_src2_u64 v144 offset:24604
+1b3d10db92000000	ds_dec_src2_u64 v146 offset:15643
+070310db25000000	ds_dec_src2_u64 v37 offset:775
+a49f12db1d000000	ds_dec_src2_u64 v29 offset:40868 gds
+010214db04000000	ds_min_src2_i64 v4 offset:513
+ddba14db4e000000	ds_min_src2_i64 v78 offset:47837
+5d1f14db60000000	ds_min_src2_i64 v96 offset:8029
+163f16db23000000	ds_min_src2_i64 v35 offset:16150 gds
+3cf914db13000000	ds_min_src2_i64 v19 offset:63804
+aae514dbbb000000	ds_min_src2_i64 v187 offset:58794
+e86e14db00000000	ds_min_src2_i64 v0 offset:28392
+d8a214db40000000	ds_min_src2_i64 v64 offset:41688
+cf9614db63000000	ds_min_src2_i64 v99 offset:38607
+010218db04000000	ds_max_src2_i64 v4 offset:513
+49c018db6c000000	ds_max_src2_i64 v108 offset:49225
+348c18dbaa000000	ds_max_src2_i64 v170 offset:35892
+6d841adbb4000000	ds_max_src2_i64 v180 offset:33901 gds
+92a218dbba000000	ds_max_src2_i64 v186 offset:41618
+5da91adb27000000	ds_max_src2_i64 v39 offset:43357 gds
+937018db0c000000	ds_max_src2_i64 v12 offset:28819
+e7aa18db7c000000	ds_max_src2_i64 v124 offset:43751
+66c81adb5d000000	ds_max_src2_i64 v93 offset:51302 gds
+01021cdb04000000	ds_min_src2_u64 v4 offset:513
+4ccb1cdbb3000000	ds_min_src2_u64 v179 offset:52044
+9f8b1cdb0e000000	ds_min_src2_u64 v14 offset:35743
+dee21cdb69000000	ds_min_src2_u64 v105 offset:58078
+844a1cdb2c000000	ds_min_src2_u64 v44 offset:19076
+648a1cdb35000000	ds_min_src2_u64 v53 offset:35428
+061c1cdb51000000	ds_min_src2_u64 v81 offset:7174
+cc271cdb3d000000	ds_min_src2_u64 v61 offset:10188
+90731cdb6d000000	ds_min_src2_u64 v109 offset:29584
+010220db04000000	ds_max_src2_u64 v4 offset:513
+6e7622db01000000	ds_max_src2_u64 v1 offset:30318 gds
+9b2222db23000000	ds_max_src2_u64 v35 offset:8859 gds
+d1b320db1e000000	ds_max_src2_u64 v30 offset:46033
+a4e720db29000000	ds_max_src2_u64 v41 offset:59300
+c03820db27000000	ds_max_src2_u64 v39 offset:14528
+994b20db10000000	ds_max_src2_u64 v16 offset:19353
+311a22db78000000	ds_max_src2_u64 v120 offset:6705 gds
+a8bf20db4b000000	ds_max_src2_u64 v75 offset:49064
+010224db04000000	ds_and_src2_b64 v4 offset:513
+1f4d26db75000000	ds_and_src2_b64 v117 offset:19743 gds
+13b024db7f000000	ds_and_src2_b64 v127 offset:45075
+2ac326dba6000000	ds_and_src2_b64 v166 offset:49962 gds
+ae7c24db2d000000	ds_and_src2_b64 v45 offset:31918
+864424db1c000000	ds_and_src2_b64 v28 offset:17542
+c53924db93000000	ds_and_src2_b64 v147 offset:14789
+0ebd24dba0000000	ds_and_src2_b64 v160 offset:48398
+475b24db87000000	ds_and_src2_b64 v135 offset:23367
+010228db04000000	ds_or_src2_b64 v4 offset:513
+0be22adb47000000	ds_or_src2_b64 v71 offset:57867 gds
+65bc28db81000000	ds_or_src2_b64 v129 offset:48229
+855028db02000000	ds_or_src2_b64 v2 offset:20613
+6d442adb4a000000	ds_or_src2_b64 v74 offset:17517 gds
+943928db58000000	ds_or_src2_b64 v88 offset:14740
+312028db63000000	ds_or_src2_b64 v99 offset:8241
+b9e528db9e000000	ds_or_src2_b64 v158 offset:58809
+e8462adb71000000	ds_or_src2_b64 v113 offset:18152 gds
+01022cdb04000000	ds_xor_src2_b64 v4 offset:513
+6dd32cdb01000000	ds_xor_src2_b64 v1 offset:54125
+8b382cdb4e000000	ds_xor_src2_b64 v78 offset:14475
+4a952cdb2c000000	ds_xor_src2_b64 v44 offset:38218
+b20d2cdb2e000000	ds_xor_src2_b64 v46 offset:3506
+482c2edb0b000000	ds_xor_src2_b64 v11 offset:11336 gds
+ab652edb8e000000	ds_xor_src2_b64 v142 offset:26027 gds
+9cbb2cdb4f000000	ds_xor_src2_b64 v79 offset:48028
+c6972cdb09000000	ds_xor_src2_b64 v9 offset:38854
+010234db04000000	ds_write_src2_b64 v4 offset:513
+796234db96000000	ds_write_src2_b64 v150 offset:25209
+2f4b36db9c000000	ds_write_src2_b64 v156 offset:19247 gds
+487c34db61000000	ds_write_src2_b64 v97 offset:31816
+1eeb34dbbe000000	ds_write_src2_b64 v190 offset:60190
+d09734db7a000000	ds_write_src2_b64 v122 offset:38864
+ee1d34db48000000	ds_write_src2_b64 v72 offset:7662
+0a5136db83000000	ds_write_src2_b64 v131 offset:20746 gds
+978c36db1a000000	ds_write_src2_b64 v26 offset:35991 gds
+010248db04000000	ds_min_src2_f64 v4 offset:513
+805248dbad000000	ds_min_src2_f64 v173 offset:21120
+7d3248db5a000000	ds_min_src2_f64 v90 offset:12925
+534148db3f000000	ds_min_src2_f64 v63 offset:16723
+b8274adb35000000	ds_min_src2_f64 v53 offset:10168 gds
+33f74adb02000000	ds_min_src2_f64 v2 offset:63283 gds
+f4644adb11000000	ds_min_src2_f64 v17 offset:25844 gds
+dd1148dbbf000000	ds_min_src2_f64 v191 offset:4573
+ec9648db7c000000	ds_min_src2_f64 v124 offset:38636
+01024cdb04000000	ds_max_src2_f64 v4 offset:513
+fddf4edb8b000000	ds_max_src2_f64 v139 offset:57341 gds
+ee564cdb3e000000	ds_max_src2_f64 v62 offset:22254
+aa924cdb7d000000	ds_max_src2_f64 v125 offset:37546
+e15b4cdb9b000000	ds_max_src2_f64 v155 offset:23521
+b4234edb61000000	ds_max_src2_f64 v97 offset:9140 gds
+2ca74edbbb000000	ds_max_src2_f64 v187 offset:42796 gds
+524a4edb65000000	ds_max_src2_f64 v101 offset:19026 gds
+dbba4edbc6000000	ds_max_src2_f64 v198 offset:47835 gds
+010278db04100000	ds_write_b96 v4, v[16:18] offset:513
+9f2078db17960000	ds_write_b96 v23, v[150:152] offset:8351
+696078dbb7320000	ds_write_b96 v183, v[50:52] offset:24681
+061478db4b640000	ds_write_b96 v75, v[100:102] offset:5126
+1a1a7adb18290000	ds_write_b96 v24, v[41:43] offset:6682 gds
+a2047adbbe4b0000	ds_write_b96 v190, v[75:77] offset:1186 gds
+ff9978db7bb40000	ds_write_b96 v123, v[180:182] offset:39423
+450f78dba3010000	ds_write_b96 v163, v[1:3] offset:3909
+a3077adb48750000	ds_write_b96 v72, v[117:119] offset:1955 gds
+01027cdb04100000	ds_write_b128 v4, v[16:19] offset:513
+1b637cdb44440000	ds_write_b128 v68, v[68:71] offset:25371
+20c07edb7ac10000	ds_write_b128 v122, v[193:196] offset:49184 gds
+973a7cdb157d0000	ds_write_b128 v21, v[125:128] offset:14999
+24017cdbbb220000	ds_write_b128 v187, v[34:37] offset:292
+7c7a7cdb38900000	ds_write_b128 v56, v[144:147] offset:31356
+9cff7edb35990000	ds_write_b128 v53, v[153:156] offset:65436 gds
+717b7edb9d450000	ds_write_b128 v157, v[69:72] offset:31601 gds
+acbf7cdbb27c0000	ds_write_b128 v178, v[124:127] offset:49068
+0102f8db04000030	ds_read_b96 v[48:50], v4 offset:513
+0670f8dbaf0000ac	ds_read_b96 v[172:174], v175 offset:28678
+81e6f8db9d00001b	ds_read_b96 v[27:29], v157 offset:59009
+f4d6fadb05000067	ds_read_b96 v[103:105], v5 offset:55028 gds
+d78afadb3500005d	ds_read_b96 v[93:95], v53 offset:35543 gds
+9fddf8db97000047	ds_read_b96 v[71:73], v151 offset:56735
+2c8bf8db3400003a	ds_read_b96 v[58:60], v52 offset:35628
+604ef8db7500004d	ds_read_b96 v[77:79], v117 offset:20064
+ea15fadb4c000069	ds_read_b96 v[105:107], v76 offset:5610 gds
+0102fcdb04000030	ds_read_b128 v[48:51], v4 offset:513
+9d27fcdb9600005a	ds_read_b128 v[90:93], v150 offset:10141
+0a94fcdb52000045	ds_read_b128 v[69:72], v82 offset:37898
+c7f6fcdb02000047	ds_read_b128 v[71:74], v2 offset:63175
+c3a1fcdb400000c1	ds_read_b128 v[193:196], v64 offset:41411
+4e0ffcdb6c000048	ds_read_b128 v[72:75], v108 offset:3918
+124ffcdb47000094	ds_read_b128 v[148:151], v71 offset:20242
+a63ffcdb3d00000b	ds_read_b128 v[11:14], v61 offset:16294
+49f3fcdb2700006f	ds_read_b128 v[111:114], v39 offset:62281

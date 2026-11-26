@@ -3,8 +3,8 @@
 //! prints them.
 
 use super::ops::{
-    Slot, FLAG_CLAMP, FLAG_DLC, FLAG_FMODS_SHIFT, FLAG_GLC, FLAG_IMG_BVH, FLAG_LIT16, FLAG_OMOD,
-    FLAG_OPSEL, FLAG_SUFFIX,
+    Slot, FLAG_CLAMP, FLAG_DLC, FLAG_DS_OFFSET2, FLAG_DS_SWIZZLE, FLAG_FMODS_SHIFT, FLAG_GLC,
+    FLAG_IMG_BVH, FLAG_LIT16, FLAG_OMOD, FLAG_OPSEL, FLAG_SUFFIX,
 };
 use super::table_ext;
 use super::{decode_wave, DecodeError, DppKind, Enc, Instr, Operand};
@@ -107,6 +107,7 @@ pub fn disasm_instr(i: &Instr) -> String {
         Enc::Smem => smem(i, &mut ops),
         Enc::Mubuf => return mubuf(i, s, ops),
         Enc::Mtbuf => return mtbuf(i, s, ops),
+        Enc::Ds => return ds(i, s, ops),
         _ => {}
     }
     if !ops.is_empty() {
@@ -521,6 +522,68 @@ fn mimg(i: &Instr, mut s: String) -> String {
         }
     }
     s
+}
+
+fn ds(i: &Instr, mut s: String, ops: Vec<String>) -> String {
+    let m = &i.mem;
+    if !ops.is_empty() {
+        s.push(' ');
+        s.push_str(&ops.join(", "));
+    }
+    if i.info.flags & FLAG_DS_OFFSET2 != 0 {
+        if m.offset & 0xff != 0 {
+            let _ = write!(s, " offset0:{}", m.offset & 0xff);
+        }
+        if m.offset1 != 0 {
+            let _ = write!(s, " offset1:{}", m.offset1);
+        }
+    } else if i.info.flags & FLAG_DS_SWIZZLE != 0 {
+        let _ = write!(s, " offset:{}", swizzle(m.offset as u32));
+    } else if m.offset != 0 {
+        let _ = write!(s, " offset:{}", m.offset);
+    }
+    if m.gds {
+        s.push_str(" gds");
+    }
+    s
+}
+
+/// `ds_swizzle_b32` offsets as LLVM prints them: a macro when the bits fit one.
+fn swizzle(imm: u32) -> String {
+    if imm & 0x8000 != 0 {
+        return format!(
+            "swizzle(QUAD_PERM,{},{},{},{})",
+            imm & 3,
+            imm >> 2 & 3,
+            imm >> 4 & 3,
+            imm >> 6 & 3
+        );
+    }
+    let (and, or, xor) = (imm & 0x1f, imm >> 5 & 0x1f, imm >> 10 & 0x1f);
+    if and == 0x1f && or == 0 && xor.is_power_of_two() {
+        return format!("swizzle(SWAP,{xor})");
+    }
+    if and == 0x1f && or == 0 && xor > 0 && (xor + 1).is_power_of_two() {
+        return format!("swizzle(REVERSE,{})", xor + 1);
+    }
+    let group = 0x1f - and + 1;
+    if group > 1 && group.is_power_of_two() && or < group && xor == 0 {
+        return format!("swizzle(BROADCAST,{group},{or})");
+    }
+    // per lane-id bit: forced 0 or 1, kept, or inverted, once and / or / xor are applied
+    let mask: String = (0..5)
+        .rev()
+        .map(|b| {
+            let f = |id: u32| (((id & and >> b & 1) | or >> b & 1) ^ xor >> b & 1) & 1;
+            match (f(0), f(1)) {
+                (0, 0) => '0',
+                (1, 1) => '1',
+                (0, 1) => 'p',
+                _ => 'i',
+            }
+        })
+        .collect();
+    format!("swizzle(BITMASK_PERM,\"{mask}\")")
 }
 
 fn mtbuf(i: &Instr, mut s: String, mut parts: Vec<String>) -> String {

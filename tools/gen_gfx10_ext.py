@@ -12,7 +12,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from gen_gfx10_table import dis, u  # noqa: E402
+from gen_gfx10_table import TOK, dis, split_ops, u  # noqa: E402
 
 POOL = ThreadPoolExecutor(8)
 FAMILIES = []
@@ -212,6 +212,80 @@ def mtbuf(fix, rnd):
 
 
 FORMATS = []
+
+
+# ---------------------------------------------------------------- DS
+
+DS_FIELDS = {4: 'addr', 16: 'data0', 32: 'data1', 48: 'vdst'}
+
+
+def ds_dw(op, off, gds, mask, regs=(4, 16, 32, 48)):
+    d1 = 0
+    for k in range(4):
+        if mask >> k & 1:
+            d1 |= regs[k] << (8 * (k if k < 3 else 3))
+    d1 = ((regs[0] if mask & 1 else 0) | (regs[1] if mask & 2 else 0) << 8
+          | (regs[2] if mask & 4 else 0) << 16 | (regs[3] if mask & 8 else 0) << 24)
+    return [0xD8000000 | op << 18 | off | gds << 17, d1]
+
+
+def ds_form(op):
+    """The accepted field mask of an opcode (max operands), whether it takes gds, its text."""
+    best = None
+    for gds in (0, 1):
+        for mask in range(16):
+            t = dis(u(*ds_dw(op, 0x0201, gds, mask)), '1013')
+            if t and t.startswith('ds_') and (best is None or bin(mask).count('1')
+                                              > bin(best[1]).count('1')):
+                best = (gds, mask, t)
+    return best
+
+
+@family
+def ds(fix, rnd):
+    rows = []
+    forms = pmap(ds_form, range(256))
+    for op, f in enumerate(forms):
+        if not f:
+            continue
+        gds, mask, t = f
+        name = t.split()[0]
+        toks = split_ops(t.partition(' ')[2])
+        slots = []
+        for tok in toks:
+            m = TOK.match(tok.split(' ')[0])
+            if not m:
+                continue
+            n = int(m.group(2) if m.group(2) is not None else m.group(3))
+            w = 1 if m.group(2) is not None else int(m.group(4)) - int(m.group(3)) + 1
+            slots.append({4: 'Slot::DsAddr', 16: 'Slot::DsData0(%d)', 32: 'Slot::DsData1(%d)',
+                          48: 'Slot::VDst(%d)'}[n].replace('%d', str(w)))
+        flags = 0
+        if 'offset0:' in t:
+            flags |= 1 << 6
+        if 'swizzle(' in t:
+            flags |= 1 << 7
+        rows.append((op, name, slots, flags))
+        fix.append((u(*ds_dw(op, 0x0201, gds, mask)),))
+        for _ in range(8):
+            off = rnd.getrandbits(16)
+            if flags & 128:
+                kind = rnd.randrange(5)
+                if kind == 0:
+                    off = 0x8000 | rnd.getrandbits(8)
+                elif kind == 1:
+                    off = 0x1f | (1 << rnd.randrange(5)) << 10
+                elif kind == 2:
+                    off = 0x1f | ((1 << rnd.randrange(1, 6)) - 1) << 10
+                elif kind == 3:
+                    g = 1 << rnd.randrange(1, 6)
+                    off = (0x1f - g + 1) | rnd.randrange(g) << 5
+                else:
+                    off &= 0x7fff
+            regs = [rnd.randrange(200) for _ in range(4)]
+            g = (rnd.random() < 0.3) or gds
+            fix.append((u(*ds_dw(op, off, g, mask, regs)),))
+    return ('DS', 256, rows)
 
 
 def run():

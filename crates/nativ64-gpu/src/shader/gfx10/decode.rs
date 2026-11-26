@@ -40,12 +40,12 @@ pub fn decode_wave(code: &[u8], at: usize, wave32: bool) -> Result<Instr, Decode
             0x38 => Enc::Mubuf,
             0x3c => Enc::Mimg,
             0x3a => Enc::Mtbuf,
+            0x36 => Enc::Ds,
             0x3d => Enc::Smem,
             0x3e => Enc::Exp,
             _ => {
                 let name = match top6 {
                     0x33 => "VOP3P",
-                    0x36 => "DS",
                     0x37 => "FLAT",
                     _ => "?",
                 };
@@ -67,6 +67,7 @@ pub fn decode_wave(code: &[u8], at: usize, wave32: bool) -> Result<Instr, Decode
         Enc::Mubuf => c.mubuf(d0),
         Enc::Mimg => c.mimg(d0),
         Enc::Mtbuf => c.mtbuf(d0),
+        Enc::Ds => c.ds(d0),
     }
 }
 
@@ -85,6 +86,9 @@ struct Fields {
     sbase: u32,
     sdata: u32,
     vdata: u32,
+    dsaddr: u32,
+    data0: u32,
+    data1: u32,
     imm16: u32,
     /// VMEM data dwords added by `tfe`.
     extra: u8,
@@ -226,6 +230,18 @@ impl Cursor<'_> {
                     code: 256 + f.vdata as u16,
                     count: *c + f.extra,
                 },
+                Slot::DsAddr => Operand::Reg {
+                    code: 256 + f.dsaddr as u16,
+                    count: 1,
+                },
+                Slot::DsData0(c) => Operand::Reg {
+                    code: 256 + f.data0 as u16,
+                    count: *c,
+                },
+                Slot::DsData1(c) => Operand::Reg {
+                    code: 256 + f.data1 as u16,
+                    count: *c,
+                },
                 Slot::ImgData | Slot::ImgAddr | Slot::ImgRsrc | Slot::ImgSamp => Operand::Imm(0),
                 Slot::Lit => Operand::Literal(lit),
                 Slot::Fixed(t) => Operand::Fixed(t),
@@ -359,6 +375,27 @@ impl Cursor<'_> {
             lds: d0 >> 16 & 1 != 0,
             slc: d1 >> 22 & 1 != 0,
             tfe,
+            ..Mem::default()
+        };
+        Ok(i)
+    }
+
+    fn ds(&self, d0: u32) -> Result<Instr, DecodeError> {
+        let d1 = self.dword(1)?;
+        let op = (d0 >> 18) & 0xff;
+        let info = self.lookup(&table_ext::DS, Enc::Ds, op)?;
+        let f = Fields {
+            dsaddr: d1 & 0xff,
+            data0: (d1 >> 8) & 0xff,
+            data1: (d1 >> 16) & 0xff,
+            vdst: d1 >> 24,
+            ..Fields::default()
+        };
+        let mut i = self.finish(Enc::Ds, op, info, &f, 2, None)?;
+        i.mem = Mem {
+            offset: (d0 & 0xffff) as i32,
+            offset1: (d0 >> 8) as u8,
+            gds: d0 >> 17 & 1 != 0,
             ..Mem::default()
         };
         Ok(i)

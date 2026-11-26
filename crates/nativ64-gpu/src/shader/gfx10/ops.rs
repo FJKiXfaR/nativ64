@@ -36,6 +36,10 @@ pub enum Slot {
     ImgAddr,
     ImgRsrc,
     ImgSamp,
+    /// DS address (VGPR) and data VGPRs; the destination is `VDst`.
+    DsAddr,
+    DsData0(u8),
+    DsData1(u8),
     /// The extra literal dword.
     Lit,
     /// An implicit operand printed as written (`vcc` prints `vcc_lo` in wave32).
@@ -97,6 +101,10 @@ pub const FLAG_IMG_MIP: u32 = 1 << 21;
 pub const FLAG_IMG_G16: u32 = 1 << 22;
 /// No coordinates (`image_get_resinfo`: the mip level only).
 pub const FLAG_IMG_NOCOORD: u32 = 1 << 23;
+
+/// DS: the offset prints as `offset0:` / `offset1:` (read2, write2, ...), or as a swizzle macro.
+pub const FLAG_DS_OFFSET2: u32 = 1 << 6;
+pub const FLAG_DS_SWIZZLE: u32 = 1 << 7;
 
 /// `image_bvh_intersect_ray` / `image_bvh64_intersect_ray`: 4 data registers, a 4-dword
 /// resource, 11 (12 for the 64-bit node pointer) address registers in the NSA form.

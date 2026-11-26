@@ -175,13 +175,13 @@ fn typed_errors() {
     let code = dw(&[0xbf81_0000, 0xd7ff_0000, 0]);
     let e = decode(&code, 4).unwrap_err();
     assert_eq!(e.to_string(), "unknown GFX10 VOP3 opcode 0x3ff at +0x4");
-    // encodings of later chunks
-    let e = decode(&dw(&[0xd800_0000, 0]), 0).unwrap_err();
+    // an encoding not decoded yet
+    let e = decode(&dw(&[0xcc00_0000, 0]), 0).unwrap_err();
     assert!(matches!(
         e.kind,
-        ErrorKind::UnknownEncoding { name: "DS", .. }
+        ErrorKind::UnknownEncoding { name: "VOP3P", .. }
     ));
-    assert!(e.to_string().contains("encoding DS"), "{e}");
+    assert!(e.to_string().contains("encoding VOP3P"), "{e}");
     // MIMG opcode 0x06 is not an instruction
     let e = decode(&dw(&[0xf000_0000 | 6 << 18, 0]), 0).unwrap_err();
     assert_eq!(
