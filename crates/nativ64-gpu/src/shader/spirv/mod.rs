@@ -11,7 +11,7 @@ pub mod builder;
 pub mod emit;
 
 pub use alu::Unsupported;
-pub use emit::{translate, Probe, SpirvError};
+pub use emit::{translate, translate_io, Probe, SpirvError};
 
 #[cfg(test)]
 mod gpu;

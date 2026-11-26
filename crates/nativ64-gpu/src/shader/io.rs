@@ -1,0 +1,371 @@
+//! Stage inputs and outputs of the hardware VS and PS (`docs/shaders.md`, Inputs and outputs;
+//! chunk 8): what the stage data and the container signatures say about the entry registers,
+//! the vertex attributes, the pixel inputs and the render targets, and the linking of a
+//! VS+PS pair by semantic. The emitter (`spirv/emit/stage.rs`) turns a `StageIo` into the
+//! entry point.
+
+use std::collections::BTreeMap;
+use std::fmt;
+use std::ops::Range;
+
+use super::container::{SigElement, Signature};
+use super::gfx10;
+use super::ir::{self, EntryRegs, IrError, PS_INPUT_DWORDS};
+use super::native::{PsInput, Record, StageData, VsInput, VsOutput};
+use super::spirv::{self, SpirvError};
+use super::structure::{self, StructError};
+use super::ParsedShader;
+
+/// The component class of an input or output: what the Vulkan format is read as.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Class {
+    Float,
+    Uint,
+    Sint,
+}
+
+/// The class of a DXGI format (`D3D12_GRAPHICS_PIPELINE_STATE_DESC` render target formats):
+/// the integer formats, float for the rest (UNORM, SNORM, FLOAT) and for the unknown.
+pub fn dxgi_class(format: u32) -> Class {
+    match format {
+        3 | 7 | 12 | 17 | 25 | 30 | 36 | 42 | 50 | 57 | 62 => Class::Uint,
+        4 | 8 | 14 | 18 | 32 | 38 | 43 | 52 | 59 | 64 => Class::Sint,
+        _ => Class::Float,
+    }
+}
+
+fn sig_class(e: Option<&SigElement>) -> Class {
+    match e.map(|e| e.component_type) {
+        Some(1) => Class::Uint,
+        Some(2) => Class::Sint,
+        _ => Class::Float,
+    }
+}
+
+/// The signature element a stage-data row names: its register is the row.
+fn element(sig: Option<&Signature>, row: u8, mask: u8) -> Option<&SigElement> {
+    let sig = sig?;
+    let on_row = || sig.elements.iter().filter(|e| e.register == u32::from(row));
+    on_row()
+        .find(|e| e.mask & mask != 0)
+        .or_else(|| on_row().next())
+}
+
+/// A semantic: upper-cased name and index.
+type Semantic = (String, u32);
+
+fn semantic(e: &SigElement) -> Semantic {
+    (e.name.to_ascii_uppercase(), e.index)
+}
+
+/// A vertex attribute: the fetch routine's result, from a Vulkan vertex input.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VsAttr {
+    /// The input's index in the stage data.
+    pub location: u32,
+    pub first_vgpr: u16,
+    /// Channels fetched (bit c: VGPR `first_vgpr + c`).
+    pub mask: u8,
+    pub class: Class,
+    pub semantic: Option<(String, u32)>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VsIo {
+    pub user: Range<u16>,
+    pub attrs: Vec<VsAttr>,
+    /// `exp param n` → location (an output nothing reads has none and is dropped).
+    pub params: BTreeMap<u8, u32>,
+    /// The stage data lists clip distance outputs (usage 7).
+    pub clip: bool,
+}
+
+/// What a pixel-shader input VGPR holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PsVgpr {
+    /// A barycentric coordinate (`pair` 0 is i, 1 is j).
+    Bary {
+        linear: bool,
+        centroid: bool,
+        sample: bool,
+        pair: u8,
+    },
+    /// Fragment position x, y, z, w (0..3).
+    Pos(u8),
+    FrontFace,
+    Ancillary,
+    Coverage,
+    /// Anything the translation does not provide (pull model, line stipple, fixed position).
+    Other(&'static str),
+}
+
+/// A pixel input (`v_interp attr n`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PsAttr {
+    /// `None`: no vertex output of that semantic, the input reads its default.
+    pub location: Option<u32>,
+    pub usage: u8,
+    pub mask: u8,
+    pub default: u8,
+    pub flat: bool,
+    pub linear: bool,
+    pub fp16: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PsIo {
+    pub user: Range<u16>,
+    pub vgprs: BTreeMap<u16, PsVgpr>,
+    pub attrs: BTreeMap<u8, PsAttr>,
+    /// Class of each render target (`Float` past the end).
+    pub targets: Vec<Class>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StageIo {
+    Vertex(VsIo),
+    Pixel(PsIo),
+}
+
+impl StageIo {
+    pub fn user(&self) -> &Range<u16> {
+        match self {
+            Self::Vertex(v) => &v.user,
+            Self::Pixel(p) => &p.user,
+        }
+    }
+}
+
+/// The locations a VS+PS pair shares.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Link {
+    /// VS `exp param n` → location.
+    pub params: BTreeMap<u8, u32>,
+    /// PS `attr n` → location, `None` when no VS output has its semantic.
+    pub attrs: BTreeMap<u8, Option<u32>>,
+}
+
+/// The semantic of each VS parameter export.
+fn vs_params(outputs: &[VsOutput], sig: Option<&Signature>) -> Vec<(u8, Option<Semantic>)> {
+    outputs
+        .iter()
+        .filter(|o| o.usage == 6)
+        .map(|o| (o.param, element(sig, o.row, 0xf).map(semantic)))
+        .collect()
+}
+
+/// The semantic of each PS input.
+fn ps_semantics(inputs: &[PsInput], sig: Option<&Signature>) -> Vec<(u8, Option<Semantic>)> {
+    inputs
+        .iter()
+        .map(|i| (i.attr, element(sig, i.row, i.mask).map(semantic)))
+        .collect()
+}
+
+/// Links a VS and a PS by semantic name and index: the location of a matched pair is the PS
+/// input's attribute number, which both sides use. A VS output nothing reads gets none; a PS
+/// input no VS output feeds reads its default.
+pub fn link(vs: &ParsedShader, ps: &ParsedShader) -> Link {
+    let (Some(StageData::Vertex(v)), Some(StageData::Pixel(p))) =
+        (vs.record().map(|r| &r.data), ps.record().map(|r| &r.data))
+    else {
+        return Link::default();
+    };
+    let outs = vs_params(&v.outputs, vs.output_signature.as_ref());
+    let mut l = Link::default();
+    for (attr, sem) in ps_semantics(&p.inputs, ps.input_signature.as_ref()) {
+        let hit = sem.as_ref().and_then(|s| {
+            outs.iter()
+                .find(|(_, o)| o.as_ref() == Some(s))
+                .map(|(n, _)| *n)
+        });
+        if let Some(n) = hit {
+            l.params.insert(n, u32::from(attr));
+        }
+        l.attrs.insert(attr, hit.map(|_| u32::from(attr)));
+    }
+    l
+}
+
+fn vs_io(p: &ParsedShader, rec: &Record, link: Option<&Link>) -> Option<VsIo> {
+    let StageData::Vertex(d) = &rec.data else {
+        return None;
+    };
+    let attrs = d
+        .inputs
+        .iter()
+        .enumerate()
+        .map(|(n, i): (usize, &VsInput)| {
+            let e = element(p.input_signature.as_ref(), i.row, i.mask);
+            VsAttr {
+                location: n as u32,
+                first_vgpr: u16::from(i.first_vgpr),
+                mask: i.mask,
+                class: sig_class(e),
+                semantic: e.map(semantic),
+            }
+        })
+        .collect();
+    let params = match link {
+        Some(l) => l.params.clone(),
+        None => d
+            .outputs
+            .iter()
+            .filter(|o| o.usage == 6)
+            .map(|o| (o.param, u32::from(o.param)))
+            .collect(),
+    };
+    Some(VsIo {
+        user: ir::user_range(rec),
+        attrs,
+        params,
+        clip: d.outputs.iter().any(|o| o.usage == 7),
+    })
+}
+
+fn ps_io(rec: &Record, targets: &[u32], link: Option<&Link>) -> Option<PsIo> {
+    let StageData::Pixel(d) = &rec.data else {
+        return None;
+    };
+    let mut vgprs = BTreeMap::new();
+    let mut next = 0u16;
+    for (bit, n) in PS_INPUT_DWORDS.iter().enumerate() {
+        if d.spi_ps_input_addr >> bit & 1 == 0 {
+            continue;
+        }
+        for k in 0..*n {
+            let v = match bit {
+                0..=2 | 4..=6 if k < 2 => PsVgpr::Bary {
+                    linear: bit >= 4,
+                    centroid: bit % 4 == 2,
+                    sample: bit % 4 == 0,
+                    pair: k as u8,
+                },
+                3 => PsVgpr::Other("the pull model"),
+                0..=6 => PsVgpr::Other("barycentric"),
+                7 => PsVgpr::Other("line stipple"),
+                8..=11 => PsVgpr::Pos((bit - 8) as u8),
+                12 => PsVgpr::FrontFace,
+                13 => PsVgpr::Ancillary,
+                14 => PsVgpr::Coverage,
+                _ => PsVgpr::Other("fixed position"),
+            };
+            vgprs.insert(next + k, v);
+        }
+        next += n;
+    }
+    let attrs = d
+        .inputs
+        .iter()
+        .map(|i| {
+            let location = match link {
+                Some(l) => l.attrs.get(&i.attr).copied().flatten(),
+                None => Some(u32::from(i.attr)),
+            };
+            (
+                i.attr,
+                PsAttr {
+                    location,
+                    usage: i.usage,
+                    mask: i.mask,
+                    default: i.default,
+                    flat: i.flags & 1 != 0,
+                    linear: i.flags & 2 != 0,
+                    fp16: i.flags & 0x18 != 0,
+                },
+            )
+        })
+        .collect();
+    Some(PsIo {
+        user: ir::user_range(rec),
+        vgprs,
+        attrs,
+        targets: targets.iter().map(|&f| dxgi_class(f)).collect(),
+    })
+}
+
+/// The stage's I/O, or `None` for a stage other than vertex and pixel. `link` is the pair's
+/// linking; without it a stage numbers its own parameters (VS `param n`, PS `attr n`).
+pub fn stage_io(p: &ParsedShader, targets: &[u32], link: Option<&Link>) -> Option<StageIo> {
+    let rec = p.record()?;
+    match &rec.data {
+        StageData::Vertex(_) => vs_io(p, rec, link).map(StageIo::Vertex),
+        StageData::Pixel(_) => ps_io(rec, targets, link).map(StageIo::Pixel),
+        _ => None,
+    }
+}
+
+/// Index of the 32_ABGR variant of an export patch (`native::PATCH_VARIANT_NAMES`).
+const PATCH_32_ABGR: usize = 9;
+
+/// The program's code, with the pixel shader's export patches in their raw 32-bit form: every
+/// target is exported as four 32-bit channels and Vulkan converts to the target's format.
+pub fn stage_code(p: &ParsedShader, rec: &Record) -> Vec<u8> {
+    let mut code = p.native.code(rec).to_vec();
+    if let StageData::Pixel(d) = &rec.data {
+        for patch in &d.patches {
+            let Some(v) = patch.variants.get(PATCH_32_ABGR) else {
+                continue;
+            };
+            let at = 4 * patch.code_dword as usize;
+            for (k, w) in v.iter().take(d.patch_dwords as usize).enumerate() {
+                if let Some(dst) = code.get_mut(at + 4 * k..at + 4 * k + 4) {
+                    dst.copy_from_slice(&w.to_le_bytes());
+                }
+            }
+        }
+    }
+    code
+}
+
+/// Why a stage does not translate.
+#[derive(Debug)]
+pub enum StageError {
+    /// Not a vertex or pixel program.
+    NotAStage,
+    Ir(IrError),
+    Structure(StructError),
+    Spirv(SpirvError),
+}
+
+impl fmt::Display for StageError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotAStage => f.write_str("not a vertex or pixel program"),
+            Self::Ir(e) => write!(f, "IR error: {e}"),
+            Self::Structure(e) => write!(f, "structuring: {e}"),
+            Self::Spirv(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for StageError {}
+
+/// Translates one vertex or pixel program to its entry point (`Vertex` / `Fragment`).
+/// `targets` are the DXGI formats of the render targets (pixel only; float where missing).
+pub fn translate_stage(
+    p: &ParsedShader,
+    targets: &[u32],
+    link: Option<&Link>,
+) -> Result<Vec<u32>, StageError> {
+    let rec = p.record().ok_or(StageError::NotAStage)?;
+    let io = stage_io(p, targets, link).ok_or(StageError::NotAStage)?;
+    let code = stage_code(p, rec);
+    let regs = EntryRegs::from_stage(rec);
+    let func = ir::build(&code, gfx10::ENTRY, rec.wave32(), &regs).map_err(StageError::Ir)?;
+    let st = structure::structure(&func).map_err(StageError::Structure)?;
+    spirv::translate_io(&func, &st, &io).map_err(StageError::Spirv)
+}
+
+/// Translates a VS+PS pair with the locations they share.
+pub fn translate_pair(
+    vs: &ParsedShader,
+    ps: &ParsedShader,
+    targets: &[u32],
+) -> Result<(Vec<u32>, Vec<u32>), StageError> {
+    let l = link(vs, ps);
+    Ok((
+        translate_stage(vs, targets, Some(&l))?,
+        translate_stage(ps, targets, Some(&l))?,
+    ))
+}

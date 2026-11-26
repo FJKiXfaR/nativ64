@@ -9,6 +9,8 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+mod stage;
+
 use spirv::{
     AddressingModel, Capability, Decoration, ExecutionMode, ExecutionModel, GlslStd450Op as GL,
     MemoryModel, Op, StorageClass,
@@ -16,6 +18,7 @@ use spirv::{
 
 use super::alu::{self, Backend, Ctx, Cvt, FBin, FCmp, FUn, IBin, ICmp, IUn, Opd, Unsupported};
 use super::builder::{inst, Module};
+use crate::shader::io::StageIo;
 use crate::shader::ir::{Func, Reg, Src, Term, Val};
 use crate::shader::structure::{BrKind, BranchKind, Guard, Node, Structured, Target};
 
@@ -450,10 +453,29 @@ struct Tr<'a> {
     /// The condition of each block ending in a branch, computed at the end of its code.
     conds: HashMap<usize, u32>,
     frames: Vec<Frame>,
+    /// The stage entry (`translate_io`); `None` for the probe.
+    stage: Option<stage::Stage<'a>>,
 }
 
 /// Translates a structured program to the probe module.
 pub fn translate(f: &Func, s: &Structured) -> Result<Probe, SpirvError> {
+    let (words, inputs, outputs) = build(f, s, None)?;
+    Ok(Probe {
+        words,
+        inputs,
+        outputs,
+    })
+}
+
+/// Translates a structured vertex or pixel program to a module with its real entry point:
+/// inputs from the root block and the stage's built-ins, outputs to the stage's variables.
+pub fn translate_io(f: &Func, s: &Structured, io: &StageIo) -> Result<Vec<u32>, SpirvError> {
+    Ok(build(f, s, Some(io))?.0)
+}
+
+type Built = (Vec<u32>, Vec<Reg>, Vec<(Reg, bool)>);
+
+fn build<'a>(f: &'a Func, s: &'a Structured, io: Option<&'a StageIo>) -> Result<Built, SpirvError> {
     let mut g = Gen::new();
     let (tu, tb) = (g.t_u32(), g.t_bool());
     let pu = g.t_ptr(StorageClass::Private, tu);
@@ -480,22 +502,25 @@ pub fn translate(f: &Func, s: &Structured) -> Result<Probe, SpirvError> {
         vars.insert((reg, mask), v);
         iface.push(v);
     }
-    // the two buffers: struct { uint data[]; } at set 0, bindings 0 and 1
-    let arr = g.m.global(Op::TypeRuntimeArray, None, &[tu]);
-    g.m.decorate(arr, Decoration::ArrayStride, &[4]);
-    let st = g.m.global(Op::TypeStruct, None, &[arr]);
-    g.m.decorate(st, Decoration::Block, &[]);
-    g.m.member_decorate(st, 0, Decoration::Offset, &[0]);
-    let pst = g.t_ptr(StorageClass::StorageBuffer, st);
-    let in_buf = g.m.global_var(pst, StorageClass::StorageBuffer, None);
-    let out_buf = g.m.global_var(pst, StorageClass::StorageBuffer, None);
-    for (v, b) in [(in_buf, 0), (out_buf, 1)] {
-        g.m.decorate(v, Decoration::DescriptorSet, &[0]);
-        g.m.decorate(v, Decoration::Binding, &[b]);
-        iface.push(v);
+    // the two buffers of the probe: struct { uint data[]; } at set 0, bindings 0 and 1
+    let (mut in_buf, mut out_buf) = (0, 0);
+    if io.is_none() {
+        let arr = g.m.global(Op::TypeRuntimeArray, None, &[tu]);
+        g.m.decorate(arr, Decoration::ArrayStride, &[4]);
+        let st = g.m.global(Op::TypeStruct, None, &[arr]);
+        g.m.decorate(st, Decoration::Block, &[]);
+        g.m.member_decorate(st, 0, Decoration::Offset, &[0]);
+        let pst = g.t_ptr(StorageClass::StorageBuffer, st);
+        in_buf = g.m.global_var(pst, StorageClass::StorageBuffer, None);
+        out_buf = g.m.global_var(pst, StorageClass::StorageBuffer, None);
+        for (v, b) in [(in_buf, 0), (out_buf, 1)] {
+            g.m.decorate(v, Decoration::DescriptorSet, &[0]);
+            g.m.decorate(v, Decoration::Binding, &[b]);
+            iface.push(v);
+        }
+        g.m.name(in_buf, "inputs");
+        g.m.name(out_buf, "outputs");
     }
-    g.m.name(in_buf, "inputs");
-    g.m.name(out_buf, "outputs");
     let pf = g.t_ptr(StorageClass::Function, tu);
     let target_var = g.m.id();
     g.locals.extend(inst(
@@ -515,10 +540,15 @@ pub fn translate(f: &Func, s: &Structured) -> Result<Probe, SpirvError> {
         out_buf,
         conds: HashMap::new(),
         frames: Vec::new(),
+        stage: io.map(stage::Stage::new),
     };
     let entry = t.g.m.id();
     t.g.label(entry);
-    t.load_inputs(&inputs)?;
+    if io.is_some() {
+        t.begin_stage()?;
+    } else {
+        t.load_inputs(&inputs)?;
+    }
     t.nodes(&s.tree)?;
     if !t.g.terminated {
         t.g.term(Op::Unreachable, &[]);
@@ -535,15 +565,21 @@ pub fn translate(f: &Func, s: &Structured) -> Result<Probe, SpirvError> {
     words.splice(5 + lab_len..5 + lab_len, locals);
     words.extend(inst(Op::FunctionEnd, &[]));
     t.g.m.add_function(&words);
-    t.g.m
-        .entry_point(ExecutionModel::GLCompute, main, "main", &iface);
-    t.g.m.exec_mode(main, ExecutionMode::LocalSize, &[1, 1, 1]);
+    match t.stage.take() {
+        Some(st) => {
+            iface.extend(st.interface());
+            let model = st.model();
+            t.g.m.entry_point(model, main, "main", &iface);
+            st.exec_modes(&mut t.g.m, main);
+        }
+        None => {
+            t.g.m
+                .entry_point(ExecutionModel::GLCompute, main, "main", &iface);
+            t.g.m.exec_mode(main, ExecutionMode::LocalSize, &[1, 1, 1]);
+        }
+    }
     t.g.m.name(main, "main");
-    Ok(Probe {
-        words: t.g.m.finish(),
-        inputs,
-        outputs,
-    })
+    Ok((t.g.m.finish(), inputs, outputs))
 }
 
 impl Tr<'_> {
@@ -695,7 +731,10 @@ impl Tr<'_> {
                 dst_mask,
                 active,
             };
-            let res = alu::exec(&mut self.g, &ctx)?;
+            let res = match self.stage_exec(&ctx, b, k)? {
+                Some(r) => r,
+                None => alu::exec(&mut self.g, &ctx)?,
+            };
             if res.len() != i.dsts.len() {
                 return bad("an instruction returned the wrong number of results");
             }
@@ -704,7 +743,10 @@ impl Tr<'_> {
             }
         }
         if let Term::Branch { op, cond, .. } = &blk.term {
-            let c = self.branch_cond(b, op, cond)?;
+            let c = match self.demote_cond(b) {
+                Some(c) => c,
+                None => self.branch_cond(b, op, cond)?,
+            };
             self.conds.insert(b, c);
         }
         // phi inputs that are constants are not in any variable: store them on the edge
@@ -910,7 +952,9 @@ impl Tr<'_> {
                 Ok(())
             }
             Node::Return => {
-                self.write_outputs()?;
+                if self.stage.is_none() {
+                    self.write_outputs()?;
+                }
                 self.g.term(Op::Return, &[]);
                 Ok(())
             }

@@ -261,3 +261,16 @@ f902060600062616	v_add_f32_sdwa v3, |v0|, -v1 dst_sel:DWORD dst_unused:UNUSED_PA
 6a3c83be	s_and_saveexec_b32 s3, vcc_lo
 7e007e87	s_and_b32 exec_lo, exec_lo, s0
 7e00fe87	[w64] s_and_b64 exec, exec, s[0:1]
+042184be	s_swappc_b64 s[4:5], s[4:5]
+000d027e	v_cvt_f32_u32 v1, v0
+04031006	v_add_f32 v8, v4, v1
+080a1206	v_add_f32 v9, s8, v5
+cf0000f808090809	exp pos0, v8, v9, v8, v9
+0f0a00f804050405	exp param0, v4, v5, v4, v5 done
+0a03fcbe	s_mov_b32 m0, s10
+000008c8	v_interp_p1_f32 v2, v0, attr0.x
+010009c8	v_interp_p2_f32 v2, v1, attr0.x
+02050ec8	v_interp_mov_f32 v3, p0, attr1.y
+0f0800f802030203	exp mrt0, v2, v3, v2, v3 done
+040008f4000000fa	s_load_dwordx4 s[0:3], s[8:9], 0x0
+00031006	v_add_f32 v8, v0, v1

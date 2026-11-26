@@ -1948,3 +1948,315 @@ fn f16_rounding_helpers_agree_with_hardware_values() {
     assert_eq!(f32_to_f16_rte(f(1.0 + 1.0 / 2048.0)), 0x3c00);
     assert_eq!(f32_to_f16_rte(f(1.0 + 3.0 / 2048.0)), 0x3c02);
 }
+
+// ---------------------------------------------------------------------------------------
+// Stage entry points (chunk 8): synthetic VS and PS blobs, never game bytes
+
+mod stage {
+    use super::*;
+    use crate::shader::container::tests::{container, dxil, sig};
+    use crate::shader::container::XDAT_NATIVE;
+    use crate::shader::io::{self, Link};
+    use crate::shader::native::tests::{payload, xbch};
+    use crate::shader::{parse, ParsedShader};
+
+    const VS_AT: usize = 0x300;
+    const PS_AT: usize = 0x700;
+    /// Where the record's stage data starts, and a free area of the payload for the code.
+    const STAGE: usize = 0x54;
+    const CODE_AT: usize = 0x1c00;
+
+    fn put32(p: &mut [u8], at: usize, v: u32) {
+        p[at..at + 4].copy_from_slice(&v.to_le_bytes());
+    }
+
+    /// The 24 bytes before the entry point (`gfx10::ENTRY`), then the program.
+    fn prog(lines: &[&str]) -> Vec<u8> {
+        let mut c = vec![0; 24];
+        c.extend(code(lines));
+        c
+    }
+
+    /// A one-stage blob around `code`; `tweak` edits the payload (stage data at `e`).
+    fn blob(
+        vs: bool,
+        code: &[u8],
+        isg: Vec<u8>,
+        osg: Vec<u8>,
+        tweak: impl FnOnce(&mut [u8], usize),
+    ) -> ParsedShader {
+        let mut p = payload(vs, !vs);
+        let at = if vs { VS_AT } else { PS_AT };
+        p[CODE_AT..CODE_AT + code.len()].copy_from_slice(code);
+        p[at..at + 8].copy_from_slice(&(CODE_AT as u64).to_le_bytes());
+        p[at + 8..at + 16].copy_from_slice(&(code.len() as u64).to_le_bytes());
+        tweak(&mut p, at + STAGE);
+        let entries = [
+            (0x12, vec![0; 16]),
+            (XDAT_NATIVE, xbch(&p)),
+            (0x07, vec![0; 28]),
+        ];
+        let b = container(&[
+            (b"SFI0", vec![0; 8]),
+            (b"ISG1", isg),
+            (b"OSG1", osg),
+            (b"PSV0", vec![0; 20]),
+            (b"DXIL", dxil(u16::from(vs), &entries)),
+            (b"PRIV", vec![0; 12]),
+        ]);
+        parse(&b).unwrap()
+    }
+
+    const VS_CODE: [&str; 6] = [
+        "s_swappc_b64 s[4:5], s[4:5]",
+        "v_cvt_f32_u32 v1, v0",
+        "v_add_f32 v8, v4, v1",
+        "v_add_f32 v9, s8, v5",
+        "exp pos0, v8, v9, v8, v9",
+        "exp param0, v4, v5, v4, v5 done",
+    ];
+
+    const PS_CODE: [&str; 5] = [
+        "s_mov_b32 m0, s10",
+        "v_interp_p1_f32 v2, v0, attr0.x",
+        "v_interp_p2_f32 v2, v1, attr0.x",
+        "v_interp_mov_f32 v3, p0, attr1.y",
+        "exp mrt0, v2, v3, v2, v3 done",
+    ];
+
+    /// TEXCOORD0 at register 1, COLOR0 at 2, NORMAL0 at 3, FOG0 at 4 (all float4).
+    fn sigs() -> Vec<u8> {
+        sig(&[
+            ("SV_Position", 0, 1, 0, 0xf),
+            ("TEXCOORD", 0, 0, 1, 0xf),
+            ("COLOR", 0, 0, 2, 0xf),
+            ("NORMAL", 0, 0, 3, 0xf),
+            ("FOG", 0, 0, 4, 0xf),
+        ])
+    }
+
+    fn vs_blob() -> ParsedShader {
+        blob(
+            true,
+            &prog(&VS_CODE),
+            sig(&[("POSITION", 0, 0, 1, 0xf)]),
+            sigs(),
+            |p, e| {
+                // one input (row 1, v4 and v5); params 0, 1 and 2 are rows 2, 1 and 3
+                p[e + 0x24..e + 0x29].copy_from_slice(&[1, 1, 3, 4, 1]);
+                for (k, row) in [2u8, 1, 3].into_iter().enumerate() {
+                    p[e + 0xc8 + 6 * k..e + 0xc8 + 6 * k + 6]
+                        .copy_from_slice(&[6, row, k as u8, 0, 0, 0]);
+                }
+                put32(p, e + 0x188, 3);
+            },
+        )
+    }
+
+    /// A PS whose inputs are attr 0 (TEXCOORD0, row 1), attr 1 (COLOR0, row 2, flat) and
+    /// attr 2 (FOG0, row 4); `spi` enables its input VGPRs.
+    fn ps_blob(spi: u32, lines: &[&str]) -> ParsedShader {
+        blob(
+            false,
+            &prog(lines),
+            sigs(),
+            sig(&[("SV_Target", 0, 64, 0, 0xf)]),
+            |p, e| {
+                let rows = [(1u8, 0u8, 0u8), (2, 1, 1), (4, 2, 0)];
+                for (k, (row, attr, flags)) in rows.into_iter().enumerate() {
+                    p[e + 0x24 + 8 * k..e + 0x24 + 8 * k + 8]
+                        .copy_from_slice(&[6, row, 0xf, attr, 0, 0, 1, flags]);
+                }
+                put32(p, e + 0x124, 3);
+                put32(p, e + 0x134, spi);
+                put32(p, e + 0x14c, u32::MAX); // no export patch: the code is as written
+            },
+        )
+    }
+
+    /// `(opcode, operands)` of every instruction of a module.
+    fn insts(w: &[u32]) -> Vec<(u32, Vec<u32>)> {
+        let mut at = 5;
+        let mut v = Vec::new();
+        while at < w.len() {
+            let n = (w[at] >> 16) as usize;
+            v.push((w[at] & 0xffff, w[at + 1..at + n].to_vec()));
+            at += n;
+        }
+        v
+    }
+
+    /// The `OpDecorate`s: `(target, decoration, operands)`.
+    fn decorations(w: &[u32]) -> Vec<(u32, u32, Vec<u32>)> {
+        insts(w)
+            .into_iter()
+            .filter(|(op, _)| *op == 71)
+            .map(|(_, o)| (o[0], o[1], o[2..].to_vec()))
+            .collect()
+    }
+
+    fn count(w: &[u32], deco: u32, args: &[u32]) -> usize {
+        decorations(w)
+            .iter()
+            .filter(|d| d.1 == deco && d.2 == args)
+            .count()
+    }
+
+    fn entry_model(w: &[u32]) -> u32 {
+        insts(w).iter().find(|i| i.0 == 15).unwrap().1[0]
+    }
+
+    fn translate(p: &ParsedShader, link: Option<&Link>) -> Vec<u32> {
+        let w = io::translate_stage(p, &[], link).unwrap_or_else(|e| panic!("{e}"));
+        validate(&w);
+        w
+    }
+
+    const LOCATION: u32 = 30;
+    const BUILT_IN: u32 = 11;
+    const FLAT: u32 = 14;
+    const NO_PERSPECTIVE: u32 = 13;
+    const CENTROID: u32 = 16;
+    const SAMPLE: u32 = 17;
+
+    #[test]
+    fn vertex_entry_reads_attributes_and_exports_position_and_parameters() {
+        let w = translate(&vs_blob(), None);
+        assert_eq!(entry_model(&w), 0); // Vertex
+        assert_eq!(count(&w, BUILT_IN, &[0]), 1); // Position
+        assert_eq!(count(&w, BUILT_IN, &[42]), 1); // VertexIndex
+        assert_eq!(count(&w, BUILT_IN, &[4424]), 1); // BaseVertex
+                                                     // the attribute at location 0, and param 0 at location 0 (its own number, unlinked)
+        assert_eq!(count(&w, LOCATION, &[0]), 2);
+        // the root block is reached through a push constant (storage class 9)
+        assert!(insts(&w)
+            .iter()
+            .any(|(op, o)| *op == 59 && o.get(2) == Some(&9)));
+    }
+
+    #[test]
+    fn pixel_entry_raises_interpolation_to_inputs() {
+        let w = translate(&ps_blob(0x2, &PS_CODE), None);
+        assert_eq!(entry_model(&w), 4); // Fragment
+                                        // OriginUpperLeft
+        assert!(insts(&w).iter().any(|(op, o)| *op == 16 && o[1] == 7));
+        // attr 0 perspective (no decoration), attr 1 flat; the target at location 0
+        assert_eq!(count(&w, FLAT, &[]), 1);
+        assert_eq!(count(&w, NO_PERSPECTIVE, &[]), 0);
+        assert_eq!(count(&w, LOCATION, &[0]), 2);
+        assert_eq!(count(&w, LOCATION, &[1]), 1);
+    }
+
+    #[test]
+    fn barycentric_group_picks_the_decoration() {
+        // SPI_PS_INPUT_ADDR bit: 0 persp sample, 1 center, 2 centroid, 4/5/6 linear
+        for (spi, deco) in [
+            (0x1, vec![(SAMPLE, true)]),
+            (0x4, vec![(CENTROID, true)]),
+            (0x20, vec![(NO_PERSPECTIVE, true)]),
+            (0x40, vec![(NO_PERSPECTIVE, true), (CENTROID, true)]),
+            (0x10, vec![(NO_PERSPECTIVE, true), (SAMPLE, true)]),
+        ] {
+            let w = translate(&ps_blob(spi, &PS_CODE), None);
+            for (d, on) in deco {
+                assert_eq!(count(&w, d, &[]) == 1, on, "spi {spi:#x} decoration {d}");
+            }
+        }
+    }
+
+    #[test]
+    fn barycentrics_used_other_than_by_interp_are_refused() {
+        let p = ps_blob(0x2, &["v_add_f32 v8, v0, v1"]);
+        match io::translate_stage(&p, &[], None) {
+            Err(io::StageError::Spirv(SpirvError::Unsupported(u))) => assert_eq!(u.chunk, 8),
+            r => panic!("{:?}", r.map(|w| w.len())),
+        }
+    }
+
+    #[test]
+    fn linking_matches_semantics_not_numbers() {
+        let (vs, ps) = (vs_blob(), ps_blob(0x2, &PS_CODE));
+        let l = io::link(&vs, &ps);
+        // the VS's param 0 is COLOR0 (the PS's attr 1), param 1 TEXCOORD0 (attr 0); param 2
+        // (NORMAL0) feeds nothing; the PS's attr 2 (FOG0) has no VS output
+        assert_eq!(l.params, [(0, 1), (1, 0)].into_iter().collect());
+        assert_eq!(
+            l.attrs,
+            [(0, Some(0)), (1, Some(1)), (2, None)]
+                .into_iter()
+                .collect()
+        );
+        let (v, p) = io::translate_pair(&vs, &ps, &[]).unwrap();
+        validate(&v);
+        validate(&p);
+        // both stages carry the shared locations: the VS exports param 0 (v4, v5) at 1
+        assert_eq!(count(&v, LOCATION, &[1]), 1);
+        assert_eq!(count(&p, LOCATION, &[1]), 1);
+    }
+
+    #[test]
+    fn an_unmatched_pixel_input_reads_its_default() {
+        let ps = ps_blob(0x2, &PS_CODE);
+        // no vertex output has COLOR0: attr 1 is not an input any more
+        let l = Link {
+            params: Default::default(),
+            attrs: [(0, Some(0)), (1, None)].into_iter().collect(),
+        };
+        let w = translate(&ps, Some(&l));
+        assert_eq!(count(&w, FLAT, &[]), 0);
+        assert_eq!(count(&w, LOCATION, &[1]), 0);
+        // attr 0 and the target
+        assert_eq!(count(&w, LOCATION, &[0]), 2);
+    }
+
+    #[test]
+    fn export_patch_selects_the_raw_32_bit_variant() {
+        // the default payload patches dword 9 with six distinctive dwords in variant 9
+        let p = blob(false, &[0; 80], sigs(), sigs(), |_, _| {});
+        let rec = p.record().unwrap();
+        let c = io::stage_code(&p, rec);
+        assert_eq!(c[36..40], 0x100u32.to_le_bytes());
+        assert_eq!(c[56..60], 0x105u32.to_le_bytes());
+        assert_eq!(c[32..36], [0; 4]);
+    }
+
+    #[test]
+    fn memory_stays_for_chunk_9() {
+        let p = ps_blob(0x2, &["s_load_dwordx4 s[0:3], s[8:9], 0x0"]);
+        match io::translate_stage(&p, &[], None) {
+            Err(io::StageError::Spirv(SpirvError::Unsupported(u))) => {
+                assert_eq!((u.chunk, u.op.as_str()), (9, "s_load_dwordx4"))
+            }
+            r => panic!("{:?}", r.map(|w| w.len())),
+        }
+    }
+
+    #[test]
+    fn pixel_discard_demotes_the_lane() {
+        // the structure test's discard: v_cmpx ; s_andn2 live, live, exec ; branch to an
+        // `exp null done` exit; FragCoord.x / .y stand in for v0 / v1
+        let words = [
+            0xbe820a7eu32,
+            0x7c220300,
+            0x8a827e02,
+            0xbf840003,
+            0xbefe0a02,
+            0x7e0402f2,
+            0xbf810000,
+            0xf8000890,
+            0x00000000,
+            0xbf810000,
+        ];
+        let mut bytes = vec![0; 24];
+        bytes.extend(words.iter().flat_map(|w| w.to_le_bytes()));
+        let p = blob(false, &bytes, sigs(), sigs(), |p, e| {
+            put32(p, e + 0x124, 0);
+            put32(p, e + 0x134, 0x300);
+            put32(p, e + 0x14c, u32::MAX);
+        });
+        let w = translate(&p, None);
+        // OpDemoteToHelperInvocation, and no OpKill
+        assert!(insts(&w).iter().any(|(op, _)| *op == 5380));
+        assert!(!insts(&w).iter().any(|(op, _)| *op == 252));
+    }
+}
