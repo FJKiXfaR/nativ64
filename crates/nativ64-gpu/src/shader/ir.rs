@@ -703,7 +703,10 @@ fn lower(i: &Instr) -> Result<Option<Lowered>, IrError> {
                         lo.srcs
                             .push(regs.iter().copied().map(Rd::Reg).collect::<Vec<_>>());
                     }
-                    if name.starts_with("s_cmov") || name.starts_with("s_cmovk") {
+                    if name.starts_with("s_cmov")
+                        || name.starts_with("s_cmovk")
+                        || name.starts_with("s_bitset")
+                    {
                         lo.olds.extend(&regs);
                     }
                     lo.dsts.extend(regs);
