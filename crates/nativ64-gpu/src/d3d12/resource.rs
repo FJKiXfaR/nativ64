@@ -419,8 +419,10 @@ unsafe extern "win64" fn map(
 /// Slot 9, `Unmap(subresource, written_range)`.
 unsafe extern "win64" fn unmap(_this: *mut c_void, _subresource: u32, _written: *const c_void) {}
 
-/// Slot 10, `GetDesc()`: returns a struct, so the return pointer comes first and `this` second.
-unsafe extern "win64" fn get_desc(out: *mut ResourceDesc, this: *mut c_void) -> *mut ResourceDesc {
+/// Slot 10, `GetDesc()`: returns a struct through a hidden pointer. Unlike the device methods,
+/// `this` comes first (`rcx`) and the pointer second (`rdx`): the title's call site, seen with
+/// gdb, loads `rcx` from the resource and `rdx` from its own stack buffer.
+unsafe extern "win64" fn get_desc(this: *mut c_void, out: *mut ResourceDesc) -> *mut ResourceDesc {
     if !out.is_null() {
         out.write(crate::xobj::XObject::<ResourceData>::data(this).desc);
     }
@@ -543,8 +545,11 @@ mod tests {
             assert_eq!(map(r, 0, std::ptr::null(), std::ptr::null_mut()), S_OK);
             unmap(r, 0, std::ptr::null());
             let mut got = ResourceDesc::default();
-            assert_eq!(get_desc(&mut got, r), &mut got as *mut _);
+            assert_eq!(get_desc(r, &mut got), &mut got as *mut _);
             assert_eq!(got, desc);
+            // a NULL buffer writes nothing and the object stays intact
+            assert!(get_desc(r, std::ptr::null_mut()).is_null());
+            assert_eq!(get_gpu_virtual_address(r), 0x10b0_0000);
             // through the vtable, as the title calls it
             let vtbl = *(r as *const *const *const ());
             let f: unsafe extern "win64" fn(*mut c_void) -> u64 =

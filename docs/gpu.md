@@ -113,7 +113,8 @@ The executable imports from `d3d12_xs` only `D3D12XboxCreateDevice` and
 - **Methods returning a struct take the hidden return pointer first** (`rcx`), `this` second
   (`rdx`), unlike MSVC on PC: seen with gdb on `GetCustomHeapProperties`. Check every other
   struct-returning method (`GetCPUDescriptorHandleForHeapStart`, `GetDesc`...) at a call site
-  before writing it.
+  before writing it. `ID3D12Resource::GetDesc` is the exception seen so far: `this` first (`rcx`),
+  buffer second (`rdx`), as its call site loads them.
 - **`D3D12XboxCreateDevice(adapter, params, iid, out)`**: `params[0]` is the interface version
   (0x00020004 for the title VIctory follows), the rest (ring sizes, opt-outs) can be ignored at
   first; `iid` is one of ID3D12Device, Device1..Device8, Device11.
