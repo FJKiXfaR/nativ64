@@ -16,4 +16,4 @@ pub use emit::{translate, translate_io, Probe, SpirvError};
 #[cfg(test)]
 mod gpu;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

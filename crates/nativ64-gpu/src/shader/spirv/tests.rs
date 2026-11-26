@@ -1952,7 +1952,7 @@ fn f16_rounding_helpers_agree_with_hardware_values() {
 // ---------------------------------------------------------------------------------------
 // Stage entry points (chunk 8): synthetic VS and PS blobs, never game bytes
 
-mod stage {
+pub(crate) mod stage {
     use super::*;
     use crate::shader::container::tests::{container, dxil, sig};
     use crate::shader::container::XDAT_NATIVE;
@@ -1986,6 +1986,17 @@ mod stage {
         osg: Vec<u8>,
         tweak: impl FnOnce(&mut [u8], usize),
     ) -> ParsedShader {
+        parse(&blob_bytes(vs, code, isg, osg, tweak)).unwrap()
+    }
+
+    /// The bytes of [`blob`].
+    fn blob_bytes(
+        vs: bool,
+        code: &[u8],
+        isg: Vec<u8>,
+        osg: Vec<u8>,
+        tweak: impl FnOnce(&mut [u8], usize),
+    ) -> Vec<u8> {
         let mut p = payload(vs, !vs);
         let at = if vs { VS_AT } else { PS_AT };
         p[CODE_AT..CODE_AT + code.len()].copy_from_slice(code);
@@ -1997,15 +2008,107 @@ mod stage {
             (XDAT_NATIVE, xbch(&p)),
             (0x07, vec![0; 28]),
         ];
-        let b = container(&[
+        container(&[
             (b"SFI0", vec![0; 8]),
             (b"ISG1", isg),
             (b"OSG1", osg),
             (b"PSV0", vec![0; 20]),
             (b"DXIL", dxil(u16::from(vs), &entries)),
             (b"PRIV", vec![0; 12]),
-        ]);
-        parse(&b).unwrap()
+        ])
+    }
+
+    // ---- Blobs for the backend's real draws (chunk 10a) ----
+
+    /// A vertex program with no vertex input that pulls vertex `v0`'s position (a `float4`) from
+    /// the buffer the root descriptor at parameter 0 (SGPRs s8, s9) names, as vs e5fcb71c pulls
+    /// its vertices: a V# built from the user data, `buffer_load_dwordx4` at `16 * v0`.
+    pub(crate) fn draw_vs_pulling_from_a_root_buffer() -> Vec<u8> {
+        let lines = [
+            "s_mov_b32 s0, s8",
+            "s_or_b32 s1, s9, 0x10000",
+            "s_mov_b32 s2, -1",
+            "s_mov_b32 s3, 0x11014fac",
+            "v_lshlrev_b32 v1, 4, v0",
+            "buffer_load_dwordx4 v[4:7], v1, s[0:3], 0 offen",
+            "exp pos0, v4, v5, v6, v7 done",
+        ];
+        blob_bytes(
+            true,
+            &prog(&lines),
+            sig(&[("POSITION", 0, 0, 1, 0xf)]),
+            sigs(),
+            |p, e| {
+                p[0x221] = 0; // the root descriptor is root parameter 0
+                put32(p, e + 0xc4, 0); // no vertex input
+                put32(p, e + 0x188, 0); // no parameter output
+            },
+        )
+    }
+
+    /// A vertex program with one input, `POSITION` as a `float4` in v4..v7, exported as is.
+    pub(crate) fn draw_vs_with_a_position_input() -> Vec<u8> {
+        let lines = [
+            "s_swappc_b64 s[4:5], s[4:5]",
+            "exp pos0, v4, v5, v6, v7 done",
+        ];
+        blob_bytes(
+            true,
+            &prog(&lines),
+            sig(&[("POSITION", 0, 0, 1, 0xf)]),
+            sigs(),
+            |p, e| {
+                p[e + 0x24..e + 0x29].copy_from_slice(&[1, 1, 0xf, 4, 3]);
+                put32(p, e + 0xc4, 1);
+                put32(p, e + 0x188, 0);
+            },
+        )
+    }
+
+    /// A pixel program with no inputs that writes root constants 0..3 (user SGPRs s12..s15, root
+    /// parameter 1) to render target 0. (Both stages read the draw's one root block, so their user
+    /// SGPRs must not overlap: the vertex programs above use s8 and s9.)
+    pub(crate) fn draw_ps_writing_root_constants() -> Vec<u8> {
+        let lines = [
+            "v_mov_b32 v2, s12",
+            "v_mov_b32 v3, s13",
+            "v_mov_b32 v4, s14",
+            "v_mov_b32 v5, s15",
+            "exp mrt0, v2, v3, v4, v5 done",
+        ];
+        blob_bytes(
+            false,
+            &prog(&lines),
+            sigs(),
+            sig(&[("SV_Target", 0, 64, 0, 0xf)]),
+            |p, e| {
+                put32(p, 0x210, 0); // root constants
+                put32(p, 0x214, 0); // from constant 0
+                put32(p, 0x218, 4); // four user SGPRs
+                p[0x220] = 12;
+                p[0x221] = 1; // root parameter 1
+                put32(p, e + 0x124, 0); // no inputs
+                put32(p, e + 0x134, 0);
+                put32(p, e + 0x14c, u32::MAX); // no export patch
+            },
+        )
+    }
+
+    /// A pixel program that samples a texture: the draw needs images.
+    pub(crate) fn draw_ps_sampling_a_texture() -> Vec<u8> {
+        let lines = ps_after(&TEX_CONST_SAMPLER, &[SAMPLE_2D]);
+        blob_bytes(
+            false,
+            &prog(&lines),
+            sigs(),
+            sig(&[("SV_Target", 0, 64, 0, 0xf)]),
+            |p, e| {
+                one_table(p);
+                put32(p, e + 0x124, 0);
+                put32(p, e + 0x134, 0);
+                put32(p, e + 0x14c, u32::MAX);
+            },
+        )
     }
 
     const VS_CODE: [&str; 6] = [

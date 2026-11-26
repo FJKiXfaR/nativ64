@@ -329,3 +329,14 @@ f002127e	v_mov_b32 v9, 0.5
 8002047e	v_mov_b32 v2, 0
 040104f4000000fa	s_load_dwordx2 s[4:5], s[8:9], 0x0
 020308f4000000fa	s_load_dwordx4 s[12:15], s[4:5], 0x0
+84000234	v_lshlrev_b32 v1, 4, v0
+cf0800f804050607	exp pos0, v4, v5, v6, v7 done
+0802047e	v_mov_b32 v2, s8
+0902067e	v_mov_b32 v3, s9
+0a02087e	v_mov_b32 v4, s10
+0b020a7e	v_mov_b32 v5, s11
+0f0800f802030405	exp mrt0, v2, v3, v4, v5 done
+0c02047e	v_mov_b32 v2, s12
+0d02067e	v_mov_b32 v3, s13
+0e02087e	v_mov_b32 v4, s14
+0f020a7e	v_mov_b32 v5, s15
