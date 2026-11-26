@@ -441,6 +441,11 @@ it says otherwise.
    alarms). Acceptance: `--ir` on the corpus, every program builds or stops on a named
    unsupported opcode, none on an unexplained live-in or a register jump; the report gives the
    count per error.
+4b. **IR lowering of the memory and packed encodings** (`ir.rs`): MIMG, MTBUF, DS, VOP3P,
+   FLAT/GLOBAL/SCRATCH get their `dsts`, `srcs` and implicit reads (EXEC, M0 for DS, the old
+   value of written VGPRs; stores and atomics as side effects). After chunk 4 they are the only
+   reason 6947 of 8634 programs do not build (MIMG 4035, MTBUF 1881, DS 633, VOP3P 349, FLAT
+   47). Acceptance: the corpus report shows only named unsupported opcodes, a handful at most.
 5. **Structuring** (`structure.rs`): mask typing, per-lane branches, guards and their
    removal, discard → demote, Ramsey tree, multi-level break lowering plan. Tests: if, if/else,
    nested ifs, loop with break and continue, a 2-level break, an irreducible graph (error), a
