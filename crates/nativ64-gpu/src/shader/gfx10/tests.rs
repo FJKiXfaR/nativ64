@@ -176,12 +176,15 @@ fn typed_errors() {
     let e = decode(&code, 4).unwrap_err();
     assert_eq!(e.to_string(), "unknown GFX10 VOP3 opcode 0x3ff at +0x4");
     // an encoding not decoded yet
-    let e = decode(&dw(&[0xcc00_0000, 0]), 0).unwrap_err();
+    let e = decode(&dw(&[0xe400_0000, 0]), 0).unwrap_err();
     assert!(matches!(
         e.kind,
-        ErrorKind::UnknownEncoding { name: "VOP3P", .. }
+        ErrorKind::UnknownEncoding { name: "?", .. }
     ));
-    assert!(e.to_string().contains("encoding VOP3P"), "{e}");
+    assert!(e.to_string().contains("encoding ?"), "{e}");
+    // v_pk_add_i16 v1, v4, v5 with neg_lo on a third source it does not have
+    let e = decode(&dw(&[0xcc02_0001, 0x8000_0000 | 261 << 9 | 260]), 0).unwrap_err();
+    assert!(matches!(e.kind, ErrorKind::BadField(_)), "{e}");
     // MIMG opcode 0x06 is not an instruction
     let e = decode(&dw(&[0xf000_0000 | 6 << 18, 0]), 0).unwrap_err();
     assert_eq!(

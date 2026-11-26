@@ -4,7 +4,7 @@
 
 use super::ops::{
     Slot, FLAG_CLAMP, FLAG_DLC, FLAG_DS_OFFSET2, FLAG_DS_SWIZZLE, FLAG_FMODS_SHIFT, FLAG_GLC,
-    FLAG_IMG_BVH, FLAG_LIT16, FLAG_OMOD, FLAG_OPSEL, FLAG_SUFFIX,
+    FLAG_IMG_BVH, FLAG_LIT16, FLAG_OMOD, FLAG_OPSEL, FLAG_P_MIX, FLAG_SUFFIX,
 };
 use super::table_ext;
 use super::{decode_wave, DecodeError, DppKind, Enc, Instr, Operand};
@@ -80,6 +80,7 @@ pub fn disasm_instr(i: &Instr) -> String {
             }
             Slot::Lit => operand(op, i.wave32),
             _ => match op {
+                Operand::Literal(v) if i.enc == Enc::Vop3p => vop3p_literal(i, *v),
                 Operand::Literal(v) if i.info.flags & FLAG_LIT16 != 0 => literal16(*v),
                 _ => operand(op, i.wave32),
             },
@@ -108,6 +109,7 @@ pub fn disasm_instr(i: &Instr) -> String {
         Enc::Mubuf => return mubuf(i, s, ops),
         Enc::Mtbuf => return mtbuf(i, s, ops),
         Enc::Ds => return ds(i, s, ops),
+        Enc::Vop3p => return vop3p(i, s, ops),
         _ => {}
     }
     if !ops.is_empty() {
@@ -266,13 +268,12 @@ fn source_mods(i: &Instr, idx: usize, t: String, op: &Operand) -> String {
         t = format!("|{t}|");
     }
     if neg {
-        let constant = matches!(
-            op,
-            Operand::Literal(_) | Operand::Reg {
-                code: 128..=208 | 240..=248,
-                ..
-            }
-        );
+        let constant = match op {
+            // `lit(..)` is a wrapper, not a number: LLVM puts the sign in front of it
+            Operand::Literal(_) => !t.starts_with("lit("),
+            Operand::Reg { code, .. } => matches!(code, 128..=208 | 240..=248),
+            _ => false,
+        };
         t = if constant && !abs {
             format!("neg({t})")
         } else {
@@ -584,6 +585,77 @@ fn swizzle(imm: u32) -> String {
         })
         .collect();
     format!("swizzle(BITMASK_PERM,\"{mask}\")")
+}
+
+/// The literal of a VOP3P instruction. LLVM wraps it in `lit(..)` when an inline constant of the
+/// operand type would encode the same value; `v_fma_mix` reads only the low 16 bits, so it
+/// prints just those when no inline constant matches.
+fn vop3p_literal(i: &Instr, v: u32) -> String {
+    const F16: [u16; 9] = [
+        0x3800, 0xb800, 0x3c00, 0xbc00, 0x4000, 0xc000, 0x4400, 0xc400, 0x3118,
+    ];
+    const F32: [u32; 9] = [
+        0x3f00_0000,
+        0xbf00_0000,
+        0x3f80_0000,
+        0xbf80_0000,
+        0x4000_0000,
+        0xc000_0000,
+        0x4080_0000,
+        0xc080_0000,
+        0x3e22_f983,
+    ];
+    let small = |x: i32| (-16..=64).contains(&x);
+    if i.info.flags & FLAG_P_MIX != 0 {
+        let lo = v as u16;
+        return if small(i32::from(lo as i16)) || F16.contains(&lo) {
+            format!("lit({v:#x})")
+        } else {
+            format!("{lo:#x}")
+        };
+    }
+    let inline = if i.info.name.ends_with("_f16") {
+        small(v as i32) || (v >> 16 == 0 && F16.contains(&(v as u16)))
+    } else {
+        small(v as i32) || F32.contains(&v)
+    };
+    if inline {
+        format!("lit({v:#x})")
+    } else {
+        format!("{v:#x}")
+    }
+}
+
+fn vop3p(i: &Instr, mut s: String, ops: Vec<String>) -> String {
+    let m = &i.mods;
+    let nsrc = i.info.slots.len() - 1;
+    let mask = (1u8 << nsrc) - 1;
+    let mix = i.info.flags & FLAG_P_MIX != 0;
+    s.push(' ');
+    s.push_str(&ops.join(", "));
+    let list = |v: u8| {
+        let b: Vec<String> = (0..nsrc).map(|k| (v >> k & 1).to_string()).collect();
+        b.join(",")
+    };
+    if m.opsel != 0 {
+        let _ = write!(s, " op_sel:[{}]", list(m.opsel));
+    }
+    // the packed ops default to the high halves (op_sel_hi all ones), the mixed ones to none
+    if (mix && m.opsel_hi & mask != 0) || (!mix && m.opsel_hi & mask != mask) {
+        let _ = write!(s, " op_sel_hi:[{}]", list(m.opsel_hi));
+    }
+    if !mix {
+        if m.neg != 0 {
+            let _ = write!(s, " neg_lo:[{}]", list(m.neg));
+        }
+        if m.abs != 0 {
+            let _ = write!(s, " neg_hi:[{}]", list(m.abs));
+        }
+    }
+    if m.clamp {
+        s.push_str(" clamp");
+    }
+    s
 }
 
 fn mtbuf(i: &Instr, mut s: String, mut parts: Vec<String>) -> String {

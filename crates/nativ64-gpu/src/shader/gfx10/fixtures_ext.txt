@@ -3819,3 +3819,1172 @@ c3a1fcdb400000c1	ds_read_b128 v[193:196], v64 offset:41411
 124ffcdb47000094	ds_read_b128 v[148:151], v71 offset:20242
 a63ffcdb3d00000b	ds_read_b128 v[11:14], v61 offset:16294
 49f3fcdb2700006f	ds_read_b128 v[111:114], v39 offset:62281
+010000cc040b1a00	v_pk_mad_i16 v1, v4, v5, s6 op_sel_hi:[0,0,0]
+be4000cc46fb8d04	v_pk_mad_i16 v190, v70, src_scc, v35 op_sel_hi:[0,0,1]
+8ab800cc9aa11d44	v_pk_mad_i16 v138, v154, -16, v7 op_sel:[1,1,1] op_sel_hi:[0,0,0] neg_lo:[0,1,0] clamp
+b88000ccc6eadd13	v_pk_mad_i16 v184, -6, -2.0, -4.0 op_sel_hi:[0,1,0] clamp
+0b6d00cc3ffdc494	v_pk_mad_i16 v11, v63, exec_lo, v49 op_sel:[1,0,1] op_sel_hi:[0,1,1] neg_lo:[0,0,1] neg_hi:[1,0,1]
+260000cc2dd66816	v_pk_mad_i16 v38, s45, vcc_hi, v154 op_sel_hi:[0,1,0]
+400000cc691f1107	v_pk_mad_i16 v64, v105, 15, v196 op_sel_hi:[0,0,0]
+736c00cc386fc554	v_pk_mad_i16 v115, v56, 55, v49 op_sel:[1,0,1] op_sel_hi:[0,1,1] neg_lo:[0,1,0] neg_hi:[0,0,1]
+9b0000ccbdd5a0e2	v_pk_mad_i16 v155, v189, vcc_lo, 40 op_sel_hi:[0,0,0] neg_lo:[1,1,1]
+9b5b00ccff2ab60007000000	v_pk_mad_i16 v155, lit(0x7), v21, s45 op_sel:[1,1,0] op_sel_hi:[0,0,1] neg_hi:[1,1,0]
+47e000cc9e00ade9	v_pk_mad_i16 v71, 30, 0, vcc_hi op_sel:[0,0,1] op_sel_hi:[1,0,1] neg_lo:[1,1,1] clamp
+9c3b00cc6bee66ca	v_pk_mad_i16 v156, vcc_hi, v119, 25 op_sel:[1,1,1] op_sel_hi:[1,0,0] neg_lo:[0,1,1] neg_hi:[1,1,0]
+1c0000cc627f1803	v_pk_mad_i16 v28, v98, s63, -6 op_sel_hi:[0,0,0]
+1c0000ccb637b400	v_pk_mad_i16 v28, v182, s27, s45 op_sel_hi:[0,0,0]
+658f00ccf338ae49	v_pk_mad_i16 v101, -1.0, v28, vcc_hi op_sel:[1,0,0] op_sel_hi:[1,0,0] neg_lo:[0,1,0] neg_hi:[1,1,1] clamp
+1f3800cc8c89d713	v_pk_mad_i16 v31, v140, v196, -2.0 op_sel:[1,1,1] op_sel_hi:[0,1,0]
+59c000ccb77ed60b	v_pk_mad_i16 v89, 55, v63, -2.0 op_sel_hi:[1,0,1] clamp
+1c0f00ccbd010252	v_pk_mad_i16 v28, v189, v0, 0 op_sel:[1,0,0] op_sel_hi:[0,1,0] neg_lo:[0,1,0] neg_hi:[1,1,1]
+04e600cca800fd0b78563412	v_pk_mad_i16 v4, 40, 0, 0x12345678 op_sel:[0,0,1] op_sel_hi:[1,0,1] neg_hi:[0,1,1] clamp
+ad0000cc8fb4c403	v_pk_mad_i16 v173, 15, s90, -0.5 op_sel_hi:[0,0,0]
+225700ccf300e2c3	v_pk_mad_i16 v34, -1.0, v0, 0.15915494 op_sel:[0,1,0] op_sel_hi:[0,0,1] neg_lo:[0,1,1] neg_hi:[1,1,1]
+849e00cc36eabdb6	v_pk_mad_i16 v132, s54, -2.0, v175 op_sel:[1,1,0] op_sel_hi:[0,1,0] neg_lo:[1,0,1] neg_hi:[0,1,1] clamp
+4b0700ccc4d3a23a	v_pk_mad_i16 v75, v196, v105, 40 op_sel_hi:[1,1,0] neg_lo:[1,0,0] neg_hi:[1,1,1]
+a0a500ccf00051cd	v_pk_mad_i16 v160, 0.5, 0, v84 op_sel:[0,0,1] op_sel_hi:[1,0,0] neg_lo:[0,1,1] neg_hi:[1,0,1] clamp
+820900cc9eb468f6	v_pk_mad_i16 v130, 30, s90, v154 op_sel:[1,0,0] op_sel_hi:[0,1,0] neg_lo:[1,1,1] neg_hi:[1,0,0]
+b54000cc36fa840e	v_pk_mad_i16 v181, s54, null, v161 op_sel_hi:[1,0,1]
+548e00ccf390d46b	v_pk_mad_i16 v84, -1.0, s72, -2.0 op_sel:[1,0,0] op_sel_hi:[1,0,0] neg_lo:[1,1,0] neg_hi:[0,1,1] clamp
+16c000ccffec450107000000	v_pk_mad_i16 v22, lit(0x7), 4.0, s81 op_sel_hi:[0,0,1] clamp
+22c800cc2afd88a5	v_pk_mad_i16 v34, v42, exec_lo, v98 op_sel:[1,0,0] op_sel_hi:[0,0,1] neg_lo:[1,0,1] clamp
+220300ccb250d523	v_pk_mad_i16 v34, 50, 40, -2.0 op_sel_hi:[0,0,0] neg_lo:[1,0,0] neg_hi:[1,1,0]
+374000ccc6fef501efbeadde	v_pk_mad_i16 v55, -6, 0xdeadbeef, null op_sel_hi:[0,0,1]
+7a0000ccf578b500	v_pk_mad_i16 v122, -2.0, 60, s45 op_sel_hi:[0,0,0]
+342000cc23a1d9d3	v_pk_mad_i16 v52, v35, -16, 4.0 op_sel:[0,0,1] op_sel_hi:[0,1,0] neg_lo:[0,1,1]
+27b700cc158355bc	v_pk_mad_i16 v39, v21, -1, v21 op_sel:[0,1,1] op_sel_hi:[1,1,0] neg_lo:[1,0,1] neg_hi:[1,1,1] clamp
+224000cc31398e0a	v_pk_mad_i16 v34, v49, v28, 35 op_sel_hi:[1,0,1]
+386000cc4826b7d2	v_pk_mad_i16 v56, s72, v147, 45 op_sel:[0,0,1] op_sel_hi:[0,1,1] neg_lo:[0,1,1]
+a78000cc0063de0a	v_pk_mad_i16 v167, v0, v49, 55 op_sel_hi:[1,0,0] clamp
+ac0000ccc4ddc103	v_pk_mad_i16 v172, v196, src_private_limit, 0.5 op_sel_hi:[0,0,0]
+6e9c00cc63a842b3	v_pk_mad_i16 v110, s99, v84, -16 op_sel:[1,1,0] op_sel_hi:[0,1,0] neg_lo:[1,0,1] neg_hi:[0,0,1] clamp
+c10000cc246c0012	v_pk_mad_i16 v193, s36, s54, 0 op_sel_hi:[0,1,0]
+113f00cc7d28cde3	v_pk_mad_i16 v17, null, 20, -1.0 op_sel:[1,1,1] op_sel_hi:[0,0,0] neg_lo:[1,1,1] neg_hi:[1,1,1]
+56b500cca35033c6	v_pk_mad_i16 v86, 35, v168, v140 op_sel:[0,1,1] op_sel_hi:[0,0,0] neg_lo:[0,1,1] neg_hi:[1,0,1] clamp
+94be00cc9e00f269	v_pk_mad_i16 v148, 30, v0, m0 op_sel:[1,1,1] op_sel_hi:[1,0,0] neg_lo:[1,1,0] neg_hi:[0,1,1] clamp
+5dc000cc85784910	v_pk_mad_i16 v93, 5, 60, s18 op_sel_hi:[0,1,1] clamp
+367e00ccf336bcce	v_pk_mad_i16 v54, -1.0, s27, v175 op_sel:[1,1,1] op_sel_hi:[1,0,1] neg_lo:[0,1,1] neg_hi:[0,1,1]
+818000cc38f1a515	v_pk_mad_i16 v129, v56, 0.15915494, v105 op_sel_hi:[0,1,0] clamp
+9fc000ccf30ae103	v_pk_mad_i16 v159, -1.0, 5, 0.15915494 op_sel_hi:[0,0,1] clamp
+994d00cc773dd986	v_pk_mad_i16 v153, v119, 30, v182 op_sel:[1,0,0] op_sel_hi:[0,0,1] neg_lo:[0,0,1] neg_hi:[1,0,1]
+9fc000ccf862061b	v_pk_mad_i16 v159, 0.15915494, v49, -1 clamp
+304700cc94eede4d	v_pk_mad_i16 v48, 20, v119, v119 op_sel_hi:[1,0,1] neg_lo:[0,1,0] neg_hi:[1,1,1]
+1e8100cc69e9b5f2	v_pk_mad_i16 v30, v105, 2.0, 45 op_sel_hi:[0,1,0] neg_lo:[1,1,1] neg_hi:[1,0,0] clamp
+8d3b00ccf37ec802	v_pk_mad_i16 v141, -1.0, s63, 50 op_sel:[1,1,1] op_sel_hi:[0,0,0] neg_hi:[1,1,0]
+a94000ccbd0b3505	v_pk_mad_i16 v169, v189, 5, v77 op_sel_hi:[0,0,1]
+c6c000cc15f9fc1b0000803f	v_pk_mad_i16 v198, v21, m0, lit(0x3f800000) clamp
+ae5d00ccc449d873	v_pk_mad_i16 v174, v196, s36, 4.0 op_sel:[1,1,0] op_sel_hi:[0,1,1] neg_lo:[1,1,0] neg_hi:[1,0,1]
+010001cc040b1a00	v_pk_mul_lo_u16 v1, v4, v5 op_sel_hi:[0,0]
+9b1101cca189fb05	v_pk_mul_lo_u16 v155, v161, v196 op_sel:[0,1] op_sel_hi:[0,0] neg_hi:[1,0]
+ab9301cc94006c1d	v_pk_mul_lo_u16 v171, 20, s0 op_sel:[0,1] neg_hi:[1,1] clamp
+35d001cc3f0f120f	v_pk_mul_lo_u16 v53, v63, v7 op_sel:[0,1] op_sel_hi:[1,0] clamp
+bb4001cc07ef6a11	v_pk_mul_lo_u16 v187, v7, v119 op_sel_hi:[0,1]
+41c001ccf2fecd13efbeadde	v_pk_mul_lo_u16 v65, 1.0, 0xdeadbeef op_sel_hi:[0,1] clamp
+a8d801cc51d43c2a	v_pk_mul_lo_u16 v168, s81, vcc_lo op_sel:[1,1] op_sel_hi:[1,0] neg_lo:[1,0] clamp
+495b01cc1501020a	v_pk_mul_lo_u16 v73, v21, v0 op_sel:[1,1] op_sel_hi:[1,0] neg_hi:[1,1]
+9e9301cccba8e224	v_pk_mul_lo_u16 v158, -11, v84 op_sel:[0,1] op_sel_hi:[0,0] neg_lo:[1,0] neg_hi:[1,1] clamp
+b41801cc5ba1c503	v_pk_mul_lo_u16 v180, v91, -16 op_sel:[1,1] op_sel_hi:[0,0]
+2f8001cc6328dd05	v_pk_mul_lo_u16 v47, s99, 20 op_sel_hi:[0,0] clamp
+134301cc5a0eb678	v_pk_mul_lo_u16 v19, s90, v7 neg_lo:[1,1] neg_hi:[1,1]
+860101ccf40add1d	v_pk_mul_lo_u16 v134, 2.0, 5 neg_hi:[1,0]
+1c9b01ccf15a1522	v_pk_mul_lo_u16 v28, -0.5, 45 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[1,0] neg_hi:[1,1] clamp
+10d201cc3f2a523a	v_pk_mul_lo_u16 v16, s63, v21 op_sel:[0,1] neg_lo:[1,0] neg_hi:[0,1] clamp
+b50001cc24fc880d	v_pk_mul_lo_u16 v181, s36, exec_lo op_sel_hi:[1,0]
+c79101cc362a9230	v_pk_mul_lo_u16 v199, s54, v21 op_sel:[0,1] op_sel_hi:[0,1] neg_lo:[1,0] neg_hi:[1,0] clamp
+3f4001cc23c75072	v_pk_mul_lo_u16 v63, v35, s99 op_sel_hi:[0,1] neg_lo:[1,1]
+8fdb01cc2d888b05	v_pk_mul_lo_u16 v143, s45, v196 op_sel:[1,1] op_sel_hi:[0,0] neg_hi:[1,1] clamp
+108301ccf47a5375	v_pk_mul_lo_u16 v16, 2.0, v189 op_sel_hi:[0,1] neg_lo:[1,1] neg_hi:[1,1] clamp
+b7d801cceee0f11a	v_pk_mul_lo_u16 v183, src_private_limit, 0.5 op_sel:[1,1] clamp
+070001cc3855fa15	v_pk_mul_lo_u16 v7, v56, v42 op_sel_hi:[0,1]
+7b4801ccfffcf60300400000	v_pk_mul_lo_u16 v123, 0x4000, v126 op_sel:[1,0] op_sel_hi:[0,0]
+a88301ccff3cfd3400400000	v_pk_mul_lo_u16 v168, 0x4000, 30 op_sel_hi:[0,1] neg_lo:[1,0] neg_hi:[1,1] clamp
+904001cc2ddc150a	v_pk_mul_lo_u16 v144, s45, src_private_limit op_sel_hi:[1,0]
+c6c001ccf1e0d918	v_pk_mul_lo_u16 v198, -0.5, 0.5 clamp
+680001cc6afa2942	v_pk_mul_lo_u16 v104, vcc_lo, src_scc op_sel_hi:[0,0] neg_lo:[0,1]
+bc9a01cc0ed3a256	v_pk_mul_lo_u16 v188, v14, v105 op_sel:[1,1] op_sel_hi:[0,1] neg_lo:[0,1] neg_hi:[0,1] clamp
+688001ccb2f0d910	v_pk_mul_lo_u16 v104, 50, 0.15915494 op_sel_hi:[0,1] clamp
+768101cc7da00170	v_pk_mul_lo_u16 v118, null, -16 op_sel_hi:[0,1] neg_lo:[1,1] neg_hi:[1,0] clamp
+c38101cc2de43d62	v_pk_mul_lo_u16 v195, s45, 1.0 op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[1,0] clamp
+558001ccc6e60118	v_pk_mul_lo_u16 v85, -6, -1.0 clamp
+974001ccf7a2f809	v_pk_mul_lo_u16 v151, -4.0, s81 op_sel_hi:[1,0]
+5b9001cc7d968526	v_pk_mul_lo_u16 v91, null, -11 op_sel:[0,1] op_sel_hi:[0,0] neg_lo:[1,0] clamp
+488001cc7e91d41b	v_pk_mul_lo_u16 v72, v126, s72 clamp
+50c901ccf36cc84a	v_pk_mul_lo_u16 v80, -1.0, s54 op_sel:[1,0] op_sel_hi:[1,0] neg_lo:[0,1] neg_hi:[1,0] clamp
+1ec001cc7751df0a	v_pk_mul_lo_u16 v30, v119, v168 op_sel_hi:[1,0] clamp
+2ec301cc6b96554c	v_pk_mul_lo_u16 v46, vcc_hi, -11 op_sel_hi:[1,0] neg_lo:[0,1] neg_hi:[1,1] clamp
+448001cc7e27ff1c	v_pk_mul_lo_u16 v68, v126, v147 clamp
+aa8801ccad90f06a	v_pk_mul_lo_u16 v170, 45, s72 op_sel:[1,0] op_sel_hi:[1,0] neg_lo:[1,1] clamp
+498301cca1ddad69	v_pk_mul_lo_u16 v73, v161, src_private_limit op_sel_hi:[1,0] neg_lo:[1,1] neg_hi:[1,1] clamp
+290001cc31eb5102	v_pk_mul_lo_u16 v41, v49, -2.0 op_sel_hi:[0,0]
+1e4001cc8f825514	v_pk_mul_lo_u16 v30, 15, -1 op_sel_hi:[0,1]
+39c001cc7e9a0200	v_pk_mul_lo_u16 v57, exec_lo, v77 op_sel_hi:[0,0] clamp
+c04001cc3ffce20b	v_pk_mul_lo_u16 v192, s63, v126 op_sel_hi:[1,0]
+068b01ccf238ca53	v_pk_mul_lo_u16 v6, 1.0, v28 op_sel:[1,0] op_sel_hi:[0,1] neg_lo:[0,1] neg_hi:[1,1] clamp
+314001ccffe0191befbeadde	v_pk_mul_lo_u16 v49, 0xdeadbeef, 0.5
+710101ccf728012c	v_pk_mul_lo_u16 v113, -4.0, 20 op_sel_hi:[1,0] neg_lo:[1,0] neg_hi:[1,0]
+4cda01cc31d5f401	v_pk_mul_lo_u16 v76, v49, vcc_lo op_sel:[1,1] op_sel_hi:[0,0] neg_hi:[0,1] clamp
+a3d801ccf2c67c23	v_pk_mul_lo_u16 v163, 1.0, s99 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[1,0] clamp
+0a0201cc487ee263	v_pk_mul_lo_u16 v10, s72, v63 op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[0,1]
+894101cc24faa57d	v_pk_mul_lo_u16 v137, s36, src_scc neg_lo:[1,1] neg_hi:[1,0]
+190201ccfff0494800400000	v_pk_mul_lo_u16 v25, 0x4000, 0.15915494 op_sel_hi:[1,0] neg_lo:[0,1] neg_hi:[0,1]
+010002cc040b1a00	v_pk_add_i16 v1, v4, v5 op_sel_hi:[0,0]
+a34002cca80fca12	v_pk_add_i16 v163, v168, v7 op_sel_hi:[0,1]
+849002ccf3d21a3b	v_pk_add_i16 v132, -1.0, v105 op_sel:[0,1] neg_lo:[1,0] clamp
+329a02cc5a329163	v_pk_add_i16 v50, s90, 25 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[0,1] clamp
+b54002cca36cdc1b	v_pk_add_i16 v181, 35, s54
+961102ccfff0797a78563412	v_pk_add_i16 v150, 0x12345678, 0.15915494 op_sel:[0,1] neg_lo:[1,1] neg_hi:[1,0]
+275202cc6b3c1556	v_pk_add_i16 v39, vcc_hi, 30 op_sel:[0,1] op_sel_hi:[0,1] neg_lo:[0,1] neg_hi:[0,1]
+854002cc8078111f	v_pk_add_i16 v133, 0, 60
+379202cc1c7ff239	v_pk_add_i16 v55, v28, v63 op_sel:[0,1] neg_lo:[1,0] neg_hi:[0,1] clamp
+140a02ccc146d53b	v_pk_add_i16 v20, -1, 35 op_sel:[1,0] neg_lo:[1,0] neg_hi:[0,1]
+85c002ccf812540b	v_pk_add_i16 v133, 0.15915494, s9 op_sel_hi:[1,0] clamp
+144002cc808c8d54	v_pk_add_i16 v20, 0, -6 op_sel_hi:[0,1] neg_lo:[0,1]
+6c0002cc63500112	v_pk_add_i16 v108, s99, 40 op_sel_hi:[0,1]
+190002cc546ff513	v_pk_add_i16 v25, v84, 55 op_sel_hi:[0,1]
+024002cc510efa19	v_pk_add_i16 v2, s81, v7
+2e1302ccff48540b003c003c	v_pk_add_i16 v46, 0x3c003c00, s36 op_sel:[0,1] op_sel_hi:[1,0] neg_hi:[1,1]
+b70002ccffd2fa090000ffff	v_pk_add_i16 v183, 0xffff0000, v105 op_sel_hi:[1,0]
+b85302cc93e1191b	v_pk_add_i16 v184, v147, 0.5 op_sel:[0,1] neg_hi:[1,1]
+214202cc85d3a66d	v_pk_add_i16 v33, v133, v105 op_sel_hi:[1,0] neg_lo:[1,1] neg_hi:[0,1]
+734b02ccf6f8c863	v_pk_add_i16 v115, 4.0, m0 op_sel:[1,0] op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[1,1]
+774002ccb671de0b	v_pk_add_i16 v119, v182, v56 op_sel_hi:[1,0]
+608302cc63a0550b	v_pk_add_i16 v96, s99, -16 op_sel_hi:[1,0] neg_hi:[1,1] clamp
+a3c002cca8ff3d120000ffff	v_pk_add_i16 v163, v168, 0xffff0000 op_sel_hi:[0,1] clamp
+8dc002cc9a0b1d04	v_pk_add_i16 v141, v154, 5 op_sel_hi:[0,0] clamp
+70cb02cc2af9fc60	v_pk_add_i16 v112, v42, m0 op_sel:[1,0] op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[1,1] clamp
+7fd902cc2d8ca665	v_pk_add_i16 v127, s45, v70 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[1,0] clamp
+5fc002cc8cd36a11	v_pk_add_i16 v95, v140, v105 op_sel_hi:[0,1] clamp
+2e8002cca8edd913	v_pk_add_i16 v46, v168, 4.0 op_sel_hi:[0,1] clamp
+871102cc36dcc504	v_pk_add_i16 v135, s54, src_private_limit op_sel:[0,1] op_sel_hi:[0,0] neg_hi:[1,0]
+088802cc3f1c525a	v_pk_add_i16 v8, s63, v14 op_sel:[1,0] neg_lo:[0,1] clamp
+c10002cc385b310e	v_pk_add_i16 v193, v56, 45 op_sel_hi:[1,0]
+7d8002cc2d3cc50c	v_pk_add_i16 v125, s45, 30 op_sel_hi:[1,0] clamp
+3b8002cc7d90e00b	v_pk_add_i16 v59, null, s72 op_sel_hi:[1,0] clamp
+00d002ccb264bd6e	v_pk_add_i16 v0, 50, 50 op_sel:[0,1] op_sel_hi:[1,0] neg_lo:[1,1] clamp
+029202cc8a7e8e12	v_pk_add_i16 v2, 10, v63 op_sel:[0,1] op_sel_hi:[0,1] neg_hi:[0,1] clamp
+939902cc85f92842	v_pk_add_i16 v147, v133, m0 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[0,1] neg_hi:[1,0] clamp
+8f4202ccf27ee204	v_pk_add_i16 v143, 1.0, v63 op_sel_hi:[0,0] neg_hi:[0,1]
+46d102cca843f359	v_pk_add_i16 v70, v168, v161 op_sel:[0,1] neg_lo:[0,1] neg_hi:[1,0] clamp
+4cda02cc1c6fe16b	v_pk_add_i16 v76, v28, 55 op_sel:[1,1] op_sel_hi:[1,0] neg_lo:[1,1] neg_hi:[0,1] clamp
+634002ccf8f08d19	v_pk_add_i16 v99, 0.15915494, 0.15915494
+728b02ccb2ea0134	v_pk_add_i16 v114, 50, -2.0 op_sel:[1,0] op_sel_hi:[0,1] neg_lo:[1,0] neg_hi:[1,1] clamp
+8f8802cc00d26e0d	v_pk_add_i16 v143, s0, v105 op_sel:[1,0] op_sel_hi:[1,0] clamp
+3b1002ccc678f531	v_pk_add_i16 v59, -6, 60 op_sel:[0,1] op_sel_hi:[0,1] neg_lo:[1,0]
+500802cc5a46a62d	v_pk_add_i16 v80, s90, v35 op_sel:[1,0] op_sel_hi:[1,0] neg_lo:[1,0]
+794302ccf214dd2d	v_pk_add_i16 v121, 1.0, 10 op_sel_hi:[1,0] neg_lo:[1,0] neg_hi:[1,1]
+055302cc2347de13	v_pk_add_i16 v5, v35, v35 op_sel:[0,1] op_sel_hi:[0,1] neg_hi:[1,1]
+c14202cc24547a1a	v_pk_add_i16 v193, s36, v42 neg_hi:[0,1]
+945802ccf3125413	v_pk_add_i16 v148, -1.0, s9 op_sel:[1,1] op_sel_hi:[0,1]
+498002ccf88c3206	v_pk_add_i16 v73, 0.15915494, v70 op_sel_hi:[0,0] clamp
+7c4002cc7c824d1e	v_pk_add_i16 v124, m0, -1
+734902ccfd78c16d	v_pk_add_i16 v115, src_scc, 60 op_sel:[1,0] op_sel_hi:[1,0] neg_lo:[1,1] neg_hi:[1,0]
+729a02cc1c379058	v_pk_add_i16 v114, v28, s27 op_sel:[1,1] neg_lo:[0,1] neg_hi:[0,1] clamp
+9c1202cc4663da53	v_pk_add_i16 v156, v70, v49 op_sel:[0,1] op_sel_hi:[0,1] neg_lo:[0,1] neg_hi:[0,1]
+4d4002cc7c8ce113	v_pk_add_i16 v77, m0, -6 op_sel_hi:[0,1]
+7dca02cc238d895d	v_pk_add_i16 v125, v35, -6 op_sel:[1,0] neg_lo:[0,1] neg_hi:[0,1] clamp
+010003cc040b1a00	v_pk_sub_i16 v1, v4, v5 op_sel_hi:[0,0]
+3d4003cc6a0aab11	v_pk_sub_i16 v61, vcc_lo, v133 op_sel_hi:[0,1]
+390003ccf3002d1b	v_pk_sub_i16 v57, -1.0, 0
+7fd303ccb6f9e04c	v_pk_sub_i16 v127, v182, m0 op_sel:[0,1] op_sel_hi:[1,0] neg_lo:[0,1] neg_hi:[1,1] clamp
+83c303ccf6b4c42c	v_pk_sub_i16 v131, 4.0, s90 op_sel_hi:[1,0] neg_lo:[1,0] neg_hi:[1,1] clamp
+bc4003cc07630200	v_pk_sub_i16 v188, v7, v49 op_sel_hi:[0,0]
+b21303cc46fbf161	v_pk_sub_i16 v178, v70, src_scc op_sel:[0,1] op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[1,1]
+678a03ccf30a3765	v_pk_sub_i16 v103, -1.0, v133 op_sel:[1,0] op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[0,1] clamp
+b28803cc1c018d4c	v_pk_sub_i16 v178, v28, 0 op_sel:[1,0] op_sel_hi:[1,0] neg_lo:[0,1] clamp
+44d103ccad62720c	v_pk_sub_i16 v68, 45, v49 op_sel:[0,1] op_sel_hi:[1,0] neg_hi:[1,0] clamp
+021b03cc12fa693e	v_pk_sub_i16 v2, s18, src_scc op_sel:[1,1] neg_lo:[1,0] neg_hi:[1,1]
+868003cc00882301	v_pk_sub_i16 v134, s0, v196 op_sel_hi:[0,0] clamp
+361803cc70b5c404	v_pk_sub_i16 v54, v112, s90 op_sel:[1,1] op_sel_hi:[0,0]
+adc003ccf2f0691e	v_pk_sub_i16 v173, 1.0, 0.15915494 clamp
+234003cc7eb7fe1c	v_pk_sub_i16 v35, v126, v91
+695a03cc5b5ba93c	v_pk_sub_i16 v105, v91, 45 op_sel:[1,1] neg_lo:[1,0] neg_hi:[0,1]
+a70003cccb54f20a	v_pk_sub_i16 v167, -11, v42 op_sel_hi:[1,0]
+c41203cccb5a5155	v_pk_sub_i16 v196, -11, 45 op_sel:[0,1] op_sel_hi:[0,1] neg_lo:[0,1] neg_hi:[0,1]
+6dd003cc2496d958	v_pk_sub_i16 v109, s36, -11 op_sel:[0,1] neg_lo:[0,1] clamp
+21d203cc7eb74a78	v_pk_sub_i16 v33, v126, v91 op_sel:[0,1] neg_lo:[1,1] neg_hi:[0,1] clamp
+bfc003ccf3a06906	v_pk_sub_i16 v191, -1.0, -16 op_sel_hi:[0,0] clamp
+470003ccf278111f	v_pk_sub_i16 v71, 1.0, 60
+951903ccf8d4b460	v_pk_sub_i16 v149, 0.15915494, vcc_lo op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[1,0]
+4ec003cc7e420713	v_pk_sub_i16 v78, exec_lo, v161 op_sel_hi:[0,1] clamp
+021903cc24502f2b	v_pk_sub_i16 v2, s36, v168 op_sel:[1,1] op_sel_hi:[1,0] neg_lo:[1,0] neg_hi:[1,0]
+b51903cc386fc543	v_pk_sub_i16 v181, v56, 55 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[0,1] neg_hi:[1,0]
+91c003cca36ca30e	v_pk_sub_i16 v145, 35, v182 op_sel_hi:[1,0] clamp
+421903cc1b48645a	v_pk_sub_i16 v66, s27, s36 op_sel:[1,1] neg_lo:[0,1] neg_hi:[1,0]
+174103ccc1e65145	v_pk_sub_i16 v23, -1, -1.0 op_sel_hi:[0,0] neg_lo:[0,1] neg_hi:[1,0]
+8c9903cca3e6052b	v_pk_sub_i16 v140, 35, -1.0 op_sel:[1,1] op_sel_hi:[1,0] neg_lo:[1,0] neg_hi:[1,0] clamp
+be4003ccc1f8d413	v_pk_sub_i16 v190, -1, m0 op_sel_hi:[0,1]
+3f4003cca8a26806	v_pk_sub_i16 v63, 40, s81 op_sel_hi:[0,0]
+be5903cc36fc2e7b	v_pk_sub_i16 v190, s54, v126 op_sel:[1,1] neg_lo:[1,1] neg_hi:[1,0]
+86db03ccf6b62a3a	v_pk_sub_i16 v134, 4.0, v91 op_sel:[1,1] neg_lo:[1,0] neg_hi:[1,1] clamp
+779903ccf6fe1925003c003c	v_pk_sub_i16 v119, 4.0, 0x3c003c00 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[1,0] neg_hi:[1,0] clamp
+78c803cc6346512a	v_pk_sub_i16 v120, s99, 35 op_sel:[1,0] op_sel_hi:[1,0] neg_lo:[1,0] clamp
+401903cc366c437b	v_pk_sub_i16 v64, s54, v182 op_sel:[1,1] neg_lo:[1,1] neg_hi:[1,0]
+6ac203cca191886d	v_pk_sub_i16 v106, v161, s72 op_sel_hi:[1,0] neg_lo:[1,1] neg_hi:[0,1] clamp
+755a03cc94f0fd00	v_pk_sub_i16 v117, 20, 0.15915494 op_sel:[1,1] op_sel_hi:[0,0] neg_hi:[0,1]
+908003ccc61cda16	v_pk_sub_i16 v144, -6, v14 op_sel_hi:[0,1] clamp
+459203cc1cd59003	v_pk_sub_i16 v69, v28, vcc_lo op_sel:[0,1] op_sel_hi:[0,0] neg_hi:[0,1] clamp
+a04003ccfd46420b	v_pk_sub_i16 v160, src_scc, v35 op_sel_hi:[1,0]
+87c003cca85a6c0d	v_pk_sub_i16 v135, 40, s45 op_sel_hi:[1,0] clamp
+958003ccf2dcfd1c	v_pk_sub_i16 v149, 1.0, src_private_limit clamp
+33c203cc36a8da0e	v_pk_sub_i16 v51, s54, v84 op_sel_hi:[1,0] neg_hi:[0,1] clamp
+278003ccff54020a78563412	v_pk_sub_i16 v39, 0x12345678, v42 op_sel_hi:[1,0] clamp
+c30003cc4df1f925	v_pk_sub_i16 v195, v77, 0.15915494 op_sel_hi:[0,0] neg_lo:[1,0]
+130003cc7c7af30a	v_pk_sub_i16 v19, m0, v189 op_sel_hi:[1,0]
+7fc103cc00e45175	v_pk_sub_i16 v127, s0, 1.0 op_sel_hi:[0,1] neg_lo:[1,1] neg_hi:[1,0] clamp
+c24003cc8ca12518	v_pk_sub_i16 v194, v140, -16
+960003cc94f02d03	v_pk_sub_i16 v150, 20, 0.15915494 op_sel_hi:[0,0]
+65c003cc2434f70e	v_pk_sub_i16 v101, s36, v154 op_sel_hi:[1,0] clamp
+010004cc040b1a00	v_pk_lshlrev_b16 v1, v4, v5 op_sel_hi:[0,0]
+a0c004ccad70da18	v_pk_lshlrev_b16 v160, 45, v56 clamp
+124004cc93fddc62	v_pk_lshlrev_b16 v18, v147, exec_lo op_sel_hi:[0,0] neg_lo:[1,1]
+828004cc1be4dd1b	v_pk_lshlrev_b16 v130, s27, 1.0 clamp
+55d104cca843bf26	v_pk_lshlrev_b16 v85, v168, v161 op_sel:[0,1] op_sel_hi:[0,0] neg_lo:[1,0] neg_hi:[1,0] clamp
+9a4004ccf7e88d14	v_pk_lshlrev_b16 v154, -4.0, 2.0 op_sel_hi:[0,1]
+9d8004cc5a24685e	v_pk_lshlrev_b16 v157, s90, s18 neg_lo:[0,1] clamp
+688004cc0eed411b	v_pk_lshlrev_b16 v104, v14, 4.0 clamp
+058004cc0737a819	v_pk_lshlrev_b16 v5, v7, s27 clamp
+290004ccf37ee003	v_pk_lshlrev_b16 v41, -1.0, s63 op_sel_hi:[0,0]
+840804cc63c4721c	v_pk_lshlrev_b16 v132, s99, v98 op_sel:[1,0]
+c24b04ccd0b43c3a	v_pk_lshlrev_b16 v194, -16, s90 op_sel:[1,0] neg_lo:[1,0] neg_hi:[1,1]
+c58804ccc16ef52b	v_pk_lshlrev_b16 v197, -1, 55 op_sel:[1,0] op_sel_hi:[1,0] neg_lo:[1,0] clamp
+9b4904cc8000d963	v_pk_lshlrev_b16 v155, 0, 0 op_sel:[1,0] op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[1,0]
+281004cc31f1a969	v_pk_lshlrev_b16 v40, v49, 0.15915494 op_sel:[0,1] op_sel_hi:[1,0] neg_lo:[1,1]
+bdc904ccf8faa904	v_pk_lshlrev_b16 v189, 0.15915494, src_scc op_sel:[1,0] op_sel_hi:[0,0] neg_hi:[1,0] clamp
+074a04cc126ea13e	v_pk_lshlrev_b16 v7, s18, 55 op_sel:[1,0] neg_lo:[1,0] neg_hi:[0,1]
+8ed904cca3a2842e	v_pk_lshlrev_b16 v142, 35, s81 op_sel:[1,1] op_sel_hi:[1,0] neg_lo:[1,0] neg_hi:[1,0] clamp
+1d8004cc00398e12	v_pk_lshlrev_b16 v29, v0, v28 op_sel_hi:[0,1] clamp
+7a8904cc69fb8865	v_pk_lshlrev_b16 v122, v105, null op_sel:[1,0] op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[1,0] clamp
+1e1104cc3f0f6a23	v_pk_lshlrev_b16 v30, v63, v7 op_sel:[0,1] op_sel_hi:[0,0] neg_lo:[1,0] neg_hi:[1,0]
+79c004ccff6ccc1b07000000	v_pk_lshlrev_b16 v121, lit(0x7), s54 clamp
+b78804cc0efff576efbeadde	v_pk_lshlrev_b16 v183, v14, 0xdeadbeef op_sel:[1,0] op_sel_hi:[0,1] neg_lo:[1,1] clamp
+13c004cc80f0c90b	v_pk_lshlrev_b16 v19, 0, 0.15915494 op_sel_hi:[1,0] clamp
+9f1304cc2a499073	v_pk_lshlrev_b16 v159, v42, s36 op_sel:[0,1] op_sel_hi:[0,1] neg_lo:[1,1] neg_hi:[1,1]
+090804cc5b97a102	v_pk_lshlrev_b16 v9, v91, -11 op_sel:[1,0] op_sel_hi:[0,0]
+7fd204ccf548cc43	v_pk_lshlrev_b16 v127, -2.0, s36 op_sel:[0,1] op_sel_hi:[0,0] neg_lo:[0,1] neg_hi:[0,1] clamp
+8b9804cc7ee13a64	v_pk_lshlrev_b16 v139, v126, v112 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[1,1] clamp
+50c004cc6be8f94d	v_pk_lshlrev_b16 v80, vcc_hi, 2.0 op_sel_hi:[1,0] neg_lo:[0,1] clamp
+18c004cc7eeb310e	v_pk_lshlrev_b16 v24, v126, -2.0 op_sel_hi:[1,0] clamp
+2e9004ccc4b70633	v_pk_lshlrev_b16 v46, v196, v91 op_sel:[0,1] op_sel_hi:[0,1] neg_lo:[1,0] clamp
+a41a04cc99ee6953	v_pk_lshlrev_b16 v164, 25, -4.0 op_sel:[1,1] op_sel_hi:[0,1] neg_lo:[0,1] neg_hi:[0,1]
+acd004ccd07ef831	v_pk_lshlrev_b16 v172, -16, s63 op_sel:[0,1] op_sel_hi:[0,1] neg_lo:[1,0] clamp
+3bc004ccb20a1d14	v_pk_lshlrev_b16 v59, 50, 5 op_sel_hi:[0,1] clamp
+8bc304ccfd1c0673	v_pk_lshlrev_b16 v139, src_scc, v14 op_sel_hi:[0,1] neg_lo:[1,1] neg_hi:[1,1] clamp
+bf0004ccd064e10b	v_pk_lshlrev_b16 v191, -16, 50 op_sel_hi:[1,0]
+31c004ccade6a50d	v_pk_lshlrev_b16 v49, 45, -1.0 op_sel_hi:[1,0] clamp
+76db04cc6300ca02	v_pk_lshlrev_b16 v118, s99, v0 op_sel:[1,1] op_sel_hi:[0,0] neg_hi:[1,1] clamp
+a94004cccb620613	v_pk_lshlrev_b16 v169, -11, v49 op_sel_hi:[0,1]
+c0d304ccf8dcf56b	v_pk_lshlrev_b16 v192, 0.15915494, src_private_limit op_sel:[0,1] op_sel_hi:[1,0] neg_lo:[1,1] neg_hi:[1,1] clamp
+b70004cc7d50c90b	v_pk_lshlrev_b16 v183, null, 40 op_sel_hi:[1,0]
+8e8b04cc5ba1c163	v_pk_lshlrev_b16 v142, v91, -16 op_sel:[1,0] op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[1,1] clamp
+794b04ccf850a503	v_pk_lshlrev_b16 v121, 0.15915494, 40 op_sel:[1,0] op_sel_hi:[0,0] neg_hi:[1,1]
+5d9b04ccbc246806	v_pk_lshlrev_b16 v93, 60, s18 op_sel:[1,1] op_sel_hi:[0,0] neg_hi:[1,1] clamp
+100004cc3fd67c13	v_pk_lshlrev_b16 v16, s63, vcc_hi op_sel_hi:[0,1]
+808004cca8e92902	v_pk_lshlrev_b16 v128, v168, 2.0 op_sel_hi:[0,0] clamp
+19d904ccfdec713c	v_pk_lshlrev_b16 v25, src_scc, 4.0 op_sel:[1,1] neg_lo:[1,0] neg_hi:[1,0] clamp
+271104ccf2504968	v_pk_lshlrev_b16 v39, 1.0, 40 op_sel:[0,1] op_sel_hi:[1,0] neg_lo:[1,1] neg_hi:[1,0]
+78c204cc461f2d5b	v_pk_lshlrev_b16 v120, v70, 15 neg_lo:[0,1] neg_hi:[0,1] clamp
+270004ccff0ede1b0000803f	v_pk_lshlrev_b16 v39, lit(0x3f800000), v7
+a39004ccc4e35162	v_pk_lshlrev_b16 v163, v196, -0.5 op_sel:[0,1] op_sel_hi:[0,0] neg_lo:[1,1] clamp
+bf1004cc2482f97d	v_pk_lshlrev_b16 v191, s36, -1 op_sel:[0,1] neg_lo:[1,1]
+278004cc62e17d1b	v_pk_lshlrev_b16 v39, v98, 0.5 clamp
+43d204cc63322578	v_pk_lshlrev_b16 v67, s99, 25 op_sel:[0,1] neg_lo:[1,1] neg_hi:[0,1] clamp
+010005cc040b1a00	v_pk_lshrrev_b16 v1, v4, v5 op_sel_hi:[0,0]
+8ac005cc1b908c04	v_pk_lshrrev_b16 v138, s27, s72 op_sel_hi:[0,0] clamp
+800805cc7e97d553	v_pk_lshrrev_b16 v128, v126, -11 op_sel:[1,0] op_sel_hi:[0,1] neg_lo:[0,1]
+100805cc237f6809	v_pk_lshrrev_b16 v16, v35, s63 op_sel:[1,0] op_sel_hi:[1,0]
+a54905cc38f16502	v_pk_lshrrev_b16 v165, v56, 0.15915494 op_sel:[1,0] op_sel_hi:[0,0] neg_hi:[1,0]
+3eda05cca37e8e2c	v_pk_lshrrev_b16 v62, 35, v63 op_sel:[1,1] op_sel_hi:[1,0] neg_lo:[1,0] neg_hi:[0,1] clamp
+7f1305cc1bec8955	v_pk_lshrrev_b16 v127, s27, 4.0 op_sel:[0,1] op_sel_hi:[0,1] neg_lo:[0,1] neg_hi:[1,1]
+8cc005cc2afbc803	v_pk_lshrrev_b16 v140, v42, null op_sel_hi:[0,0] clamp
+bac005ccd0d23e1a	v_pk_lshrrev_b16 v186, -16, v105 clamp
+b99b05ccc4fd3a5c	v_pk_lshrrev_b16 v185, v196, v126 op_sel:[1,1] neg_lo:[0,1] neg_hi:[1,1] clamp
+3d1b05cc3f65f131	v_pk_lshrrev_b16 v61, v63, 50 op_sel:[1,1] op_sel_hi:[0,1] neg_lo:[1,0] neg_hi:[1,1]
+9a4005cc706fa50d	v_pk_lshrrev_b16 v154, v112, 55 op_sel_hi:[1,0]
+bf1905cc639a7214	v_pk_lshrrev_b16 v191, s99, v77 op_sel:[1,1] op_sel_hi:[0,1] neg_hi:[1,0]
+734305cc4de1cd63	v_pk_lshrrev_b16 v115, v77, 0.5 op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[1,1]
+285305ccbd7ff041	v_pk_lshrrev_b16 v40, v189, s63 op_sel:[0,1] op_sel_hi:[0,0] neg_lo:[0,1] neg_hi:[1,1]
+4cc005cc99245404	v_pk_lshrrev_b16 v76, 25, s18 op_sel_hi:[0,0] clamp
+401105ccffe0366d00400000	v_pk_lshrrev_b16 v64, 0x4000, v112 op_sel:[0,1] op_sel_hi:[1,0] neg_lo:[1,1] neg_hi:[1,0]
+775a05cc46f10134	v_pk_lshrrev_b16 v119, v70, 0.15915494 op_sel:[1,1] op_sel_hi:[0,1] neg_lo:[1,0] neg_hi:[0,1]
+05c005cc150b7f0b	v_pk_lshrrev_b16 v5, v21, v133 op_sel_hi:[1,0] clamp
+c69805cc8c7bdf4d	v_pk_lshrrev_b16 v198, v140, v189 op_sel:[1,1] op_sel_hi:[1,0] neg_lo:[0,1] clamp
+8f8805cc80d2da76	v_pk_lshrrev_b16 v143, 0, v105 op_sel:[1,0] op_sel_hi:[0,1] neg_lo:[1,1] clamp
+8d9a05cc0eeffa51	v_pk_lshrrev_b16 v141, v14, v119 op_sel:[1,1] op_sel_hi:[0,1] neg_lo:[0,1] neg_hi:[0,1] clamp
+bfc005cc1b14bd0e	v_pk_lshrrev_b16 v191, s27, 10 op_sel_hi:[1,0] clamp
+63ca05cc7c546a71	v_pk_lshrrev_b16 v99, m0, v42 op_sel:[1,0] op_sel_hi:[0,1] neg_lo:[1,1] neg_hi:[0,1] clamp
+328005cc23efdd03	v_pk_lshrrev_b16 v50, v35, -4.0 op_sel_hi:[0,0] clamp
+540005ccaf5b8d19	v_pk_lshrrev_b16 v84, v175, 45
+494005ccf7eeb618	v_pk_lshrrev_b16 v73, -4.0, v119
+225a05cc7c34db76	v_pk_lshrrev_b16 v34, m0, v154 op_sel:[1,1] op_sel_hi:[0,1] neg_lo:[1,1] neg_hi:[0,1]
+4fc005cc6215ad11	v_pk_lshrrev_b16 v79, v98, 10 op_sel_hi:[0,1] clamp
+1e5b05cc12b4f426	v_pk_lshrrev_b16 v30, s18, s90 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[1,0] neg_hi:[1,1]
+8f8b05cc9add5122	v_pk_lshrrev_b16 v143, v154, src_private_limit op_sel:[1,0] op_sel_hi:[0,0] neg_lo:[1,0] neg_hi:[1,1] clamp
+494905ccb2c6783a	v_pk_lshrrev_b16 v73, 50, s99 op_sel:[1,0] neg_lo:[1,0] neg_hi:[1,0]
+630005cc00eb0114	v_pk_lshrrev_b16 v99, v0, -2.0 op_sel_hi:[0,1]
+070805ccc4f11913	v_pk_lshrrev_b16 v7, v196, 0.15915494 op_sel:[1,0] op_sel_hi:[0,1]
+870005ccf8fec514efbeadde	v_pk_lshrrev_b16 v135, 0.15915494, 0xdeadbeef op_sel_hi:[0,1]
+3d4005cc8038da50	v_pk_lshrrev_b16 v61, 0, v28 op_sel_hi:[0,1] neg_lo:[0,1]
+091b05cc947adb56	v_pk_lshrrev_b16 v9, 20, v189 op_sel:[1,1] op_sel_hi:[0,1] neg_lo:[0,1] neg_hi:[1,1]
+87c005ccee0a9303	v_pk_lshrrev_b16 v135, src_private_limit, v133 op_sel_hi:[0,0] clamp
+b2da05cc6b38c664	v_pk_lshrrev_b16 v178, vcc_hi, v28 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[0,1] clamp
+95d805cca8b48c2a	v_pk_lshrrev_b16 v149, 40, s90 op_sel:[1,1] op_sel_hi:[1,0] neg_lo:[1,0] clamp
+458105cc9e7a4b68	v_pk_lshrrev_b16 v69, 30, v189 op_sel_hi:[1,0] neg_lo:[1,1] neg_hi:[1,0] clamp
+200005cc545fab0c	v_pk_lshrrev_b16 v32, v84, v175 op_sel_hi:[1,0]
+330805ccf148d00b	v_pk_lshrrev_b16 v51, -0.5, s36 op_sel:[1,0] op_sel_hi:[1,0]
+b5c005cc94fc2c1b	v_pk_lshrrev_b16 v181, 20, exec_lo clamp
+950805cc1c7b6b09	v_pk_lshrrev_b16 v149, v28, v189 op_sel:[1,0] op_sel_hi:[1,0]
+8ec205cc2325f845	v_pk_lshrrev_b16 v142, v35, s18 op_sel_hi:[0,0] neg_lo:[0,1] neg_hi:[0,1] clamp
+4c4005cca1e1d61b	v_pk_lshrrev_b16 v76, v161, v112
+b58105cc702b7a0a	v_pk_lshrrev_b16 v181, v112, v21 op_sel_hi:[1,0] neg_hi:[1,0] clamp
+c3c005ccf8fac91b	v_pk_lshrrev_b16 v195, 0.15915494, src_scc clamp
+765305cc8f5afc18	v_pk_lshrrev_b16 v118, 15, s45 op_sel:[0,1] neg_hi:[1,1]
+a8c005ccc170a615	v_pk_lshrrev_b16 v168, -1, v56 op_sel_hi:[0,1] clamp
+0dc005cca87fca0b	v_pk_lshrrev_b16 v13, v168, v63 op_sel_hi:[1,0] clamp
+b28205ccb262b65a	v_pk_lshrrev_b16 v178, 50, v49 neg_lo:[0,1] neg_hi:[0,1] clamp
+208005cc932b361d	v_pk_lshrrev_b16 v32, v147, v21 clamp
+010006cc040b1a00	v_pk_ashrrev_i16 v1, v4, v5 op_sel_hi:[0,0]
+1a9806ccf3342341	v_pk_ashrrev_i16 v26, -1.0, v154 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[0,1] clamp
+ae4306ccc66edd65	v_pk_ashrrev_i16 v174, -6, 55 op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[1,1]
+678206ccf8e6f50e	v_pk_ashrrev_i16 v103, 0.15915494, -1.0 op_sel_hi:[1,0] neg_hi:[0,1] clamp
+9e4b06ccf3fe015a07000000	v_pk_ashrrev_i16 v158, -1.0, lit(0x7) op_sel:[1,0] neg_lo:[0,1] neg_hi:[1,1]
+425206cc09a0c903	v_pk_ashrrev_i16 v66, s9, -16 op_sel:[0,1] op_sel_hi:[0,0] neg_hi:[0,1]
+c35906ccf542175e	v_pk_ashrrev_i16 v195, -2.0, v161 op_sel:[1,1] neg_lo:[0,1] neg_hi:[1,0]
+a8c006cc70b51412	v_pk_ashrrev_i16 v168, v112, s90 op_sel_hi:[0,1] clamp
+34c006ccf118b702	v_pk_ashrrev_i16 v52, -0.5, v140 op_sel_hi:[0,0] clamp
+961906cc0043bb43	v_pk_ashrrev_i16 v150, v0, v161 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[0,1] neg_hi:[1,0]
+410006ccf05efb15	v_pk_ashrrev_i16 v65, 0.5, v175 op_sel_hi:[0,1]
+650006cc128c191d	v_pk_ashrrev_i16 v101, s18, -6
+239906cc2a5b195b	v_pk_ashrrev_i16 v35, v42, 45 op_sel:[1,1] neg_lo:[0,1] neg_hi:[1,0] clamp
+534006cc5a00f51b	v_pk_ashrrev_i16 v83, s90, 0
+024006cc510ebe0e	v_pk_ashrrev_i16 v2, s81, v7 op_sel_hi:[1,0]
+7e4106cc00978d64	v_pk_ashrrev_i16 v126, v0, -11 op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[1,0]
+4d1806cc7c0adf7b	v_pk_ashrrev_i16 v77, m0, v133 op_sel:[1,1] neg_lo:[1,1]
+b10206cc5178157e	v_pk_ashrrev_i16 v177, s81, 60 neg_lo:[1,1] neg_hi:[0,1]
+c7c006ccf5f0c11d	v_pk_ashrrev_i16 v199, -2.0, 0.15915494 clamp
+679b06cc8ffac013	v_pk_ashrrev_i16 v103, 15, null op_sel:[1,1] op_sel_hi:[0,1] neg_hi:[1,1] clamp
+a69b06cc15e78d61	v_pk_ashrrev_i16 v166, v21, -1.0 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[1,1] clamp
+861206cc38e19178	v_pk_ashrrev_i16 v134, v56, 0.5 op_sel:[0,1] neg_lo:[1,1] neg_hi:[0,1]
+b28006cc091e3116	v_pk_ashrrev_i16 v178, s9, 15 op_sel_hi:[0,1] clamp
+841806cc380fc21b	v_pk_ashrrev_i16 v132, v56, v7 op_sel:[1,1]
+1dc006cc9e006c10	v_pk_ashrrev_i16 v29, 30, s0 op_sel_hi:[0,1] clamp
+058006cc855a8d0c	v_pk_ashrrev_i16 v5, 5, 45 op_sel_hi:[1,0] clamp
+500006ccf5fcf613	v_pk_ashrrev_i16 v80, -2.0, v126 op_sel_hi:[0,1]
+534006cccb6ca413	v_pk_ashrrev_i16 v83, -11, s54 op_sel_hi:[0,1]
+9bc006ccee1c060b	v_pk_ashrrev_i16 v155, src_private_limit, v14 op_sel_hi:[1,0] clamp
+a31006cc9a89c714	v_pk_ashrrev_i16 v163, v154, v196 op_sel:[0,1] op_sel_hi:[0,1]
+804006cc9442ff10	v_pk_ashrrev_i16 v128, 20, v161 op_sel_hi:[0,1]
+9ec006cc7ee97104	v_pk_ashrrev_i16 v158, v126, 2.0 op_sel_hi:[0,0] clamp
+72c106ccfd186b09	v_pk_ashrrev_i16 v114, src_scc, v140 op_sel_hi:[1,0] neg_hi:[1,0] clamp
+7c5906cc8f6c3745	v_pk_ashrrev_i16 v124, 15, v182 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[0,1] neg_hi:[1,0]
+185b06ccbc5a3d6a	v_pk_ashrrev_i16 v24, 60, 45 op_sel:[1,1] op_sel_hi:[1,0] neg_lo:[1,1] neg_hi:[1,1]
+ba9a06ccc17a4303	v_pk_ashrrev_i16 v186, -1, v189 op_sel:[1,1] op_sel_hi:[0,0] neg_hi:[0,1] clamp
+0e4306cc93f14143	v_pk_ashrrev_i16 v14, v147, 0.15915494 op_sel_hi:[0,0] neg_lo:[0,1] neg_hi:[1,1]
+aac806cc126ea91c	v_pk_ashrrev_i16 v170, s18, 55 op_sel:[1,0] clamp
+bad806cc2aefa152	v_pk_ashrrev_i16 v186, v42, -4.0 op_sel:[1,1] op_sel_hi:[0,1] neg_lo:[0,1] clamp
+5b9106cc0039d613	v_pk_ashrrev_i16 v91, v0, v28 op_sel:[0,1] op_sel_hi:[0,1] neg_hi:[1,0] clamp
+b00306ccf534873e	v_pk_ashrrev_i16 v176, -2.0, v154 neg_lo:[1,0] neg_hi:[1,1]
+140006cc7dfaac11	v_pk_ashrrev_i16 v20, null, null op_sel_hi:[0,1]
+590006ccbcfa6d05	v_pk_ashrrev_i16 v89, 60, src_scc op_sel_hi:[0,0]
+9b4006cc3febf503	v_pk_ashrrev_i16 v155, v63, -2.0 op_sel_hi:[0,0]
+49d806ccc62a9200	v_pk_ashrrev_i16 v73, -6, v21 op_sel:[1,1] op_sel_hi:[0,0] clamp
+9a8006cc7cf81007	v_pk_ashrrev_i16 v154, m0, m0 op_sel_hi:[0,0] clamp
+749006cc93350308	v_pk_ashrrev_i16 v116, v147, v154 op_sel:[0,1] op_sel_hi:[1,0] clamp
+a64006cc09e47d1b	v_pk_ashrrev_i16 v166, s9, 1.0
+88c006cc51e29113	v_pk_ashrrev_i16 v136, s81, -0.5 op_sel_hi:[0,1] clamp
+5f8006cca8f9781a	v_pk_ashrrev_i16 v95, v168, m0 clamp
+535006cc7ce6ad79	v_pk_ashrrev_i16 v83, m0, -1.0 op_sel:[0,1] neg_lo:[1,1]
+678006ccf8c6b42a	v_pk_ashrrev_i16 v103, 0.15915494, s99 op_sel_hi:[1,0] neg_lo:[1,0] clamp
+48d006ccf6d4cc5b	v_pk_ashrrev_i16 v72, 4.0, vcc_lo op_sel:[0,1] neg_lo:[0,1] clamp
+bd5b06cca3fadc6a	v_pk_ashrrev_i16 v189, 35, null op_sel:[1,1] op_sel_hi:[1,0] neg_lo:[1,1] neg_hi:[1,1]
+a34006ccf10ec613	v_pk_ashrrev_i16 v163, -0.5, v7 op_sel_hi:[0,1]
+010007cc040b1a00	v_pk_max_i16 v1, v4, v5 op_sel_hi:[0,0]
+96c007cc46973914	v_pk_max_i16 v150, v70, -11 op_sel_hi:[0,1] clamp
+444007cca3fa6c1d	v_pk_max_i16 v68, 35, null
+1ac007cceef0f513	v_pk_max_i16 v26, src_private_limit, 0.15915494 op_sel_hi:[0,1] clamp
+c40007ccb75a6901	v_pk_max_i16 v196, 55, 45 op_sel_hi:[0,0]
+c38007cc856d380c	v_pk_max_i16 v195, v133, s54 op_sel_hi:[1,0] clamp
+088007cc62e7e103	v_pk_max_i16 v8, v98, -1.0 op_sel_hi:[0,0] clamp
+5b0007cc4643bb0b	v_pk_max_i16 v91, v70, v161 op_sel_hi:[1,0]
+73c807ccadfee14307000000	v_pk_max_i16 v115, 45, lit(0x7) op_sel:[1,0] op_sel_hi:[0,0] neg_lo:[0,1] clamp
+a50b07cc48fe1d0c0000ffff	v_pk_max_i16 v165, s72, 0xffff0000 op_sel:[1,0] op_sel_hi:[1,0] neg_hi:[1,1]
+058a07cc1bf8e06c	v_pk_max_i16 v5, s27, m0 op_sel:[1,0] op_sel_hi:[1,0] neg_lo:[1,1] neg_hi:[0,1] clamp
+139207cc70e1c664	v_pk_max_i16 v19, v112, v112 op_sel:[0,1] op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[0,1] clamp
+7ada07ccf6f0d91e	v_pk_max_i16 v122, 4.0, 0.15915494 op_sel:[1,1] neg_hi:[0,1] clamp
+63c007ccffe04a0800400000	v_pk_max_i16 v99, 0x4000, v112 op_sel_hi:[1,0] clamp
+a84807cc096ef122	v_pk_max_i16 v168, s9, 55 op_sel:[1,0] op_sel_hi:[0,0] neg_lo:[1,0]
+854007cc7dc4f603	v_pk_max_i16 v133, null, v98 op_sel_hi:[0,0]
+098907ccf238d633	v_pk_max_i16 v9, 1.0, v28 op_sel:[1,0] op_sel_hi:[0,1] neg_lo:[1,0] neg_hi:[1,0] clamp
+b55207cc850bfd2c	v_pk_max_i16 v181, v133, 5 op_sel:[0,1] op_sel_hi:[1,0] neg_lo:[1,0] neg_hi:[0,1]
+928007cc38e5912b	v_pk_max_i16 v146, v56, 1.0 op_sel_hi:[1,0] neg_lo:[1,0] clamp
+75c307ccbca8ce6b	v_pk_max_i16 v117, 60, v84 op_sel_hi:[1,0] neg_lo:[1,1] neg_hi:[1,1] clamp
+61c207cc99f0716c	v_pk_max_i16 v97, 25, 0.15915494 op_sel_hi:[1,0] neg_lo:[1,1] neg_hi:[0,1] clamp
+6a0b07cc9efc0030	v_pk_max_i16 v106, 30, exec_lo op_sel:[1,0] op_sel_hi:[0,1] neg_lo:[1,0] neg_hi:[1,1]
+b4d307ccfff0f51befbeadde	v_pk_max_i16 v180, 0xdeadbeef, 0.15915494 op_sel:[0,1] neg_hi:[1,1] clamp
+460007ccad42cb12	v_pk_max_i16 v70, 45, v161 op_sel_hi:[0,1]
+530b07ccf154fe48	v_pk_max_i16 v83, -0.5, v42 op_sel:[1,0] op_sel_hi:[1,0] neg_lo:[0,1] neg_hi:[1,1]
+5b8807ccfffaac1178563412	v_pk_max_i16 v91, 0x12345678, null op_sel:[1,0] op_sel_hi:[0,1] clamp
+8bc007cc3839fe78	v_pk_max_i16 v139, v56, v28 neg_lo:[1,1] clamp
+76c107cc0ee18516	v_pk_max_i16 v118, v14, 0.5 op_sel_hi:[0,1] neg_hi:[1,0] clamp
+3d9207cc93b5b412	v_pk_max_i16 v61, v147, s90 op_sel:[0,1] op_sel_hi:[0,1] neg_hi:[0,1] clamp
+058007cc12486c08	v_pk_max_i16 v5, s18, s36 op_sel_hi:[1,0] clamp
+4b4807cc07eda54d	v_pk_max_i16 v75, v7, 4.0 op_sel:[1,0] op_sel_hi:[1,0] neg_lo:[0,1]
+a8c007cc1b628a05	v_pk_max_i16 v168, s27, v49 op_sel_hi:[0,0] clamp
+319b07ccf348040b	v_pk_max_i16 v49, -1.0, s36 op_sel:[1,1] op_sel_hi:[1,0] neg_hi:[1,1] clamp
+77c007cc2ae1410b	v_pk_max_i16 v119, v42, 0.5 op_sel_hi:[1,0] clamp
+900007ccf56cc70b	v_pk_max_i16 v144, -2.0, v182 op_sel_hi:[1,0]
+c58b07ccff48007c0000ffff	v_pk_max_i16 v197, 0xffff0000, s36 op_sel:[1,0] neg_lo:[1,1] neg_hi:[1,1] clamp
+964207cc5a38ca62	v_pk_max_i16 v150, s90, v28 op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[0,1]
+85c007cc85904c0e	v_pk_max_i16 v133, 5, s72 op_sel_hi:[1,0] clamp
+b84107cceef0795a	v_pk_max_i16 v184, src_private_limit, 0.15915494 neg_lo:[0,1] neg_hi:[1,0]
+b08307ccf8a86e3d	v_pk_max_i16 v176, 0.15915494, v84 neg_lo:[1,0] neg_hi:[1,1] clamp
+b54007cc23a9ae19	v_pk_max_i16 v181, v35, v84
+814807cc8cefba6b	v_pk_max_i16 v129, v140, v119 op_sel:[1,0] op_sel_hi:[1,0] neg_lo:[1,1]
+410007cc23717e1b	v_pk_max_i16 v65, v35, v56
+1f8007cc8cc59203	v_pk_max_i16 v31, v140, v98 op_sel_hi:[0,0] clamp
+1ac907ccf3503f3a	v_pk_max_i16 v26, -1.0, v168 op_sel:[1,0] neg_lo:[1,0] neg_hi:[1,0] clamp
+881007ccbd0b4f1e	v_pk_max_i16 v136, v189, v133 op_sel:[0,1]
+5ac107cc5bfdcc7b	v_pk_max_i16 v90, v91, exec_lo neg_lo:[1,1] neg_hi:[1,0] clamp
+994007cc80fc2400	v_pk_max_i16 v153, 0, exec_lo op_sel_hi:[0,0]
+46db07cca8ee6a5e	v_pk_max_i16 v70, 40, v119 op_sel:[1,1] neg_lo:[0,1] neg_hi:[1,1] clamp
+3b4007cc7da8e21b	v_pk_max_i16 v59, null, v84
+50c807ccf6d2f609	v_pk_max_i16 v80, 4.0, v105 op_sel:[1,0] op_sel_hi:[1,0] clamp
+0c4007ccf5904800	v_pk_max_i16 v12, -2.0, s72 op_sel_hi:[0,0]
+144207cc1288df1a	v_pk_max_i16 v20, s18, v196 neg_hi:[0,1]
+6d5107ccf81e5142	v_pk_max_i16 v109, 0.15915494, 15 op_sel:[0,1] op_sel_hi:[0,0] neg_lo:[0,1] neg_hi:[1,0]
+a34907cc7089cb2b	v_pk_max_i16 v163, v112, v196 op_sel:[1,0] op_sel_hi:[1,0] neg_lo:[1,0] neg_hi:[1,0]
+010008cc040b1a00	v_pk_min_i16 v1, v4, v5 op_sel_hi:[0,0]
+824908cc993c6d2d	v_pk_min_i16 v130, 25, 30 op_sel:[1,0] op_sel_hi:[1,0] neg_lo:[1,0] neg_hi:[1,0]
+a59b08cc237ff259	v_pk_min_i16 v165, v35, v63 op_sel:[1,1] neg_lo:[0,1] neg_hi:[1,1] clamp
+0f1b08cc3fe14511	v_pk_min_i16 v15, v63, 0.5 op_sel:[1,1] op_sel_hi:[0,1] neg_hi:[1,1]
+218108cc856d640a	v_pk_min_i16 v33, v133, s54 op_sel_hi:[1,0] neg_hi:[1,0] clamp
+be4008cc2dfea90907000000	v_pk_min_i16 v190, s45, lit(0x7) op_sel_hi:[1,0]
+42c108ccc4a9aa59	v_pk_min_i16 v66, v196, v84 neg_lo:[0,1] neg_hi:[1,0] clamp
+1cc108ccee50a743	v_pk_min_i16 v28, src_private_limit, v168 op_sel_hi:[0,0] neg_lo:[0,1] neg_hi:[1,0] clamp
+691908cc231f8506	v_pk_min_i16 v105, v35, 15 op_sel:[1,1] op_sel_hi:[0,0] neg_hi:[1,0]
+7b5008ccf2eeb500	v_pk_min_i16 v123, 1.0, -4.0 op_sel:[0,1] op_sel_hi:[0,0]
+2c0008cc24c6fc00	v_pk_min_i16 v44, s36, s99 op_sel_hi:[0,0]
+100a08ccc49b920b	v_pk_min_i16 v16, v196, v77 op_sel:[1,0] op_sel_hi:[1,0] neg_hi:[0,1]
+395b08cc7d62562c	v_pk_min_i16 v57, null, v49 op_sel:[1,1] op_sel_hi:[1,0] neg_lo:[1,0] neg_hi:[1,1]
+848008cccb6c2b22	v_pk_min_i16 v132, -11, v182 op_sel_hi:[0,0] neg_lo:[1,0] clamp
+bc0008ccf7eef209	v_pk_min_i16 v188, -4.0, v119 op_sel_hi:[1,0]
+784b08ccb61fb500	v_pk_min_i16 v120, v182, 15 op_sel:[1,0] op_sel_hi:[0,0] neg_hi:[1,1]
+080b08cc7d2a4a10	v_pk_min_i16 v8, null, v21 op_sel:[1,0] op_sel_hi:[0,1] neg_hi:[1,1]
+040908cc5a542e23	v_pk_min_i16 v4, s90, v42 op_sel:[1,0] op_sel_hi:[0,0] neg_lo:[1,0] neg_hi:[1,0]
+bcc008cc00ee150a	v_pk_min_i16 v188, s0, -4.0 op_sel_hi:[1,0] clamp
+30c008cc7cfc861e	v_pk_min_i16 v48, m0, v126 clamp
+c45308cca16fd163	v_pk_min_i16 v196, v161, 55 op_sel:[0,1] op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[1,1]
+4c4008cc54efd113	v_pk_min_i16 v76, v84, -4.0 op_sel_hi:[0,1]
+074008ccb2e2290a	v_pk_min_i16 v7, 50, -0.5 op_sel_hi:[1,0]
+be0008cc09706a0e	v_pk_min_i16 v190, s9, v56 op_sel_hi:[1,0]
+2bca08ccf8e8f519	v_pk_min_i16 v43, 0.15915494, 2.0 op_sel:[1,0] neg_hi:[0,1] clamp
+a3cb08cca87eda43	v_pk_min_i16 v163, 40, v63 op_sel:[1,0] op_sel_hi:[0,0] neg_lo:[0,1] neg_hi:[1,1] clamp
+1f1908ccf4324938	v_pk_min_i16 v31, 2.0, 25 op_sel:[1,1] neg_lo:[1,0] neg_hi:[1,0]
+374a08cc38c5fa45	v_pk_min_i16 v55, v56, v98 op_sel:[1,0] op_sel_hi:[0,0] neg_lo:[0,1] neg_hi:[0,1]
+594908cc94eea573	v_pk_min_i16 v89, 20, -4.0 op_sel:[1,0] op_sel_hi:[0,1] neg_lo:[1,1] neg_hi:[1,0]
+325108cc2a1dfe74	v_pk_min_i16 v50, v42, v14 op_sel:[0,1] op_sel_hi:[0,1] neg_lo:[1,1] neg_hi:[1,0]
+9e4a08ccff6c18150000ffff	v_pk_min_i16 v158, 0xffff0000, s54 op_sel:[1,0] op_sel_hi:[0,1] neg_hi:[0,1]
+785008cc1b126801	v_pk_min_i16 v120, s27, s9 op_sel:[0,1] op_sel_hi:[0,0]
+6c8008cc5a82c504	v_pk_min_i16 v108, s90, -1 op_sel_hi:[0,0] clamp
+bf8108cc3f7aa77b	v_pk_min_i16 v191, s63, v189 neg_lo:[1,1] neg_hi:[1,0] clamp
+b24008ccf8000603	v_pk_min_i16 v178, 0.15915494, v0 op_sel_hi:[0,0]
+26c908cc46d7cc0b	v_pk_min_i16 v38, v70, vcc_hi op_sel:[1,0] op_sel_hi:[1,0] neg_hi:[1,0] clamp
+8a9308cc9e006c6d	v_pk_min_i16 v138, 30, s0 op_sel:[0,1] op_sel_hi:[1,0] neg_lo:[1,1] neg_hi:[1,1] clamp
+478008cc007b1f0c	v_pk_min_i16 v71, v0, v189 op_sel_hi:[1,0] clamp
+6b9908cc3f01ba4b	v_pk_min_i16 v107, v63, v0 op_sel:[1,1] op_sel_hi:[1,0] neg_lo:[0,1] neg_hi:[1,0] clamp
+8c8008ccc4f14908	v_pk_min_i16 v140, v196, 0.15915494 op_sel_hi:[1,0] clamp
+9a4908cc5a00fe34	v_pk_min_i16 v154, s90, v0 op_sel:[1,0] op_sel_hi:[0,1] neg_lo:[1,0] neg_hi:[1,0]
+254008ccf47a8f1c	v_pk_min_i16 v37, 2.0, v189
+0dca08cc8ffcf041	v_pk_min_i16 v13, 15, exec_lo op_sel:[1,0] op_sel_hi:[0,0] neg_lo:[0,1] neg_hi:[0,1] clamp
+ab4008ccf7ee690e	v_pk_min_i16 v171, -4.0, -4.0 op_sel_hi:[1,0]
+b64008cc158d111f	v_pk_min_i16 v182, v21, -6
+a48308cc1c47f60b	v_pk_min_i16 v164, v28, v35 op_sel_hi:[1,0] neg_hi:[1,1] clamp
+318a08ccb601bd66	v_pk_min_i16 v49, v182, 0 op_sel:[1,0] op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[0,1] clamp
+76db08ccff46c64c07000000	v_pk_min_i16 v118, lit(0x7), v35 op_sel:[1,1] op_sel_hi:[1,0] neg_lo:[0,1] neg_hi:[1,1] clamp
+001808ccf4a2a463	v_pk_min_i16 v0, 2.0, s81 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[1,1]
+340908cc8a64c53b	v_pk_min_i16 v52, 10, 50 op_sel:[1,0] neg_lo:[1,0] neg_hi:[1,0]
+685b08cc23fd3a5c	v_pk_min_i16 v104, v35, v126 op_sel:[1,1] neg_lo:[0,1] neg_hi:[1,1]
+754808cc3fe78d1a	v_pk_min_i16 v117, v63, -1.0 op_sel:[1,0]
+bd4008cc5b51d11b	v_pk_min_i16 v189, v91, 40
+238208ccc4dda919	v_pk_min_i16 v35, v196, src_private_limit neg_hi:[0,1] clamp
+010009cc040b1a00	v_pk_mad_u16 v1, v4, v5, s6 op_sel_hi:[0,0,0]
+af4009cca87e8815	v_pk_mad_u16 v175, 40, s63, v98 op_sel_hi:[0,1,1]
+5a8009cc3101d50b	v_pk_mad_u16 v90, v49, 0, -2.0 op_sel_hi:[1,0,0] clamp
+81c009cc9a8d2a02	v_pk_mad_u16 v129, v154, v70, 10 op_sel_hi:[0,0,1] clamp
+10c009ccf426e31c	v_pk_mad_u16 v16, 2.0, v147, v56 clamp
+044b09cc7ee6f57e	v_pk_mad_u16 v4, exec_lo, -1.0, v189 op_sel:[1,0,0] neg_lo:[1,1,0] neg_hi:[1,1,0]
+5a1a09ccfdfabd56	v_pk_mad_u16 v90, src_scc, src_scc, v175 op_sel:[1,1,0] op_sel_hi:[0,1,0] neg_lo:[0,1,0] neg_hi:[0,1,0]
+55b109cc1547d9ab	v_pk_mad_u16 v85, v21, 35, 4.0 op_sel:[0,1,1] op_sel_hi:[1,0,0] neg_lo:[1,0,1] neg_hi:[1,0,0] clamp
+04a409cc4826cfd3	v_pk_mad_u16 v4, s72, v147, -1.0 op_sel:[0,0,1] op_sel_hi:[0,1,0] neg_lo:[0,1,1] neg_hi:[0,0,1] clamp
+202809cc0978f1a9	v_pk_mad_u16 v32, s9, 60, m0 op_sel:[1,0,1] op_sel_hi:[1,0,0] neg_lo:[1,0,1]
+189709ccf3f0bdc6	v_pk_mad_u16 v24, -1.0, 0.15915494, v175 op_sel:[0,1,0] op_sel_hi:[0,0,0] neg_lo:[0,1,1] neg_hi:[1,1,1] clamp
+934009cc9ea26402	v_pk_mad_u16 v147, 30, s81, 25 op_sel_hi:[0,0,1]
+2cf609cca8dccd8b	v_pk_mad_u16 v44, 40, src_private_limit, -1.0 op_sel:[0,1,1] op_sel_hi:[1,0,1] neg_lo:[0,0,1] neg_hi:[0,1,1] clamp
+68de09ccb2a071bc	v_pk_mad_u16 v104, 50, -16, v28 op_sel:[1,1,0] neg_lo:[1,0,1] neg_hi:[0,1,1] clamp
+b60009ccb70a8d12	v_pk_mad_u16 v182, 55, 5, 35 op_sel_hi:[0,1,0]
+293209cc9a01b9c3	v_pk_mad_u16 v41, v154, 0, src_private_limit op_sel:[0,1,1] op_sel_hi:[0,0,0] neg_lo:[0,1,1] neg_hi:[0,1,0]
+068009ccf288531a	v_pk_mad_u16 v6, 1.0, v196, 20 op_sel_hi:[1,1,0] clamp
+4a3509cc6249685e	v_pk_mad_u16 v74, v98, s36, v154 op_sel:[0,1,1] op_sel_hi:[1,1,0] neg_lo:[0,1,0] neg_hi:[1,0,1]
+284909cc2d3c65fa	v_pk_mad_u16 v40, s45, 30, 25 op_sel:[1,0,0] neg_lo:[1,1,1] neg_hi:[1,0,0]
+335609cc385f4b80	v_pk_mad_u16 v51, v56, v175, s18 op_sel:[0,1,0] op_sel_hi:[0,0,1] neg_lo:[0,0,1] neg_hi:[0,1,1]
+c7c609cc12ee2d5b	v_pk_mad_u16 v199, s18, -4.0, -11 neg_lo:[0,1,0] neg_hi:[0,1,1] clamp
+c38509ccf388ab59	v_pk_mad_u16 v195, -1.0, v196, vcc_lo op_sel_hi:[1,1,0] neg_lo:[0,1,0] neg_hi:[1,0,1] clamp
+16a809ccf56ee12c	v_pk_mad_u16 v22, -2.0, 55, v56 op_sel:[1,0,1] op_sel_hi:[1,0,0] neg_lo:[1,0,0] clamp
+714009ccf8c4de0b	v_pk_mad_u16 v113, 0.15915494, v98, -4.0 op_sel_hi:[1,0,1]
+10e309cc5150df92	v_pk_mad_u16 v16, s81, v168, 55 op_sel:[0,0,1] op_sel_hi:[0,1,1] neg_lo:[0,0,1] neg_hi:[1,1,0] clamp
+43d009cc7c006d18	v_pk_mad_u16 v67, m0, 0, s27 op_sel:[0,1,0] clamp
+a48009ccbdf92011	v_pk_mad_u16 v164, v189, m0, s72 op_sel_hi:[0,1,0] clamp
+320009cc5b43ff1b78563412	v_pk_mad_u16 v50, v91, v161, 0x12345678 op_sel_hi:[1,1,0]
+3e0009cc7d8cf60b	v_pk_mad_u16 v62, null, v70, src_scc op_sel_hi:[1,0,0]
+0d9409cc547f6a46	v_pk_mad_u16 v13, v84, v63, v154 op_sel:[0,1,0] op_sel_hi:[0,0,0] neg_lo:[0,1,0] neg_hi:[0,0,1] clamp
+178809ccf26292a8	v_pk_mad_u16 v23, 1.0, v49, s36 op_sel:[1,0,0] op_sel_hi:[1,0,0] neg_lo:[1,0,1] clamp
+414009ccf0425315	v_pk_mad_u16 v65, 0.5, v161, v84 op_sel_hi:[0,1,1]
+768a09cc51320168	v_pk_mad_u16 v118, s81, 25, s0 op_sel:[1,0,0] op_sel_hi:[1,0,0] neg_lo:[1,1,0] neg_hi:[0,1,0] clamp
+0e4009cc8c7bdb10	v_pk_mad_u16 v14, v140, v189, s54 op_sel_hi:[0,1,1]
+12e709cc85e491a0	v_pk_mad_u16 v18, 5, 1.0, s36 op_sel:[0,0,1] op_sel_hi:[0,0,1] neg_lo:[1,0,1] neg_hi:[1,1,1] clamp
+8c4009ccafc70012	v_pk_mad_u16 v140, v175, s99, 0 op_sel_hi:[0,1,1]
+2ba709ccc6d2a24a	v_pk_mad_u16 v43, -6, v105, 40 op_sel:[0,0,1] op_sel_hi:[1,0,0] neg_lo:[0,1,0] neg_hi:[1,1,1] clamp
+9ec009cca3f07114	v_pk_mad_u16 v158, 35, 0.15915494, v28 op_sel_hi:[0,1,1] clamp
+225d09cca3dc15ce	v_pk_mad_u16 v34, 35, src_private_limit, v133 op_sel:[1,1,0] op_sel_hi:[1,0,1] neg_lo:[0,1,1] neg_hi:[1,0,1]
+5e6009ccf8fc68b9	v_pk_mad_u16 v94, 0.15915494, exec_lo, s90 op_sel:[0,0,1] neg_lo:[1,0,1]
+07c009ccb718170a	v_pk_mad_u16 v7, 55, v140, 5 op_sel_hi:[1,0,1] clamp
+c24309cc6949b803	v_pk_mad_u16 v194, v105, s36, src_private_limit op_sel_hi:[0,0,1] neg_hi:[1,1,0]
+194209cc1c01504d	v_pk_mad_u16 v25, v28, s0, v84 op_sel_hi:[1,0,1] neg_lo:[0,1,0] neg_hi:[0,1,0]
+6ca209ccc638cadb	v_pk_mad_u16 v108, -6, v28, 1.0 op_sel:[0,0,1] op_sel_hi:[1,1,0] neg_lo:[0,1,1] neg_hi:[0,1,0] clamp
+121a09cc70fbcd43	v_pk_mad_u16 v18, v112, src_scc, -1.0 op_sel:[1,1,0] op_sel_hi:[0,0,0] neg_lo:[0,1,0] neg_hi:[0,1,0]
+4f8009cc7d7af31a	v_pk_mad_u16 v79, null, v189, 60 op_sel_hi:[1,1,0] clamp
+b9e609cc7d428bfd	v_pk_mad_u16 v185, null, v161, v98 op_sel:[0,0,1] neg_lo:[1,1,1] neg_hi:[0,1,1] clamp
+553309cc54ef4af8	v_pk_mad_u16 v85, v84, v119, s18 op_sel:[0,1,1] op_sel_hi:[1,1,0] neg_lo:[1,1,1] neg_hi:[1,1,0]
+458009ccf8a8e203	v_pk_mad_u16 v69, 0.15915494, v84, 0.15915494 op_sel_hi:[0,0,0] clamp
+974609cc46dd55ac	v_pk_mad_u16 v151, v70, src_private_limit, v21 op_sel_hi:[1,0,1] neg_lo:[1,0,1] neg_hi:[0,1,1]
+01000acc040b1a00	v_pk_add_u16 v1, v4, v5 op_sel_hi:[0,0]
+12920acc3fd4401b	v_pk_add_u16 v18, s63, vcc_lo op_sel:[0,1] neg_hi:[0,1] clamp
+57930acc5178f579	v_pk_add_u16 v87, s81, 60 op_sel:[0,1] neg_lo:[1,1] neg_hi:[1,1] clamp
+8c890acc54e7ad19	v_pk_add_u16 v140, v84, -1.0 op_sel:[1,0] neg_hi:[1,0] clamp
+6e000acc8f2a2610	v_pk_add_u16 v110, 15, v21 op_sel_hi:[0,1]
+72d10acc237f2a2a	v_pk_add_u16 v114, v35, v63 op_sel:[0,1] op_sel_hi:[1,0] neg_lo:[1,0] neg_hi:[1,0] clamp
+0f800acc9450a505	v_pk_add_u16 v15, 20, 40 op_sel_hi:[0,0] clamp
+53c00accb2ee1a1d	v_pk_add_u16 v83, 50, v119 clamp
+aec00acc8a704a08	v_pk_add_u16 v174, 10, v56 op_sel_hi:[1,0] clamp
+90d20acc6a484820	v_pk_add_u16 v144, vcc_lo, s36 op_sel:[0,1] op_sel_hi:[0,0] neg_lo:[1,0] neg_hi:[0,1] clamp
+44c00accc425880d	v_pk_add_u16 v68, v196, s18 op_sel_hi:[1,0] clamp
+55400acc99e8dd03	v_pk_add_u16 v85, 25, 2.0 op_sel_hi:[0,0]
+b30a0accf10e5624	v_pk_add_u16 v179, -0.5, v7 op_sel:[1,0] op_sel_hi:[0,0] neg_lo:[1,0] neg_hi:[0,1]
+9d880acc48d26a21	v_pk_add_u16 v157, s72, v105 op_sel:[1,0] op_sel_hi:[0,0] neg_lo:[1,0] clamp
+aa500accf8a09143	v_pk_add_u16 v170, 0.15915494, -16 op_sel:[0,1] op_sel_hi:[0,0] neg_lo:[0,1]
+0d810accf21cf613	v_pk_add_u16 v13, 1.0, v14 op_sel_hi:[0,1] neg_hi:[1,0] clamp
+8e100acc3fe2d93e	v_pk_add_u16 v142, s63, -0.5 op_sel:[0,1] neg_lo:[1,0]
+2a530acc85c4026a	v_pk_add_u16 v42, 5, v98 op_sel:[0,1] op_sel_hi:[1,0] neg_lo:[1,1] neg_hi:[1,1]
+688a0acc946c936b	v_pk_add_u16 v104, 20, v182 op_sel:[1,0] op_sel_hi:[1,0] neg_lo:[1,1] neg_hi:[0,1] clamp
+78c00acc8fa84601	v_pk_add_u16 v120, 15, v84 op_sel_hi:[0,0] clamp
+bec00accd01e410b	v_pk_add_u16 v190, -16, 15 op_sel_hi:[1,0] clamp
+64d10accf670f63b	v_pk_add_u16 v100, 4.0, v56 op_sel:[0,1] neg_lo:[1,0] neg_hi:[1,0] clamp
+3ad00acc0000fd54	v_pk_add_u16 v58, s0, 0 op_sel:[0,1] op_sel_hi:[0,1] neg_lo:[0,1] clamp
+46c00acc9e96c513	v_pk_add_u16 v70, 30, -11 op_sel_hi:[0,1] clamp
+59480acc3f26df7b	v_pk_add_u16 v89, s63, v147 op_sel:[1,0] neg_lo:[1,1]
+85400accb70a4719	v_pk_add_u16 v133, 55, v133
+48000acc9ea01925	v_pk_add_u16 v72, 30, -16 op_sel_hi:[0,0] neg_lo:[1,0]
+17890acc7cdc5504	v_pk_add_u16 v23, m0, src_private_limit op_sel:[1,0] op_sel_hi:[0,0] neg_hi:[1,0] clamp
+c15b0accc46d4b30	v_pk_add_u16 v193, v196, v182 op_sel:[1,1] op_sel_hi:[0,1] neg_lo:[1,0] neg_hi:[1,1]
+ac800acc2dc6f423	v_pk_add_u16 v172, s45, s99 op_sel_hi:[0,0] neg_lo:[1,0] clamp
+b3800accc626c70c	v_pk_add_u16 v179, -6, v147 op_sel_hi:[1,0] clamp
+c6920acca18db97b	v_pk_add_u16 v198, v161, -6 op_sel:[0,1] neg_lo:[1,1] neg_hi:[0,1] clamp
+17000acc2d482812	v_pk_add_u16 v23, s45, s36 op_sel_hi:[0,1]
+2ada0accc688036c	v_pk_add_u16 v42, -6, v196 op_sel:[1,1] op_sel_hi:[1,0] neg_lo:[1,1] neg_hi:[0,1] clamp
+84510acc7d248c3c	v_pk_add_u16 v132, null, s18 op_sel:[0,1] neg_lo:[1,0] neg_hi:[1,0]
+94110acc77eb892d	v_pk_add_u16 v148, v119, -2.0 op_sel:[0,1] op_sel_hi:[1,0] neg_lo:[1,0] neg_hi:[1,0]
+0e000acc9ae5cd1b	v_pk_add_u16 v14, v154, 1.0
+6e900accb68d4103	v_pk_add_u16 v110, v182, -6 op_sel:[0,1] op_sel_hi:[0,0] clamp
+64c00acc7e474d06	v_pk_add_u16 v100, v126, 35 op_sel_hi:[0,0] clamp
+72890acc6b7a5305	v_pk_add_u16 v114, vcc_hi, v189 op_sel:[1,0] op_sel_hi:[0,0] neg_hi:[1,0] clamp
+a6c00acc3f01d900	v_pk_add_u16 v166, v63, 0 op_sel_hi:[0,0] clamp
+7e800acccb8c561b	v_pk_add_u16 v126, -11, v70 clamp
+a0520acc8f482802	v_pk_add_u16 v160, 15, s36 op_sel:[0,1] op_sel_hi:[0,0] neg_hi:[0,1]
+85c00acc1549c802	v_pk_add_u16 v133, v21, s36 op_sel_hi:[0,0] clamp
+6b430accc1eef556	v_pk_add_u16 v107, -1, -4.0 op_sel_hi:[0,1] neg_lo:[0,1] neg_hi:[1,1]
+98000accbdfdd813	v_pk_add_u16 v152, v189, exec_lo op_sel_hi:[0,1]
+75da0accf82a1a4d	v_pk_add_u16 v117, 0.15915494, v21 op_sel:[1,1] op_sel_hi:[1,0] neg_lo:[0,1] neg_hi:[0,1] clamp
+c2000acc4d37501a	v_pk_add_u16 v194, v77, s27
+be9b0acc9ae7352d	v_pk_add_u16 v190, v154, -1.0 op_sel:[1,1] op_sel_hi:[1,0] neg_lo:[1,0] neg_hi:[1,1] clamp
+0cc10acc8a00c243	v_pk_add_u16 v12, 10, v0 op_sel_hi:[0,0] neg_lo:[0,1] neg_hi:[1,0] clamp
+c0400accffd6900807000000	v_pk_add_u16 v192, lit(0x7), vcc_hi op_sel_hi:[1,0]
+05190accff34a3560000803f	v_pk_add_u16 v5, lit(0x3f800000), v154 op_sel:[1,1] op_sel_hi:[0,1] neg_lo:[0,1] neg_hi:[1,0]
+01000bcc040b1a00	v_pk_sub_u16 v1, v4, v5 op_sel_hi:[0,0]
+2b800bccafed6903	v_pk_sub_u16 v43, v175, 4.0 op_sel_hi:[0,0] clamp
+9ad80bcc85ea4509	v_pk_sub_u16 v154, 5, -2.0 op_sel:[1,1] op_sel_hi:[1,0] clamp
+72000bcc00b6ae01	v_pk_sub_u16 v114, s0, v91 op_sel_hi:[0,0]
+80100bcc5bf9502a	v_pk_sub_u16 v128, v91, m0 op_sel:[0,1] op_sel_hi:[1,0] neg_lo:[1,0]
+c1000bcc237bfb15	v_pk_sub_u16 v193, v35, v189 op_sel_hi:[0,1]
+79430bccb6c71865	v_pk_sub_u16 v121, v182, s99 op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[1,1]
+a6900bccf8e61d04	v_pk_sub_u16 v166, 0.15915494, -1.0 op_sel:[0,1] op_sel_hi:[0,0] clamp
+bd480bcc23e15262	v_pk_sub_u16 v189, v35, v112 op_sel:[1,0] op_sel_hi:[0,0] neg_lo:[1,1]
+b6db0bcc7ef8e033	v_pk_sub_u16 v182, exec_lo, m0 op_sel:[1,1] op_sel_hi:[0,1] neg_lo:[1,0] neg_hi:[1,1] clamp
+70190bccbd5b3c42	v_pk_sub_u16 v112, v189, s45 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[0,1] neg_hi:[1,0]
+ac1a0bcc5be1ca23	v_pk_sub_u16 v172, v91, v112 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[1,0] neg_hi:[0,1]
+b8980bcca33cfd54	v_pk_sub_u16 v184, 35, 30 op_sel:[1,1] op_sel_hi:[0,1] neg_lo:[0,1] clamp
+0ad80bcc85ff1502003c003c	v_pk_sub_u16 v10, v133, 0x3c003c00 op_sel:[1,1] op_sel_hi:[0,0] clamp
+98400bcc46370002	v_pk_sub_u16 v152, v70, s27 op_sel_hi:[0,0]
+44980bccf6fc7244	v_pk_sub_u16 v68, 4.0, v126 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[0,1] clamp
+31400bccf18cdd0b	v_pk_sub_u16 v49, -0.5, -6 op_sel_hi:[1,0]
+39c00bccf45add4d	v_pk_sub_u16 v57, 2.0, 45 op_sel_hi:[1,0] neg_lo:[0,1] clamp
+02d30bcc69d5c433	v_pk_sub_u16 v2, v105, vcc_lo op_sel:[0,1] op_sel_hi:[0,1] neg_lo:[1,0] neg_hi:[1,1] clamp
+23800bccb2e0c913	v_pk_sub_u16 v35, 50, 0.5 op_sel_hi:[0,1] clamp
+c4400bcc51dccd0b	v_pk_sub_u16 v196, s81, src_private_limit op_sel_hi:[1,0]
+3c400bcc2aef3a1c	v_pk_sub_u16 v60, v42, v119
+48400bcceec4aa19	v_pk_sub_u16 v72, src_private_limit, v98
+0b400bcc48e87902	v_pk_sub_u16 v11, s72, 2.0 op_sel_hi:[0,0]
+935a0bcc46895764	v_pk_sub_u16 v147, v70, v196 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[0,1]
+06000bccb2364013	v_pk_sub_u16 v6, 50, s27 op_sel_hi:[0,1]
+6ec30bcc075b305e	v_pk_sub_u16 v110, v7, s45 neg_lo:[0,1] neg_hi:[1,1] clamp
+11100bccf89a421b	v_pk_sub_u16 v17, 0.15915494, v77 op_sel:[0,1]
+b5000bcc1ceb3d62	v_pk_sub_u16 v181, v28, -2.0 op_sel_hi:[0,0] neg_lo:[1,1]
+19c20bcc3ffcfe08	v_pk_sub_u16 v25, s63, v126 op_sel_hi:[1,0] neg_hi:[0,1] clamp
+49980bccf224dc1b	v_pk_sub_u16 v73, 1.0, s18 op_sel:[1,1] clamp
+24c20bcc46b52842	v_pk_sub_u16 v36, v70, s90 op_sel_hi:[0,0] neg_lo:[0,1] neg_hi:[0,1] clamp
+8c080bccfdd2fe3c	v_pk_sub_u16 v140, src_scc, v105 op_sel:[1,0] neg_lo:[1,0]
+30000bcc7ed5e00b	v_pk_sub_u16 v48, v126, vcc_lo op_sel_hi:[1,0]
+ae000bccb651012c	v_pk_sub_u16 v174, v182, 40 op_sel_hi:[1,0] neg_lo:[1,0]
+b0890bcc00dd3d1a	v_pk_sub_u16 v176, v0, src_private_limit op_sel:[1,0] neg_hi:[1,0] clamp
+574b0bcc99e2cd2b	v_pk_sub_u16 v87, 25, -0.5 op_sel:[1,0] op_sel_hi:[1,0] neg_lo:[1,0] neg_hi:[1,1]
+749b0bcc5150e153	v_pk_sub_u16 v116, s81, 40 op_sel:[1,1] op_sel_hi:[0,1] neg_lo:[0,1] neg_hi:[1,1] clamp
+12510bccf838a252	v_pk_sub_u16 v18, 0.15915494, v28 op_sel:[0,1] op_sel_hi:[0,1] neg_lo:[0,1] neg_hi:[1,0]
+47120bccb7f04d36	v_pk_sub_u16 v71, 55, 0.15915494 op_sel:[0,1] op_sel_hi:[0,1] neg_lo:[1,0] neg_hi:[0,1]
+7a400bcc38e7f90d	v_pk_sub_u16 v122, v56, -1.0 op_sel_hi:[1,0]
+37000bcc2aa10118	v_pk_sub_u16 v55, v42, -16
+1b820bcc80ecc96b	v_pk_sub_u16 v27, 0, 4.0 op_sel_hi:[1,0] neg_lo:[1,1] neg_hi:[0,1] clamp
+a1d00bcc1b141d4c	v_pk_sub_u16 v161, s27, 10 op_sel:[0,1] op_sel_hi:[1,0] neg_lo:[0,1] clamp
+63400bccf524d403	v_pk_sub_u16 v99, -2.0, s18 op_sel_hi:[0,0]
+69c00bcccbeccd1b	v_pk_sub_u16 v105, -11, 4.0 clamp
+170b0bcc5b7ff62b	v_pk_sub_u16 v23, v91, v63 op_sel:[1,0] op_sel_hi:[1,0] neg_lo:[1,0] neg_hi:[1,1]
+62c20bcc3f888f6a	v_pk_sub_u16 v98, s63, v196 op_sel_hi:[1,0] neg_lo:[1,1] neg_hi:[0,1] clamp
+58c00bcc46fda403	v_pk_sub_u16 v88, v70, exec_lo op_sel_hi:[0,0] clamp
+9a800bccf8146d1d	v_pk_sub_u16 v154, 0.15915494, 10 clamp
+a2800bccaf0fb628	v_pk_sub_u16 v162, v175, v7 op_sel_hi:[1,0] neg_lo:[1,0] clamp
+21c90bcc8000c17b	v_pk_sub_u16 v33, 0, 0 op_sel:[1,0] neg_lo:[1,1] neg_hi:[1,0] clamp
+a1900bcc2470062b	v_pk_sub_u16 v161, s36, v56 op_sel:[0,1] op_sel_hi:[1,0] neg_lo:[1,0] clamp
+63400bcca300c613	v_pk_sub_u16 v99, 35, v0 op_sel_hi:[0,1]
+76d00bcc8ad47812	v_pk_sub_u16 v118, 10, vcc_lo op_sel:[0,1] op_sel_hi:[0,1] clamp
+47590bccf17e8c41	v_pk_sub_u16 v71, -0.5, s63 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[0,1] neg_hi:[1,0]
+62c00bccf400640a	v_pk_sub_u16 v98, 2.0, s0 op_sel_hi:[1,0] clamp
+01000ccc040b1a00	v_pk_max_u16 v1, v4, v5 op_sel_hi:[0,0]
+93000ccc941c8e19	v_pk_max_u16 v147, 20, v14
+91800cccb2a0f905	v_pk_max_u16 v145, 50, -16 op_sel_hi:[0,0] clamp
+12c80cccf89a127f	v_pk_max_u16 v18, 0.15915494, v77 op_sel:[1,0] neg_lo:[1,1] clamp
+3c410ccc3f38f242	v_pk_max_u16 v60, s63, v28 op_sel_hi:[0,0] neg_lo:[0,1] neg_hi:[1,0]
+35800cccf81ee104	v_pk_max_u16 v53, 0.15915494, 15 op_sel_hi:[0,0] clamp
+27520cccad1e197b	v_pk_max_u16 v39, 45, 15 op_sel:[0,1] neg_lo:[1,1] neg_hi:[0,1]
+25c00ccc9ad54810	v_pk_max_u16 v37, v154, vcc_lo op_sel_hi:[0,1] clamp
+5cc30ccc85427f53	v_pk_max_u16 v92, 5, v161 op_sel_hi:[0,1] neg_lo:[0,1] neg_hi:[1,1] clamp
+010b0cccd0364848	v_pk_max_u16 v1, -16, s27 op_sel:[1,0] op_sel_hi:[1,0] neg_lo:[0,1] neg_hi:[1,1]
+9e000cccc4d5e01c	v_pk_max_u16 v158, v196, vcc_lo
+b4400ccc0e476a01	v_pk_max_u16 v180, v14, v35 op_sel_hi:[0,0]
+89110ccc128ca26a	v_pk_max_u16 v137, s18, v70 op_sel:[0,1] op_sel_hi:[1,0] neg_lo:[1,1] neg_hi:[1,0]
+13800cccffec711c0000803f	v_pk_max_u16 v19, lit(0x3f800000), 4.0 clamp
+16400ccca390d818	v_pk_max_u16 v22, 35, s72
+91c00ccca825bc16	v_pk_max_u16 v145, v168, s18 op_sel_hi:[0,1] clamp
+88400ccc09e4d51b	v_pk_max_u16 v136, s9, 1.0
+6d800ccc4d5bcc0b	v_pk_max_u16 v109, v77, s45 op_sel_hi:[1,0] clamp
+48c00ccc8050cd13	v_pk_max_u16 v72, 0, 40 op_sel_hi:[0,1] clamp
+51880ccc807ea06a	v_pk_max_u16 v81, 0, s63 op_sel:[1,0] op_sel_hi:[1,0] neg_lo:[1,1] clamp
+3f000cccade06d1d	v_pk_max_u16 v63, 45, 0.5
+71400cccf8d40012	v_pk_max_u16 v113, 0.15915494, vcc_lo op_sel_hi:[0,1]
+79800cccf08ca106	v_pk_max_u16 v121, 0.5, -6 op_sel_hi:[0,0] clamp
+0f9a0cccfd0a436b	v_pk_max_u16 v15, src_scc, v133 op_sel:[1,1] op_sel_hi:[1,0] neg_lo:[1,1] neg_hi:[0,1] clamp
+83ca0ccc3670da43	v_pk_max_u16 v131, s54, v56 op_sel:[1,0] op_sel_hi:[0,0] neg_lo:[0,1] neg_hi:[0,1] clamp
+82830ccc5a46dd6d	v_pk_max_u16 v130, s90, 35 op_sel_hi:[1,0] neg_lo:[1,1] neg_hi:[1,1] clamp
+15da0cccc6e0de3a	v_pk_max_u16 v21, -6, v112 op_sel:[1,1] neg_lo:[1,0] neg_hi:[0,1] clamp
+afc00ccc8565d913	v_pk_max_u16 v175, v133, 50 op_sel_hi:[0,1] clamp
+97800ccc7043c315	v_pk_max_u16 v151, v112, v161 op_sel_hi:[0,1] clamp
+b0500ccc54d7b450	v_pk_max_u16 v176, v84, vcc_hi op_sel:[0,1] op_sel_hi:[0,1] neg_lo:[0,1]
+7e400cccf6e6a51b	v_pk_max_u16 v126, 4.0, -1.0
+70510ccc1c35a37e	v_pk_max_u16 v112, v28, v154 op_sel:[0,1] neg_lo:[1,1] neg_hi:[1,0]
+7ec00ccc38e98905	v_pk_max_u16 v126, v56, 2.0 op_sel_hi:[0,0] clamp
+a9400ccc94a8060b	v_pk_max_u16 v169, 20, v84 op_sel_hi:[1,0]
+1c800ccc5afe7d33003c003c	v_pk_max_u16 v28, s90, 0x3c003c00 op_sel_hi:[0,1] neg_lo:[1,0] clamp
+86c00cccfdeefe18	v_pk_max_u16 v134, src_scc, v119 clamp
+84d00ccc705b3d2a	v_pk_max_u16 v132, v112, 45 op_sel:[0,1] op_sel_hi:[1,0] neg_lo:[1,0] clamp
+c75b0ccc63fca026	v_pk_max_u16 v199, s99, exec_lo op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[1,0] neg_hi:[1,1]
+98580ccc69154d6e	v_pk_max_u16 v152, v105, 10 op_sel:[1,1] op_sel_hi:[1,0] neg_lo:[1,1]
+1d400ccc07e3d11b	v_pk_max_u16 v29, v7, -0.5
+77990cccf46c0360	v_pk_max_u16 v119, 2.0, v182 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[1,0] clamp
+1dc10ccc0e63f631	v_pk_max_u16 v29, v14, v49 op_sel_hi:[0,1] neg_lo:[1,0] neg_hi:[1,0] clamp
+77490ccc2a018c34	v_pk_max_u16 v119, v42, s0 op_sel:[1,0] op_sel_hi:[0,1] neg_lo:[1,0] neg_hi:[1,0]
+5a4a0ccc9948c424	v_pk_max_u16 v90, 25, s36 op_sel:[1,0] op_sel_hi:[0,0] neg_lo:[1,0] neg_hi:[0,1]
+03420ccc3f0b290a	v_pk_max_u16 v3, v63, 5 op_sel_hi:[1,0] neg_hi:[0,1]
+265b0ccc7e34e343	v_pk_max_u16 v38, exec_lo, v154 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[0,1] neg_hi:[1,1]
+7d4b0ccc8a34ab6c	v_pk_max_u16 v125, 10, v154 op_sel:[1,0] op_sel_hi:[1,0] neg_lo:[1,1] neg_hi:[1,1]
+30d10ccc48fc726c	v_pk_max_u16 v48, s72, v126 op_sel:[0,1] op_sel_hi:[1,0] neg_lo:[1,1] neg_hi:[1,0] clamp
+2fc00cccb7385202	v_pk_max_u16 v47, 55, v28 op_sel_hi:[0,0] clamp
+9dd80ccc947ae33c	v_pk_max_u16 v157, 20, v189 op_sel:[1,1] neg_lo:[1,0] clamp
+c3c00ccca8e1a615	v_pk_max_u16 v195, v168, v112 op_sel_hi:[0,1] clamp
+48d00ccca30a2b52	v_pk_max_u16 v72, 35, v133 op_sel:[0,1] op_sel_hi:[0,1] neg_lo:[0,1] clamp
+94c00ccc1b8ca202	v_pk_max_u16 v148, s27, v70 op_sel_hi:[0,0] clamp
+a8000ccca1ff191b00400000	v_pk_max_u16 v168, v161, 0x4000
+01000dcc040b1a00	v_pk_min_u16 v1, v4, v5 op_sel_hi:[0,0]
+a1480dcca86c6c65	v_pk_min_u16 v161, 40, s54 op_sel:[1,0] op_sel_hi:[0,0] neg_lo:[1,1]
+63580dcc9a65d958	v_pk_min_u16 v99, v154, 50 op_sel:[1,1] neg_lo:[0,1]
+20480dcc3feec654	v_pk_min_u16 v32, s63, v119 op_sel:[1,0] op_sel_hi:[0,1] neg_lo:[0,1]
+77d10dccd0508d4a	v_pk_min_u16 v119, -16, 40 op_sel:[0,1] op_sel_hi:[1,0] neg_lo:[0,1] neg_hi:[1,0] clamp
+77180dcc3600a575	v_pk_min_u16 v119, s54, 0 op_sel:[1,1] op_sel_hi:[0,1] neg_lo:[1,1]
+b5400dcca814cd03	v_pk_min_u16 v181, 40, 10 op_sel_hi:[0,0]
+a9130dccf446c115	v_pk_min_u16 v169, 2.0, 35 op_sel:[0,1] op_sel_hi:[0,1] neg_hi:[1,1]
+1f580dccbd519178	v_pk_min_u16 v31, v189, 40 op_sel:[1,1] neg_lo:[1,1]
+91400dccf59a4e16	v_pk_min_u16 v145, -2.0, v77 op_sel_hi:[0,1]
+43000dcc8547a615	v_pk_min_u16 v67, v133, v35 op_sel_hi:[0,1]
+2ec00dccf5a8fa0d	v_pk_min_u16 v46, -2.0, v84 op_sel_hi:[1,0] clamp
+038a0dcc3ff87c3b	v_pk_min_u16 v3, s63, m0 op_sel:[1,0] neg_lo:[1,0] neg_hi:[0,1] clamp
+515a0dccd05e3366	v_pk_min_u16 v81, -16, v175 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[0,1]
+9f400dcc5bfbd04b	v_pk_min_u16 v159, v91, null op_sel_hi:[1,0] neg_lo:[0,1]
+35400dcc5b3d4103	v_pk_min_u16 v53, v91, 30 op_sel_hi:[0,0]
+79d90dcc1c25180d	v_pk_min_u16 v121, v28, s18 op_sel:[1,1] op_sel_hi:[1,0] neg_hi:[1,0] clamp
+68c00dcc237fd806	v_pk_min_u16 v104, v35, s63 op_sel_hi:[0,0] clamp
+7ec00dcc8ff0d113	v_pk_min_u16 v126, 15, 0.15915494 op_sel_hi:[0,1] clamp
+18180dcc368cc644	v_pk_min_u16 v24, s54, v70 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[0,1]
+95400dcc31e1a513	v_pk_min_u16 v149, v49, 0.5 op_sel_hi:[0,1]
+84800dcc07392e03	v_pk_min_u16 v132, v7, v28 op_sel_hi:[0,0] clamp
+6d880dcc999a0212	v_pk_min_u16 v109, 25, v77 op_sel:[1,0] op_sel_hi:[0,1] clamp
+19800dcc77e18d1a	v_pk_min_u16 v25, v119, 0.5 clamp
+8d800dcc38013a0c	v_pk_min_u16 v141, v56, v0 op_sel_hi:[1,0] clamp
+73d20dccf1d6e013	v_pk_min_u16 v115, -0.5, vcc_hi op_sel:[0,1] op_sel_hi:[0,1] neg_hi:[0,1] clamp
+96da0dccf826fb25	v_pk_min_u16 v150, 0.15915494, v147 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[1,0] neg_hi:[0,1] clamp
+6c080dcc09ea7d5b	v_pk_min_u16 v108, s9, -2.0 op_sel:[1,0] neg_lo:[0,1]
+91000dcc316d4411	v_pk_min_u16 v145, v49, s54 op_sel_hi:[0,1]
+8a8a0dcc5463e22b	v_pk_min_u16 v138, v84, v49 op_sel:[1,0] op_sel_hi:[1,0] neg_lo:[1,0] neg_hi:[0,1] clamp
+44800dcc7e7ff809	v_pk_min_u16 v68, v126, s63 op_sel_hi:[1,0] clamp
+2f5a0dcc930ff65b	v_pk_min_u16 v47, v147, v7 op_sel:[1,1] neg_lo:[0,1] neg_hi:[0,1]
+61180dccf1ecd163	v_pk_min_u16 v97, -0.5, 4.0 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[1,1]
+378b0dcc48628e62	v_pk_min_u16 v55, s72, v49 op_sel:[1,0] op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[1,1] clamp
+c1800dccfd968d19	v_pk_min_u16 v193, src_scc, -11 clamp
+bc490dcc7e82296a	v_pk_min_u16 v188, exec_lo, -1 op_sel:[1,0] op_sel_hi:[1,0] neg_lo:[1,1] neg_hi:[1,0]
+9a800dcc5bd55414	v_pk_min_u16 v154, v91, vcc_lo op_sel_hi:[0,1] clamp
+83400dcc23132019	v_pk_min_u16 v131, v35, s9
+af080dcceea2f426	v_pk_min_u16 v175, src_private_limit, s81 op_sel:[1,0] op_sel_hi:[0,0] neg_lo:[1,0]
+99880dcceed6403b	v_pk_min_u16 v153, src_private_limit, vcc_hi op_sel:[1,0] neg_lo:[1,0] clamp
+b0c00dccff466a190000803f	v_pk_min_u16 v176, lit(0x3f800000), v35 clamp
+b4580dcca3ee6a19	v_pk_min_u16 v180, 35, v119 op_sel:[1,1]
+a3510dcc9365c155	v_pk_min_u16 v163, v147, 50 op_sel:[0,1] op_sel_hi:[0,1] neg_lo:[0,1] neg_hi:[1,0]
+12800dcc8fa2f002	v_pk_min_u16 v18, 15, s81 op_sel_hi:[0,0] clamp
+09930dccadecd55b	v_pk_min_u16 v9, 45, 4.0 op_sel:[0,1] neg_lo:[0,1] neg_hi:[1,1] clamp
+1f800dcc70fdc404	v_pk_min_u16 v31, v112, exec_lo op_sel_hi:[0,0] clamp
+9e120dccb6c7c04b	v_pk_min_u16 v158, v182, s99 op_sel:[0,1] op_sel_hi:[1,0] neg_lo:[0,1] neg_hi:[0,1]
+54c20dcc1cfd7c5b	v_pk_min_u16 v84, v28, exec_lo neg_lo:[0,1] neg_hi:[0,1] clamp
+23da0dcc6aa0897d	v_pk_min_u16 v35, vcc_lo, -16 op_sel:[1,1] neg_lo:[1,1] neg_hi:[0,1] clamp
+01000ecc040b1a00	v_pk_fma_f16 v1, v4, v5, s6 op_sel_hi:[0,0,0]
+c5830eccf5b464a2	v_pk_fma_f16 v197, -2.0, s90, 25 op_sel_hi:[0,0,0] neg_lo:[1,0,1] neg_hi:[1,1,0] clamp
+ad940ecc8590f02a	v_pk_fma_f16 v173, 5, s72, 60 op_sel:[0,1,0] op_sel_hi:[1,0,0] neg_lo:[1,0,0] neg_hi:[0,0,1] clamp
+abc60eccb226ab91	v_pk_fma_f16 v171, 50, v147, vcc_lo op_sel_hi:[0,1,1] neg_lo:[0,0,1] neg_hi:[0,1,1] clamp
+6f860ecc2438da3b	v_pk_fma_f16 v111, s36, v28, 4.0 op_sel_hi:[1,1,0] neg_lo:[1,0,0] neg_hi:[0,1,1] clamp
+c0800ecc7e48cc1b	v_pk_fma_f16 v192, exec_lo, s36, -1.0 op_sel_hi:[1,1,0] clamp
+8b800eccd0e0b61a	v_pk_fma_f16 v139, -16, v112, 45 op_sel_hi:[1,1,0] clamp
+3f730eccb75afd9378563412	v_pk_fma_f16 v63, 55, 45, 0x12345678 op_sel:[0,1,1] op_sel_hi:[0,1,1] neg_lo:[0,0,1] neg_hi:[1,1,0]
+bfb40ecc85fbd003	v_pk_fma_f16 v191, v133, null, 2.0 op_sel:[0,1,1] op_sel_hi:[0,0,0] neg_hi:[0,0,1] clamp
+181b0ecc5146be36	v_pk_fma_f16 v24, s81, v35, v175 op_sel:[1,1,0] op_sel_hi:[0,1,0] neg_lo:[1,0,0] neg_hi:[1,1,0]
+4c580ecc8c339100	v_pk_fma_f16 v76, v140, 25, s36 op_sel:[1,1,0] op_sel_hi:[0,0,1]
+59800ecc7ec7f411	v_pk_fma_f16 v89, v126, s99, null op_sel_hi:[0,1,0] clamp
+61570eccbcf0dddd	v_pk_fma_f16 v97, 60, 0.15915494, v119 op_sel:[0,1,0] neg_lo:[0,1,1] neg_hi:[1,1,1]
+2d410eccc1261782	v_pk_fma_f16 v45, -1, v147, 5 op_sel_hi:[0,0,1] neg_lo:[0,0,1] neg_hi:[1,0,0]
+44e30eccf136d0b3	v_pk_fma_f16 v68, -0.5, s27, 2.0 op_sel:[0,0,1] op_sel_hi:[0,1,1] neg_lo:[1,0,1] neg_hi:[1,1,0] clamp
+a96b0ecc8afa69e1	v_pk_fma_f16 v169, 10, src_scc, s90 op_sel:[1,0,1] op_sel_hi:[0,0,1] neg_lo:[1,1,1] neg_hi:[1,1,0]
+5d400eccaffffd0b0000803f	v_pk_fma_f16 v93, v175, 0x3f800000, 0x3f800000 op_sel_hi:[1,0,1]
+587f0ecc6963b6d2	v_pk_fma_f16 v88, v105, v49, 45 op_sel:[1,1,1] op_sel_hi:[0,1,1] neg_lo:[0,1,1] neg_hi:[1,1,1]
+aac90eccbc82fd9c	v_pk_fma_f16 v170, 60, -1, v63 op_sel:[1,0,0] neg_lo:[0,0,1] neg_hi:[1,0,0] clamp
+51c00eccd06ccf0b	v_pk_fma_f16 v81, -16, v182, -1.0 op_sel_hi:[1,0,1] clamp
+aa010ecc09f0154e	v_pk_fma_f16 v170, s9, 0.15915494, v133 op_sel_hi:[1,0,0] neg_lo:[0,1,0] neg_hi:[1,0,0]
+183d0eccf55a7832	v_pk_fma_f16 v24, -2.0, s45, 30 op_sel:[1,1,1] op_sel_hi:[0,1,0] neg_lo:[1,0,0] neg_hi:[1,0,1]
+a6a30eccee5adc12	v_pk_fma_f16 v166, src_private_limit, s45, 55 op_sel:[0,0,1] op_sel_hi:[0,1,0] neg_hi:[1,1,0] clamp
+41400eccfda09108	v_pk_fma_f16 v65, src_scc, -16, s36 op_sel_hi:[1,0,1]
+59000ecc3129051b	v_pk_fma_f16 v89, v49, 20, -1 op_sel_hi:[1,1,0]
+47be0eccf3ec8536	v_pk_fma_f16 v71, -1.0, 4.0, v161 op_sel:[1,1,1] op_sel_hi:[0,1,0] neg_lo:[1,0,0] neg_hi:[0,1,1] clamp
+b9000ecc856ffd030000803f	v_pk_fma_f16 v185, v133, 55, 0x3f800000 op_sel_hi:[0,0,0]
+9a420ecca1f1f925	v_pk_fma_f16 v154, v161, 0.15915494, v126 op_sel_hi:[0,0,1] neg_lo:[1,0,0] neg_hi:[0,1,0]
+86400ecca378291a	v_pk_fma_f16 v134, 35, 60, 10
+99000ecc2a35f716	v_pk_fma_f16 v153, v42, v154, v189 op_sel_hi:[0,1,0]
+026d0ecc9a516f98	v_pk_fma_f16 v2, v154, v168, s27 op_sel:[1,0,1] neg_lo:[0,0,1] neg_hi:[1,0,1]
+088c0eccc67ea0de	v_pk_fma_f16 v8, -6, s63, v168 op_sel:[1,0,0] op_sel_hi:[1,1,0] neg_lo:[0,1,1] neg_hi:[0,0,1] clamp
+889c0ecc12f04928	v_pk_fma_f16 v136, s18, 0.15915494, s18 op_sel:[1,1,0] op_sel_hi:[1,0,0] neg_lo:[1,0,0] neg_hi:[0,0,1] clamp
+bcc00ecc7e398e0c	v_pk_fma_f16 v188, v126, v28, v35 op_sel_hi:[1,0,1] clamp
+adc00ecc8064a901	v_pk_fma_f16 v173, 0, 50, vcc_lo op_sel_hi:[0,0,1] clamp
+a8400ecc54ff890578563412	v_pk_fma_f16 v168, v84, 0x12345678, v98 op_sel_hi:[0,0,1]
+848a0ecc7cfaa1ba	v_pk_fma_f16 v132, m0, src_scc, 40 op_sel:[1,0,0] op_sel_hi:[1,1,0] neg_lo:[1,0,1] neg_hi:[0,1,0] clamp
+c0400ecc69135012	v_pk_fma_f16 v192, v105, s9, 20 op_sel_hi:[0,1,1]
+23000ecc2a0fd20b	v_pk_fma_f16 v35, v42, v7, 2.0 op_sel_hi:[1,0,0]
+20420ecc1cb7da23	v_pk_fma_f16 v32, v28, v91, 4.0 op_sel_hi:[0,0,1] neg_lo:[1,0,0] neg_hi:[0,1,0]
+394c0eccb2188f4a	v_pk_fma_f16 v57, 50, v140, 35 op_sel:[1,0,0] op_sel_hi:[1,0,1] neg_lo:[0,1,0] neg_hi:[0,0,1]
+70400ecccb388e04	v_pk_fma_f16 v112, -11, v28, v35 op_sel_hi:[0,0,1]
+b8400ecc1c01f001	v_pk_fma_f16 v184, v28, s0, m0 op_sel_hi:[0,0,1]
+7ec00ecc77fdc404	v_pk_fma_f16 v126, v119, exec_lo, v49 op_sel_hi:[0,0,1] clamp
+72000eccad28b50a	v_pk_fma_f16 v114, 45, 20, 45 op_sel_hi:[1,0,0]
+01000fcc040b1a00	v_pk_add_f16 v1, v4, v5 op_sel_hi:[0,0]
+57d20fcc543da91c	v_pk_add_f16 v87, v84, 30 op_sel:[0,1] neg_hi:[0,1] clamp
+80400fccf69a9213	v_pk_add_f16 v128, 4.0, v77 op_sel_hi:[0,1]
+14c00fcc7d00da08	v_pk_add_f16 v20, null, v0 op_sel_hi:[1,0] clamp
+56400fcc23fb040b	v_pk_add_f16 v86, v35, null op_sel_hi:[1,0]
+67c00fccc1ea2119	v_pk_add_f16 v103, -1, -2.0 clamp
+53110fcc5100f643	v_pk_add_f16 v83, s81, v0 op_sel:[0,1] op_sel_hi:[0,0] neg_lo:[0,1] neg_hi:[1,0]
+25400fcc4878d113	v_pk_add_f16 v37, s72, 60 op_sel_hi:[0,1]
+80c00fcc1c557a0a	v_pk_add_f16 v128, v28, v42 op_sel_hi:[1,0] clamp
+98d90fcc3fe0b52a	v_pk_add_f16 v152, s63, 0.5 op_sel:[1,1] op_sel_hi:[1,0] neg_lo:[1,0] neg_hi:[1,0] clamp
+22c00fcc480e3a0c	v_pk_add_f16 v34, s72, v7 op_sel_hi:[1,0] clamp
+9dc00fcca1fbc81b	v_pk_add_f16 v157, v161, null clamp
+c4490fccf1ea6916	v_pk_add_f16 v196, -0.5, -2.0 op_sel:[1,0] op_sel_hi:[0,1] neg_hi:[1,0]
+56d00fcc36b67234	v_pk_add_f16 v86, s54, v91 op_sel:[0,1] op_sel_hi:[0,1] neg_lo:[1,0] clamp
+bdc20fcc8f5a5564	v_pk_add_f16 v189, 15, 45 op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[0,1] clamp
+389a0fcc3f012560	v_pk_add_f16 v56, v63, 0 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[0,1] clamp
+024b0fcc93a1fd64	v_pk_add_f16 v2, v147, -16 op_sel:[1,0] op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[1,1]
+ab580fcc12eede65	v_pk_add_f16 v171, s18, v119 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[1,1]
+1e800fcc3f7b6f00	v_pk_add_f16 v30, v63, v189 op_sel_hi:[0,0] clamp
+5a000fcc1b8cf909	v_pk_add_f16 v90, s27, -6 op_sel_hi:[1,0]
+13800fcc6b9a6e1d	v_pk_add_f16 v19, vcc_hi, v77 clamp
+3d030fcc7d34ff34	v_pk_add_f16 v61, null, v154 op_sel_hi:[0,1] neg_lo:[1,0] neg_hi:[1,1]
+73990fcc70e50168	v_pk_add_f16 v115, v112, 1.0 op_sel:[1,1] op_sel_hi:[1,0] neg_lo:[1,1] neg_hi:[1,0] clamp
+77c10fcc80fe7942efbeadde	v_pk_add_f16 v119, 0, 0xdeadbeef op_sel_hi:[0,0] neg_lo:[0,1] neg_hi:[1,0] clamp
+5d480fcc3fd42832	v_pk_add_f16 v93, s63, vcc_lo op_sel:[1,0] op_sel_hi:[0,1] neg_lo:[1,0]
+78800fccf6fea11e78563412	v_pk_add_f16 v120, 4.0, 0x12345678 clamp
+07180fcc2a13c045	v_pk_add_f16 v7, v42, s9 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[0,1]
+61c00fcc9ee6d903	v_pk_add_f16 v97, 30, -1.0 op_sel_hi:[0,0] clamp
+40900fcc9aeb4900	v_pk_add_f16 v64, v154, -2.0 op_sel:[0,1] op_sel_hi:[0,0] clamp
+151a0fccbddd013a	v_pk_add_f16 v21, v189, src_private_limit op_sel:[1,1] neg_lo:[1,0] neg_hi:[0,1]
+c0590fccb601c813	v_pk_add_f16 v192, v182, s0 op_sel:[1,1] op_sel_hi:[0,1] neg_hi:[1,0]
+b0920fcc5ad6b422	v_pk_add_f16 v176, s90, vcc_hi op_sel:[0,1] op_sel_hi:[0,0] neg_lo:[1,0] neg_hi:[0,1] clamp
+8cc00fcc005aa911	v_pk_add_f16 v140, s0, 45 op_sel_hi:[0,1] clamp
+66000fcc31010204	v_pk_add_f16 v102, v49, v0 op_sel_hi:[0,0]
+91980fccb212c80a	v_pk_add_f16 v145, 50, s9 op_sel:[1,1] op_sel_hi:[1,0] clamp
+429b0fccff3c3954efbeadde	v_pk_add_f16 v66, 0xdeadbeef, 30 op_sel:[1,1] op_sel_hi:[0,1] neg_lo:[0,1] neg_hi:[1,1] clamp
+99800fccf2b6f60b	v_pk_add_f16 v153, 1.0, v91 op_sel_hi:[1,0] clamp
+4c000fccb615cd13	v_pk_add_f16 v76, v182, 10 op_sel_hi:[0,1]
+460b0fcc24ec314e	v_pk_add_f16 v70, s36, 4.0 op_sel:[1,0] op_sel_hi:[1,0] neg_lo:[0,1] neg_hi:[1,1]
+558a0fcc0e891722	v_pk_add_f16 v85, v14, v196 op_sel:[1,0] op_sel_hi:[0,0] neg_lo:[1,0] neg_hi:[0,1] clamp
+c2800fcc8a88d71b	v_pk_add_f16 v194, 10, v196 clamp
+b8980fcc3636c44b	v_pk_add_f16 v184, s54, s27 op_sel:[1,1] op_sel_hi:[1,0] neg_lo:[0,1] clamp
+5cc00fcc9918cb12	v_pk_add_f16 v92, 25, v140 op_sel_hi:[0,1] clamp
+2cd00fcc2ab72e2b	v_pk_add_f16 v44, v42, v91 op_sel:[0,1] op_sel_hi:[1,0] neg_lo:[1,0] clamp
+09180fccc1c4b672	v_pk_add_f16 v9, -1, v98 op_sel:[1,1] op_sel_hi:[0,1] neg_lo:[1,1]
+0a800fcc93f13106	v_pk_add_f16 v10, v147, 0.15915494 op_sel_hi:[0,0] clamp
+15800fcc517ea20e	v_pk_add_f16 v21, s81, v63 op_sel_hi:[1,0] clamp
+4b800fcccb7eba43	v_pk_add_f16 v75, -11, v63 op_sel_hi:[0,0] neg_lo:[0,1] clamp
+90ca0fccf80a7f23	v_pk_add_f16 v144, 0.15915494, v133 op_sel:[1,0] op_sel_hi:[0,0] neg_lo:[1,0] neg_hi:[0,1] clamp
+73510fcc1571e21c	v_pk_add_f16 v115, v21, v56 op_sel:[0,1] neg_hi:[1,0]
+42810fcc4de3c903	v_pk_add_f16 v66, v77, -0.5 op_sel_hi:[0,0] neg_hi:[1,0] clamp
+97400fcca35a5404	v_pk_add_f16 v151, 35, s45 op_sel_hi:[0,0]
+58000fcc4d656512	v_pk_add_f16 v88, v77, 50 op_sel_hi:[0,1]
+96000fccf834a71d	v_pk_add_f16 v150, 0.15915494, v154
+23400fcc1b42df1b	v_pk_add_f16 v35, s27, v161
+010010cc040b1a00	v_pk_mul_f16 v1, v4, v5 op_sel_hi:[0,0]
+540010cc7ea3f41e	v_pk_mul_f16 v84, v126, s81
+611110ccc69a6a2b	v_pk_mul_f16 v97, -6, v77 op_sel:[0,1] op_sel_hi:[1,0] neg_lo:[1,0] neg_hi:[1,0]
+5b4010cc468dca1a	v_pk_mul_f16 v91, v70, v70
+3c8310ccf03c7d53	v_pk_mul_f16 v60, 0.5, 30 op_sel_hi:[0,1] neg_lo:[0,1] neg_hi:[1,1] clamp
+990210cc4601021a	v_pk_mul_f16 v153, v70, v0 neg_hi:[0,1]
+c44010cc807ece13	v_pk_mul_f16 v196, 0, v63 op_sel_hi:[0,1]
+8c8010cc99d27e13	v_pk_mul_f16 v140, 25, v105 op_sel_hi:[0,1] clamp
+1b9910cc802a024a	v_pk_mul_f16 v27, 0, v21 op_sel:[1,1] op_sel_hi:[1,0] neg_lo:[0,1] neg_hi:[1,0] clamp
+a70010ccc1904810	v_pk_mul_f16 v167, -1, s72 op_sel_hi:[0,1]
+27db10cc99ee2271	v_pk_mul_f16 v39, 25, v119 op_sel:[1,1] op_sel_hi:[0,1] neg_lo:[1,1] neg_hi:[1,1] clamp
+4e8a10cc4df16973	v_pk_mul_f16 v78, v77, 0.15915494 op_sel:[1,0] op_sel_hi:[0,1] neg_lo:[1,1] neg_hi:[0,1] clamp
+a6c910ccfd50177e	v_pk_mul_f16 v166, src_scc, v168 op_sel:[1,0] neg_lo:[1,1] neg_hi:[1,0] clamp
+7b8110cc09a8b67a	v_pk_mul_f16 v123, s9, v84 neg_lo:[1,1] neg_hi:[1,0] clamp
+595810cc80eed920	v_pk_mul_f16 v89, 0, -4.0 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[1,0]
+394010cc80e68d0c	v_pk_mul_f16 v57, 0, -1.0 op_sel_hi:[1,0]
+174110cc00e2d908	v_pk_mul_f16 v23, s0, -0.5 op_sel_hi:[1,0] neg_hi:[1,0]
+76c110ccffb4cc1befbeadde	v_pk_mul_f16 v118, 0xdeadbeef, s90 neg_hi:[1,0] clamp
+40c210ccbc6ca75d	v_pk_mul_f16 v64, 60, v182 neg_lo:[0,1] neg_hi:[0,1] clamp
+0b4010ccafd31217	v_pk_mul_f16 v11, v175, v105 op_sel_hi:[0,1]
+b64010ccb601640a	v_pk_mul_f16 v182, v182, s0 op_sel_hi:[1,0]
+8f8310cc1583b933	v_pk_mul_f16 v143, v21, -1 op_sel_hi:[0,1] neg_lo:[1,0] neg_hi:[1,1] clamp
+5a5110cc855f0362	v_pk_mul_f16 v90, v133, v175 op_sel:[0,1] op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[1,0]
+72c010cc855a0403	v_pk_mul_f16 v114, 5, s45 op_sel_hi:[0,0] clamp
+4a0310cc855ecf13	v_pk_mul_f16 v74, 5, v175 op_sel_hi:[0,1] neg_hi:[1,1]
+584010ccc4b5000c	v_pk_mul_f16 v88, v196, s90 op_sel_hi:[1,0]
+b40010cc2a251c54	v_pk_mul_f16 v180, v42, s18 op_sel_hi:[0,1] neg_lo:[0,1]
+0ac210cc8a96f172	v_pk_mul_f16 v10, 10, -11 op_sel_hi:[0,1] neg_lo:[1,1] neg_hi:[0,1] clamp
+6d8010cc51f8f401	v_pk_mul_f16 v109, s81, m0 op_sel_hi:[0,0] clamp
+6ed810ccf5b6fa49	v_pk_mul_f16 v110, -2.0, v91 op_sel:[1,1] op_sel_hi:[1,0] neg_lo:[0,1] clamp
+3a4210cc8f709278	v_pk_mul_f16 v58, 15, v56 neg_lo:[1,1] neg_hi:[0,1]
+8d1010cc936ddc13	v_pk_mul_f16 v141, v147, s54 op_sel:[0,1] op_sel_hi:[0,1]
+a9c910cc15193715	v_pk_mul_f16 v169, v21, v140 op_sel:[1,0] op_sel_hi:[0,1] neg_hi:[1,0] clamp
+814010cc6a7a6b06	v_pk_mul_f16 v129, vcc_lo, v189 op_sel_hi:[0,0]
+869910cc7c7efe20	v_pk_mul_f16 v134, m0, v63 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[1,0] neg_hi:[1,0] clamp
+620310cc1ca3b448	v_pk_mul_f16 v98, v28, s81 op_sel_hi:[1,0] neg_lo:[0,1] neg_hi:[1,1]
+2ec010cc9aa9520a	v_pk_mul_f16 v46, v154, v84 op_sel_hi:[1,0] clamp
+640010ccf2c6b81b	v_pk_mul_f16 v100, 1.0, s99
+a7c010cc1c375414	v_pk_mul_f16 v167, v28, s27 op_sel_hi:[0,1] clamp
+360010cc12f0f501	v_pk_mul_f16 v54, s18, 0.15915494 op_sel_hi:[0,0]
+911b10ccb7427b4a	v_pk_mul_f16 v145, 55, v161 op_sel:[1,1] op_sel_hi:[1,0] neg_lo:[0,1] neg_hi:[1,1]
+028010cc2379711c	v_pk_mul_f16 v2, v35, 60 clamp
+a6db10ccf8e88d51	v_pk_mul_f16 v166, 0.15915494, 2.0 op_sel:[1,1] op_sel_hi:[0,1] neg_lo:[0,1] neg_hi:[1,1] clamp
+4d5a10cc7097dd02	v_pk_mul_f16 v77, v112, -11 op_sel:[1,1] op_sel_hi:[0,0] neg_hi:[0,1]
+4d5810cc23e91d04	v_pk_mul_f16 v77, v35, 2.0 op_sel:[1,1] op_sel_hi:[0,0]
+5c4b10ccf548d003	v_pk_mul_f16 v92, -2.0, s36 op_sel:[1,0] op_sel_hi:[0,0] neg_hi:[1,1]
+131a10ccf7b68676	v_pk_mul_f16 v19, -4.0, v91 op_sel:[1,1] op_sel_hi:[0,1] neg_lo:[1,1] neg_hi:[0,1]
+0fc110cc998cc504	v_pk_mul_f16 v15, 25, -6 op_sel_hi:[0,0] neg_hi:[1,0] clamp
+9e0910cc1c39864e	v_pk_mul_f16 v158, v28, v28 op_sel:[1,0] op_sel_hi:[1,0] neg_lo:[0,1] neg_hi:[1,0]
+575210cc8a96d55b	v_pk_mul_f16 v87, 10, -11 op_sel:[0,1] neg_lo:[0,1] neg_hi:[0,1]
+51c010cc3fa32c0b	v_pk_mul_f16 v81, v63, s81 op_sel_hi:[1,0] clamp
+518010cca842d713	v_pk_mul_f16 v81, 40, v161 op_sel_hi:[0,1] clamp
+010011cc040b1a00	v_pk_min_f16 v1, v4, v5 op_sel_hi:[0,0]
+c7da11cc24ecad79	v_pk_min_f16 v199, s36, 4.0 op_sel:[1,1] neg_lo:[1,1] neg_hi:[0,1] clamp
+b78011cc995a901b	v_pk_min_f16 v183, 25, s45 clamp
+2e8011ccafd55002	v_pk_min_f16 v46, v175, vcc_lo op_sel_hi:[0,0] clamp
+7c8011cc127e2e0b	v_pk_min_f16 v124, s18, v63 op_sel_hi:[1,0] clamp
+928b11ccb6e5d916	v_pk_min_f16 v146, v182, 1.0 op_sel:[1,0] op_sel_hi:[0,1] neg_hi:[1,1] clamp
+610011cc85e5011a	v_pk_min_f16 v97, v133, 1.0
+a8c011ccf1fec91300400000	v_pk_min_f16 v168, -0.5, lit(0x4000) op_sel_hi:[0,1] clamp
+67da11ccf1d6d826	v_pk_min_f16 v103, -0.5, vcc_hi op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[1,0] neg_hi:[0,1] clamp
+a29911cc48787d3b	v_pk_min_f16 v162, s72, 60 op_sel:[1,1] neg_lo:[1,0] neg_hi:[1,0] clamp
+600011ccee149108	v_pk_min_f16 v96, src_private_limit, 10 op_sel_hi:[1,0]
+224b11cc38d7e074	v_pk_min_f16 v34, v56, vcc_hi op_sel:[1,0] op_sel_hi:[0,1] neg_lo:[1,1] neg_hi:[1,1]
+a4c011ccf500fc14	v_pk_min_f16 v164, -2.0, s0 op_sel_hi:[0,1] clamp
+165811ccf1e6713c	v_pk_min_f16 v22, -0.5, -1.0 op_sel:[1,1] neg_lo:[1,0]
+0d4011cc120a2f1b	v_pk_min_f16 v13, s18, v133
+6ec011ccbca0011a	v_pk_min_f16 v110, 60, -16 clamp
+a7d211cc0924100f	v_pk_min_f16 v167, s9, s18 op_sel:[0,1] op_sel_hi:[1,0] neg_hi:[0,1] clamp
+664011cca3fe91130000803f	v_pk_min_f16 v102, 35, 0x3f800000 op_sel_hi:[0,1]
+238011cca115c10d	v_pk_min_f16 v35, v161, 10 op_sel_hi:[1,0] clamp
+784911cc07e7b95b	v_pk_min_f16 v120, v7, -1.0 op_sel:[1,0] neg_lo:[0,1] neg_hi:[1,0]
+9cc111cc54356b6e	v_pk_min_f16 v156, v84, v154 op_sel_hi:[1,0] neg_lo:[1,1] neg_hi:[1,0] clamp
+ae8011ccf838de12	v_pk_min_f16 v174, 0.15915494, v28 op_sel_hi:[0,1] clamp
+8cc011cc70f12560	v_pk_min_f16 v140, v112, 0.15915494 op_sel_hi:[0,0] neg_lo:[1,1] clamp
+c49311cc6ae6a95c	v_pk_min_f16 v196, vcc_lo, -1.0 op_sel:[0,1] neg_lo:[0,1] neg_hi:[1,1] clamp
+c5c011cc0027670a	v_pk_min_f16 v197, v0, v147 op_sel_hi:[1,0] clamp
+690211cc996ef53b	v_pk_min_f16 v105, 25, 55 neg_lo:[1,0] neg_hi:[0,1]
+a3da11cc127a9330	v_pk_min_f16 v163, s18, v189 op_sel:[1,1] op_sel_hi:[0,1] neg_lo:[1,0] neg_hi:[0,1] clamp
+939311cc1c01711c	v_pk_min_f16 v147, v28, 0 op_sel:[0,1] neg_hi:[1,1] clamp
+c1c011cc70d36e55	v_pk_min_f16 v193, v112, v105 op_sel_hi:[0,1] neg_lo:[0,1] clamp
+710011cc625fab1c	v_pk_min_f16 v113, v98, v175
+2f0911ccb6136c05	v_pk_min_f16 v47, v182, s9 op_sel:[1,0] op_sel_hi:[0,0] neg_hi:[1,0]
+410111cc7c0ede35	v_pk_min_f16 v65, m0, v7 op_sel_hi:[0,1] neg_lo:[1,0] neg_hi:[1,0]
+3b5b11ccf6fa9170	v_pk_min_f16 v59, 4.0, src_scc op_sel:[1,1] op_sel_hi:[0,1] neg_lo:[1,1] neg_hi:[1,1]
+b58011cc5a0a171e	v_pk_min_f16 v181, s90, v133 clamp
+29c011cc99a0c913	v_pk_min_f16 v41, 25, -16 op_sel_hi:[0,1] clamp
+9a8011cc54ffe10b0000ffff	v_pk_min_f16 v154, v84, 0xffff0000 op_sel_hi:[1,0] clamp
+820a11cc69e1cd43	v_pk_min_f16 v130, v105, 0.5 op_sel:[1,0] op_sel_hi:[0,0] neg_lo:[0,1] neg_hi:[0,1]
+ad4011ccf7fc680e	v_pk_min_f16 v173, -4.0, exec_lo op_sel_hi:[1,0]
+405a11cc1b12007a	v_pk_min_f16 v64, s27, s9 op_sel:[1,1] neg_lo:[1,1] neg_hi:[0,1]
+05c011ccb2e85115	v_pk_min_f16 v5, 50, 2.0 op_sel_hi:[0,1] clamp
+8e8011cc8a622e13	v_pk_min_f16 v142, 10, v49 op_sel_hi:[0,1] clamp
+28c011cc7d708e1c	v_pk_min_f16 v40, null, v56 clamp
+1b8811cc5bffc53b0000ffff	v_pk_min_f16 v27, v91, 0xffff0000 op_sel:[1,0] neg_lo:[1,0] clamp
+298111ccee8c317e	v_pk_min_f16 v41, src_private_limit, -6 neg_lo:[1,1] neg_hi:[1,0] clamp
+a38911cc8c016d78	v_pk_min_f16 v163, v140, 0 op_sel:[1,0] neg_lo:[1,1] neg_hi:[1,0] clamp
+011311cc2d0a6d18	v_pk_min_f16 v1, s45, 5 op_sel:[0,1] neg_hi:[1,1]
+2e4011cca8a3500d	v_pk_min_f16 v46, v168, s81 op_sel_hi:[1,0]
+498011ccb73c1d5c	v_pk_min_f16 v73, 55, 30 neg_lo:[0,1] clamp
+734011cc1228f516	v_pk_min_f16 v115, s18, 20 op_sel_hi:[0,1]
+688011cc127ea41d	v_pk_min_f16 v104, s18, s63 clamp
+4f4011cc5afca21e	v_pk_min_f16 v79, s90, v126
+1bd111cc5190f851	v_pk_min_f16 v27, s81, s72 op_sel:[0,1] op_sel_hi:[0,1] neg_lo:[0,1] neg_hi:[1,0] clamp
+3fc311cc0918db18	v_pk_min_f16 v63, s9, v140 neg_hi:[1,1] clamp
+c28111cc4d25f47b	v_pk_min_f16 v194, v77, s18 neg_lo:[1,1] neg_hi:[1,0] clamp
+860011cc4870de1a	v_pk_min_f16 v134, s72, v56
+9b0011cc07f10118	v_pk_min_f16 v155, v7, 0.15915494
+010012cc040b1a00	v_pk_max_f16 v1, v4, v5 op_sel_hi:[0,0]
+445312ccfdc4865e	v_pk_max_f16 v68, src_scc, v98 op_sel:[0,1] neg_lo:[0,1] neg_hi:[1,1]
+8e8012cc80dc4910	v_pk_max_f16 v142, 0, src_private_limit op_sel_hi:[0,1] clamp
+294212ccd0fe91030000ffff	v_pk_max_f16 v41, -16, 0xffff0000 op_sel_hi:[0,0] neg_hi:[0,1]
+748012cc23a3a01a	v_pk_max_f16 v116, v35, s81 clamp
+a0d112ccf00a8f62	v_pk_max_f16 v160, 0.5, v133 op_sel:[0,1] op_sel_hi:[0,0] neg_lo:[1,1] neg_hi:[1,0] clamp
+71c012cc31513904	v_pk_max_f16 v113, v49, 40 op_sel_hi:[0,0] clamp
+160012ccc68c011a	v_pk_max_f16 v22, -6, -6
+57ca12cc5afe652207000000	v_pk_max_f16 v87, s90, lit(0x7) op_sel:[1,0] op_sel_hi:[0,0] neg_lo:[1,0] neg_hi:[0,1] clamp
+4f9a12cca1514f26	v_pk_max_f16 v79, v161, v168 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[1,0] neg_hi:[0,1] clamp
+5b0012cc99dcd903	v_pk_max_f16 v91, 25, src_private_limit op_sel_hi:[0,0]
+c49312cc9964c11d	v_pk_max_f16 v196, 25, 50 op_sel:[0,1] neg_hi:[1,1] clamp
+b80012cc3f8d1903	v_pk_max_f16 v184, v63, -6 op_sel_hi:[0,0]
+28c012cc3843870e	v_pk_max_f16 v40, v56, v161 op_sel_hi:[1,0] clamp
+ab0012cc12b4a415	v_pk_max_f16 v171, s18, s90 op_sel_hi:[0,1]
+0bc812ccf3e8a54d	v_pk_max_f16 v11, -1.0, 2.0 op_sel:[1,0] op_sel_hi:[1,0] neg_lo:[0,1] clamp
+780012cc31a3c41c	v_pk_max_f16 v120, v49, s81
+93c212ccee7a536a	v_pk_max_f16 v147, src_private_limit, v189 op_sel_hi:[1,0] neg_lo:[1,1] neg_hi:[0,1] clamp
+024012ccf46cc813	v_pk_max_f16 v2, 2.0, s54 op_sel_hi:[0,1]
+bd1912ccbd43173e	v_pk_max_f16 v189, v189, v161 op_sel:[1,1] neg_lo:[1,0] neg_hi:[1,0]
+08d112cc8f189330	v_pk_max_f16 v8, 15, v140 op_sel:[0,1] op_sel_hi:[0,1] neg_lo:[1,0] neg_hi:[1,0] clamp
+9f5812ccf3fe155a003c003c	v_pk_max_f16 v159, -1.0, 0x3c003c00 op_sel:[1,1] neg_lo:[0,1]
+084012cc1b7e4c0e	v_pk_max_f16 v8, s27, s63 op_sel_hi:[1,0]
+1b8012cc0e5b7004	v_pk_max_f16 v27, v14, s45 op_sel_hi:[0,0] clamp
+6e4b12cc387ffe10	v_pk_max_f16 v110, v56, v63 op_sel:[1,0] op_sel_hi:[0,1] neg_hi:[1,1]
+9b5912cc5b29dd23	v_pk_max_f16 v155, v91, 20 op_sel:[1,1] op_sel_hi:[0,0] neg_lo:[1,0] neg_hi:[1,0]
+a94012cca11d3e02	v_pk_max_f16 v169, v161, v14 op_sel_hi:[0,0]
+a94012cc001fbd26	v_pk_max_f16 v169, v0, 15 op_sel_hi:[0,0] neg_lo:[1,0]
+21c012cc15ebb502	v_pk_max_f16 v33, v21, -2.0 op_sel_hi:[0,0] clamp
+9a0012ccffd6a80c003c003c	v_pk_max_f16 v154, 0x3c003c00, vcc_hi op_sel_hi:[1,0]
+1d4a12ccf850290a	v_pk_max_f16 v29, 0.15915494, 40 op_sel:[1,0] op_sel_hi:[1,0] neg_hi:[0,1]
+544012ccc4e58d1a	v_pk_max_f16 v84, v196, 1.0
+13cb12ccff8cf14100400000	v_pk_max_f16 v19, lit(0x4000), -6 op_sel:[1,0] op_sel_hi:[0,0] neg_lo:[0,1] neg_hi:[1,1] clamp
+050912cc70e10212	v_pk_max_f16 v5, v112, v112 op_sel:[1,0] op_sel_hi:[0,1] neg_hi:[1,0]
+16c812cc4dc5c643	v_pk_max_f16 v22, v77, v98 op_sel:[1,0] op_sel_hi:[0,0] neg_lo:[0,1] clamp
+715b12ccf7e0c90b	v_pk_max_f16 v113, -4.0, 0.5 op_sel:[1,1] op_sel_hi:[1,0] neg_hi:[1,1]
+90c012cc8ad22610	v_pk_max_f16 v144, 10, v105 op_sel_hi:[0,1] clamp
+8e5a12cc0e976d0d	v_pk_max_f16 v142, v14, -11 op_sel:[1,1] op_sel_hi:[1,0] neg_hi:[0,1]
+934212ccf85a0010	v_pk_max_f16 v147, 0.15915494, s45 op_sel_hi:[0,1] neg_hi:[0,1]
+11c012cc626fc90a	v_pk_max_f16 v17, v98, 55 op_sel_hi:[1,0] clamp
+56c012cc3f2a2a1a	v_pk_max_f16 v86, s63, v21 clamp
+96c012ccf5c6e00b	v_pk_max_f16 v150, -2.0, s99 op_sel_hi:[1,0] clamp
+a5d812ccf0286906	v_pk_max_f16 v165, 0.5, 20 op_sel:[1,1] op_sel_hi:[0,0] clamp
+1b4112cc2a6d1412	v_pk_max_f16 v27, v42, s54 op_sel_hi:[0,1] neg_hi:[1,0]
+4c0a12ccf8e8396c	v_pk_max_f16 v76, 0.15915494, 2.0 op_sel:[1,0] op_sel_hi:[1,0] neg_lo:[1,1] neg_hi:[0,1]
+bb9112cc381dde3a	v_pk_max_f16 v187, v56, v14 op_sel:[0,1] neg_lo:[1,0] neg_hi:[1,0] clamp
+7c4012ccbdd3ae19	v_pk_max_f16 v124, v189, v105
+878812cc0e6d2349	v_pk_max_f16 v135, v14, v182 op_sel:[1,0] op_sel_hi:[1,0] neg_lo:[0,1] clamp
+a05012ccb71cfe74	v_pk_max_f16 v160, 55, v14 op_sel:[0,1] op_sel_hi:[0,1] neg_lo:[1,1]
+388812cc2ac59258	v_pk_max_f16 v56, v42, v98 op_sel:[1,0] neg_lo:[0,1] clamp
+92d012ccb2886b5b	v_pk_max_f16 v146, 50, v196 op_sel:[0,1] neg_lo:[0,1] clamp
+194012cc2414c113	v_pk_max_f16 v25, s36, 10 op_sel_hi:[0,1]
+79ca12cc8adc8526	v_pk_max_f16 v121, 10, src_private_limit op_sel:[1,0] op_sel_hi:[0,0] neg_lo:[1,0] neg_hi:[0,1] clamp
+935112ccfd00643a	v_pk_max_f16 v147, src_scc, s0 op_sel:[0,1] neg_lo:[1,0] neg_hi:[1,0]
+010020cc040b1a00	v_fma_mix_f32 v1, v4, v5, s6
+53f620cc2490fcb4	v_fma_mix_f32 v83, -s36, |s72|, -|v63| op_sel:[0,1,1] op_sel_hi:[0,1,1] clamp
+1a0020cc621d421b	v_fma_mix_f32 v26, v98, v14, -16 op_sel_hi:[1,1,0]
+1a3220cc6bfaf426	v_fma_mix_f32 v26, -vcc_hi, |null|, v189 op_sel:[0,1,1]
+668020cc7cd66801	v_fma_mix_f32 v102, m0, vcc_hi, s90 clamp
+868020cc70e7f501	v_fma_mix_f32 v134, v112, -1.0, null clamp
+2a2220cc1c9b6ace	v_fma_mix_f32 v42, v28, -|v77|, -v154 op_sel:[0,0,1] op_sel_hi:[1,0,0]
+c6c020cc488cce1b	v_fma_mix_f32 v198, s72, v70, -1.0 op_sel_hi:[1,1,1] clamp
+89d620cc9a492c93	v_fma_mix_f32 v137, v154, |s36|, -|-11| op_sel:[0,1,0] op_sel_hi:[0,1,1] clamp
+b80020ccf000fa15	v_fma_mix_f32 v184, 0.5, v0, v126 op_sel_hi:[0,1,0]
+15a620ccff3c794a003c003c	v_fma_mix_f32 v21, lit(0x3c003c00), -|30|, |30| op_sel:[0,0,1] op_sel_hi:[1,0,0] clamp
+509e20cc6233551c	v_fma_mix_f32 v80, v98, |25|, |v21| op_sel:[1,1,0] op_sel_hi:[1,1,0] clamp
+2a5020cc85b5d023	v_fma_mix_f32 v42, -v133, s90, 2.0 op_sel:[0,1,0] op_sel_hi:[0,0,1]
+8beb20cc4d514f7e	v_fma_mix_f32 v139, -|v77|, -|v168|, v147 op_sel:[1,0,1] op_sel_hi:[1,1,1] clamp
+86dd20cc0047bac3	v_fma_mix_f32 v134, |v0|, -v35, -|src_private_limit| op_sel:[1,1,0] op_sel_hi:[0,0,1] clamp
+042e20cc6be61915	v_fma_mix_f32 v4, vcc_hi, |-1.0|, |v70| op_sel:[1,0,1] op_sel_hi:[0,1,0]
+badc20ccb20aff230000803f	v_fma_mix_f32 v186, neg(50), v133, |lit(0x3f800000)| op_sel:[1,1,0] op_sel_hi:[0,0,1] clamp
+70c020cc8f7a1712	v_fma_mix_f32 v112, 15, v189, 5 op_sel_hi:[0,1,1] clamp
+25f020cc2434dfbd	v_fma_mix_f32 v37, -s36, v154, -v119 op_sel:[0,1,1] op_sel_hi:[1,1,1] clamp
+828020ccc4d7b803	v_fma_mix_f32 v130, v196, vcc_hi, src_private_limit clamp
+27cc20ccadfa8c32	v_fma_mix_f32 v39, neg(45), null, |35| op_sel:[1,0,0] op_sel_hi:[0,1,1] clamp
+9b6720cc1c0bd9fb	v_fma_mix_f32 v155, -|v28|, -|5|, -|4.0| op_sel:[0,0,1] op_sel_hi:[1,1,1]
+7bef20ccf8eeb9eb	v_fma_mix_f32 v123, -|0.15915494|, -|-4.0|, -|src_private_limit| op_sel:[1,0,1] op_sel_hi:[1,0,1] clamp
+b07220ccf3b41ca4	v_fma_mix_f32 v176, neg(-1.0), |s90|, -v7 op_sel:[0,1,1] op_sel_hi:[0,0,1]
+580020ccf1000100	v_fma_mix_f32 v88, -0.5, 0, s0
+987420cc1cd52478	v_fma_mix_f32 v152, -v28, -vcc_lo, |s9| op_sel:[0,1,1] op_sel_hi:[1,1,1]
+3f0020cc2d8cc60b	v_fma_mix_f32 v63, s45, v70, -0.5 op_sel_hi:[1,0,0]
+3c3320cc2490c81a	v_fma_mix_f32 v60, |s36|, |s72|, 50 op_sel:[0,1,1] op_sel_hi:[1,1,0]
+ba0020ccf4fecd1b07000000	v_fma_mix_f32 v186, 2.0, lit(0x7), -1.0 op_sel_hi:[1,1,0]
+5c1f20cc631847c9	v_fma_mix_f32 v92, |s99|, -|v140|, -|s81| op_sel:[1,1,0] op_sel_hi:[1,0,0]
+021a20cc5bf9a48d	v_fma_mix_f32 v2, v91, |m0|, -v105 op_sel:[1,1,0] op_sel_hi:[1,0,0]
+752320cc5b2bb62a	v_fma_mix_f32 v117, -|v91|, |v21|, 45 op_sel:[0,0,1] op_sel_hi:[1,0,0]
+21f920cc46258c99	v_fma_mix_f32 v33, |v70|, s18, -s99 op_sel:[1,1,1] op_sel_hi:[1,1,1] clamp
+300020ccf6a0c513	v_fma_mix_f32 v48, 4.0, -16, -0.5 op_sel_hi:[0,1,0]
+7d0020cc4691dc0a	v_fma_mix_f32 v125, v70, s72, 55 op_sel_hi:[1,0,0]
+4fe120cca8547264	v_fma_mix_f32 v79, -|40|, -v42, v28 op_sel:[0,0,1] op_sel_hi:[0,0,1] clamp
+688320ccff1c4eee0000803f	v_fma_mix_f32 v104, -|lit(0x3f800000)|, -|v14|, -v147 op_sel_hi:[1,0,0] clamp
+55f420cc9af1c9fa	v_fma_mix_f32 v85, -v154, neg(0.15915494), -|50| op_sel:[0,1,1] op_sel_hi:[1,1,1] clamp
+5c8020cc2a7b7b0a	v_fma_mix_f32 v92, v42, v189, 30 op_sel_hi:[1,0,0] clamp
+05c020cc002afa01	v_fma_mix_f32 v5, s0, v21, exec_lo op_sel_hi:[0,0,1] clamp
+7fe920cca33c79fa	v_fma_mix_f32 v127, -|35|, neg(30), neg(30) op_sel:[1,0,1] op_sel_hi:[1,1,1] clamp
+764020ccad5a0503	v_fma_mix_f32 v118, 45, 45, -1 op_sel_hi:[0,0,1]
+15c020cc69b5fc10	v_fma_mix_f32 v21, v105, s90, s63 op_sel_hi:[0,1,1] clamp
+9ec020ccbd63320e	v_fma_mix_f32 v158, v189, v49, v140 op_sel_hi:[1,0,1] clamp
+4a5720cc2327ff50	v_fma_mix_f32 v74, |v35|, -|v147|, |s63| op_sel:[0,1,0] op_sel_hi:[0,1,1]
+b90020cc7eff411befbeadde	v_fma_mix_f32 v185, v126, 0xbeef, -16 op_sel_hi:[1,1,0]
+058020cc46f12500	v_fma_mix_f32 v5, v70, 0.15915494, s9 clamp
+994020cc69d5d01b	v_fma_mix_f32 v153, v105, vcc_lo, 2.0 op_sel_hi:[1,1,1]
+a8aa20cc5a5ac1e5	v_fma_mix_f32 v168, -s90, -|45|, -v112 op_sel:[1,0,1] clamp
+48ab20cc1c39fec30000ffff	v_fma_mix_f32 v72, |v28|, -|v28|, -lit(0xffff0000) op_sel:[1,0,1] clamp
+4a2020cc776501f0	v_fma_mix_f32 v74, -v119, neg(50), -s0 op_sel:[0,0,1] op_sel_hi:[0,1,0]
+917620cc85efa156	v_fma_mix_f32 v145, v133, -|-4.0|, |v168| op_sel:[0,1,1] op_sel_hi:[0,1,1]
+010021cc040b1a00	v_fma_mixlo_f16 v1, v4, v5, s6
+75f321cc9e48acf9	v_fma_mixlo_f16 v117, -|30|, -|s36|, -vcc_hi op_sel:[0,1,1] op_sel_hi:[1,1,1] clamp
+c30221ccf138a212	v_fma_mixlo_f16 v195, -0.5, |v28|, 40 op_sel_hi:[0,1,0]
+c77721cc931db630	v_fma_mixlo_f16 v199, -|v147|, |v14|, |s45| op_sel:[0,1,1] op_sel_hi:[0,1,1]
+108021ccc190f409	v_fma_mixlo_f16 v16, -1, s72, null op_sel_hi:[1,0,0] clamp
+0e0021cc00a9ce0b	v_fma_mixlo_f16 v14, v0, v84, -1.0 op_sel_hi:[1,0,0]
+960021cc77e78d0a	v_fma_mixlo_f16 v150, v119, -1.0, 35 op_sel_hi:[1,0,0]
+22e421cc2d0af121	v_fma_mixlo_f16 v34, -s45, 5, |m0| op_sel:[0,0,1] op_sel_hi:[0,0,1] clamp
+1de521cc93a98e6c	v_fma_mixlo_f16 v29, -|v147|, -v84, |v35| op_sel:[0,0,1] op_sel_hi:[1,0,1] clamp
+0bc021ccff8cda13efbeadde	v_fma_mixlo_f16 v11, 0xbeef, v70, 4.0 op_sel_hi:[0,1,1] clamp
+3b4c21ccbceeddeb	v_fma_mixlo_f16 v59, neg(60), neg(-4.0), -|-4.0| op_sel:[1,0,0] op_sel_hi:[1,0,1]
+92c021cc0ea3b80b	v_fma_mixlo_f16 v146, v14, s81, src_private_limit op_sel_hi:[1,0,1] clamp
+b30021cc51b6e20b	v_fma_mixlo_f16 v179, s81, v91, 0.15915494 op_sel_hi:[1,0,0]
+47c021cc942a2211	v_fma_mixlo_f16 v71, 20, v21, s72 op_sel_hi:[0,1,1] clamp
+7f0c21ccaf0ff639	v_fma_mixlo_f16 v127, -v175, v7, |null| op_sel:[1,0,0] op_sel_hi:[1,1,0]
+af1721ccadfa846e	v_fma_mixlo_f16 v175, -|45|, -|null|, |v161| op_sel:[0,1,0] op_sel_hi:[1,0,0]
+0b8021ccf6d25614	v_fma_mixlo_f16 v11, 4.0, v105, v21 op_sel_hi:[0,1,0] clamp
+6a8721cc317f68a1	v_fma_mixlo_f16 v106, -|v49|, |s63|, -|s90| clamp
+add021ccee28fd34	v_fma_mixlo_f16 v173, -src_private_limit, 20, v63 op_sel:[0,1,0] op_sel_hi:[0,1,1] clamp
+c40021cc2d542219	v_fma_mixlo_f16 v196, s45, v42, s72 op_sel_hi:[1,1,0]
+0d0b21cc2d3cd533	v_fma_mixlo_f16 v13, -|s45|, |30|, -2.0 op_sel:[1,0,0] op_sel_hi:[0,1,0]
+5c4021ccf43cb508	v_fma_mixlo_f16 v92, 2.0, 30, s45 op_sel_hi:[1,0,1]
+c04021cc6aeeca0a	v_fma_mixlo_f16 v192, vcc_lo, v119, 50 op_sel_hi:[1,0,1]
+adc421cca8514f1e	v_fma_mixlo_f16 v173, v168, v168, |v147| op_sel_hi:[1,1,1] clamp
+3dc621cc24e6f569	v_fma_mixlo_f16 v61, -s36, -|-1.0|, |null| op_sel_hi:[1,0,1] clamp
+22c021cc771d2201	v_fma_mixlo_f16 v34, v119, v14, s72 op_sel_hi:[0,0,1] clamp
+32bc21cc315b687e	v_fma_mixlo_f16 v50, -v49, -s45, |v154| op_sel:[1,1,1] op_sel_hi:[1,1,0] clamp
+0dc021ccb750a50d	v_fma_mixlo_f16 v13, 55, 40, v105 op_sel_hi:[1,0,1] clamp
+77b921ccb23610f7	v_fma_mixlo_f16 v119, -|50|, -s27, -v196 op_sel:[1,1,1] op_sel_hi:[0,1,0] clamp
+0a8021cc005a8c19	v_fma_mixlo_f16 v10, s0, s45, s99 op_sel_hi:[1,1,0] clamp
+5bc021cc7089db1b	v_fma_mixlo_f16 v91, v112, v196, 4.0 op_sel_hi:[1,1,1] clamp
+af7721cc3638d2c3	v_fma_mixlo_f16 v175, |s54|, -|v28|, -|2.0| op_sel:[0,1,1] op_sel_hi:[0,0,1]
+a26921cc245ac9ca	v_fma_mixlo_f16 v162, |s36|, neg(45), neg(50) op_sel:[1,0,1] op_sel_hi:[1,0,1]
+5b2621ccb29a1ef4	v_fma_mixlo_f16 v91, neg(50), -|v77|, -|v7| op_sel:[0,0,1] op_sel_hi:[0,1,0]
+b50021cc3ffe6d1578563412	v_fma_mixlo_f16 v181, s63, 0x5678, v91 op_sel_hi:[0,1,0]
+55c321ccf3348756	v_fma_mixlo_f16 v85, |-1.0|, -|v154|, v161 op_sel_hi:[0,1,1] clamp
+bac021cc1c1fad01	v_fma_mixlo_f16 v186, v28, 15, vcc_hi op_sel_hi:[0,0,1] clamp
+936d21cc5451e34b	v_fma_mixlo_f16 v147, |v84|, -v168, |0.15915494| op_sel:[1,0,1] op_sel_hi:[1,0,1]
+7ac021cc62f1e10c	v_fma_mixlo_f16 v122, v98, 0.15915494, v56 op_sel_hi:[1,0,1] clamp
+b39e21cc5b01a43d	v_fma_mixlo_f16 v179, -v91, |s0|, |v105| op_sel:[1,1,0] op_sel_hi:[1,1,0] clamp
+a6d521ccf400ca32	v_fma_mixlo_f16 v166, -|2.0|, v0, |50| op_sel:[0,1,0] op_sel_hi:[0,1,1] clamp
+648c21cc996e19cd	v_fma_mixlo_f16 v100, 25, neg(55), -|v70| op_sel:[1,0,0] op_sel_hi:[1,0,0] clamp
+8b8721ccf388a705	v_fma_mixlo_f16 v139, |-1.0|, |v196|, |v105| clamp
+3d4821cc85c6508d	v_fma_mixlo_f16 v61, 5, s99, -v84 op_sel:[1,0,0] op_sel_hi:[1,0,1]
+9b0c21cc362a563c	v_fma_mixlo_f16 v155, -s54, v21, |v21| op_sel:[1,0,0] op_sel_hi:[1,1,0]
+797221cc6925144e	v_fma_mixlo_f16 v121, v105, -|s18|, v133 op_sel:[0,1,1] op_sel_hi:[1,0,1]
+138021cc2d34cf0b	v_fma_mixlo_f16 v19, s45, v154, -1.0 op_sel_hi:[1,0,0] clamp
+374021ccff0a39040000803f	v_fma_mixlo_f16 v55, lit(0x3f800000), 5, v14 op_sel_hi:[0,0,1]
+0c0021cc8a1cde12	v_fma_mixlo_f16 v12, 10, v14, 55 op_sel_hi:[0,1,0]
+5e9521cc997819ed	v_fma_mixlo_f16 v94, -|25|, neg(60), -|v70| op_sel:[0,1,0] op_sel_hi:[1,0,0] clamp
+55c021ccff506d05003c003c	v_fma_mixlo_f16 v85, lit(0x3c003c00), 40, v91 op_sel_hi:[0,0,1] clamp
+5cc121ccad1c8e1a	v_fma_mixlo_f16 v92, |45|, v14, 35 op_sel_hi:[1,1,1] clamp
+7d4021cc8f543e02	v_fma_mixlo_f16 v125, 15, v42, 15 op_sel_hi:[0,0,1]
+010022cc040b1a00	v_fma_mixhi_f16 v1, v4, v5, s6
+7a8022cc7e97b508	v_fma_mixhi_f16 v122, v126, -11, s45 op_sel_hi:[1,0,0] clamp
+99c022cc46fd3405	v_fma_mixhi_f16 v153, v70, exec_lo, v77 op_sel_hi:[0,0,1] clamp
+6eda22ccf2eaa172	v_fma_mixhi_f16 v110, neg(1.0), -|-2.0|, 40 op_sel:[1,1,0] op_sel_hi:[0,1,1] clamp
+00c022ccb6279310	v_fma_mixhi_f16 v0, v182, v147, s36 op_sel_hi:[0,1,1] clamp
+387222ccf46cb81b	v_fma_mixhi_f16 v56, 2.0, |s54|, src_private_limit op_sel:[0,1,1] op_sel_hi:[1,1,1]
+81e222cc51c66482	v_fma_mixhi_f16 v129, s81, |s99|, neg(25) op_sel:[0,0,1] op_sel_hi:[0,0,1] clamp
+32a022cc240a8f99	v_fma_mixhi_f16 v50, s36, v133, -s99 op_sel:[0,0,1] op_sel_hi:[1,1,0] clamp
+580022cc7dfca216	v_fma_mixhi_f16 v88, null, v126, v168 op_sel_hi:[0,1,0]
+9c4222ccff6cff1b00400000	v_fma_mixhi_f16 v156, lit(0x4000), |v182|, lit(0x4000) op_sel_hi:[1,1,1]
+96dc22cc77ed4579	v_fma_mixhi_f16 v150, -v119, neg(4.0), |s81| op_sel:[1,1,0] op_sel_hi:[1,1,1] clamp
+507822cc80b4fc7c	v_fma_mixhi_f16 v80, neg(0), -s90, v63 op_sel:[1,1,1] op_sel_hi:[1,1,1]
+ac5722cc233d2179	v_fma_mixhi_f16 v172, -|v35|, -|30|, |s72| op_sel:[0,1,0] op_sel_hi:[1,1,1]
+578022cc9e5a7114	v_fma_mixhi_f16 v87, 30, 45, v28 op_sel_hi:[0,1,0] clamp
+924022cc626d5005	v_fma_mixhi_f16 v146, v98, s54, v84 op_sel_hi:[0,0,1]
+6a4d22ccf8ee4a28	v_fma_mixhi_f16 v106, -|0.15915494|, v119, |s18| op_sel:[1,0,0] op_sel_hi:[1,0,1]
+66c022cc09b48c1a	v_fma_mixhi_f16 v102, s9, s90, 35 op_sel_hi:[1,1,1] clamp
+9ac022ccfdfc1406	v_fma_mixhi_f16 v154, src_scc, exec_lo, v133 op_sel_hi:[0,0,1] clamp
+c1c222cc009aa2ae	v_fma_mixhi_f16 v193, -s0, |v77|, -v168 op_sel_hi:[1,0,1] clamp
+3b1422ccb282f53e	v_fma_mixhi_f16 v59, neg(50), -1, |v189| op_sel:[0,1,0] op_sel_hi:[1,1,0]
+7c4022cc1b466901	v_fma_mixhi_f16 v124, s27, 35, s90 op_sel_hi:[0,0,1]
+8fc022ccf300a809	v_fma_mixhi_f16 v143, -1.0, s0, vcc_lo op_sel_hi:[1,0,1] clamp
+0c9e22cc4d258c7c	v_fma_mixhi_f16 v12, -v77, -|s18|, |v35| op_sel:[1,1,0] op_sel_hi:[1,1,0] clamp
+ac4022ccc1645102	v_fma_mixhi_f16 v172, -1, 50, 20 op_sel_hi:[0,0,1]
+604022ccf4e62510	v_fma_mixhi_f16 v96, 2.0, -1.0, s9 op_sel_hi:[0,1,1]
+b58022ccff368c1a78563412	v_fma_mixhi_f16 v181, 0x5678, s27, 35 op_sel_hi:[1,1,0] clamp
+674022cc6b5acd13	v_fma_mixhi_f16 v103, vcc_hi, 45, -1.0 op_sel_hi:[0,1,1]
+9e0022ccc463d603	v_fma_mixhi_f16 v158, v196, v49, -2.0
+6bcd22cc1cd56809	v_fma_mixhi_f16 v107, |v28|, vcc_lo, |s90| op_sel:[1,0,0] op_sel_hi:[1,0,1] clamp
+9f9722ccf16c4800	v_fma_mixhi_f16 v159, |-0.5|, |s54|, |s18| op_sel:[0,1,0] clamp
+7e2422cc9e5a0493	v_fma_mixhi_f16 v126, 30, s45, -|-1| op_sel:[0,0,1] op_sel_hi:[0,1,0]
+20af22ccff5047d1003c003c	v_fma_mixhi_f16 v32, |lit(0x3c003c00)|, -|v168|, -|s81| op_sel:[1,0,1] op_sel_hi:[0,1,0] clamp
+5dc022cc94a21406	v_fma_mixhi_f16 v93, 20, s81, v133 op_sel_hi:[0,0,1] clamp
+8e7422cc8af8c41c	v_fma_mixhi_f16 v142, 10, m0, |v49| op_sel:[0,1,1] op_sel_hi:[1,1,1]
+468022ccfffac0150000ffff	v_fma_mixhi_f16 v70, lit(0xffff0000), null, v112 op_sel_hi:[0,1,0] clamp
+701f22ccf8fa89d5	v_fma_mixhi_f16 v112, |0.15915494|, -|src_scc|, -|v98| op_sel:[1,1,0] op_sel_hi:[0,1,0]
+2c0822ccd0e6a17e	v_fma_mixhi_f16 v44, neg(-16), neg(-1.0), v168 op_sel:[1,0,0] op_sel_hi:[1,1,0]
+3abc22cc362603dc	v_fma_mixhi_f16 v58, s54, -v147, -|v0| op_sel:[1,1,1] op_sel_hi:[1,1,0] clamp
+374022cc6be0e203	v_fma_mixhi_f16 v55, vcc_hi, v112, 0.15915494 op_sel_hi:[0,0,1]
+267f22cc5af8fc530000803f	v_fma_mixhi_f16 v38, |s90|, -|m0|, |lit(0x3f800000)| op_sel:[1,1,1] op_sel_hi:[0,1,1]
+2c8122cc5aeea9ec	v_fma_mixhi_f16 v44, -|s90|, neg(-4.0), -v42 op_sel_hi:[1,0,0] clamp
+c1c022cca838c60c	v_fma_mixhi_f16 v193, 40, v28, v49 op_sel_hi:[1,0,1] clamp
+bb0022cc625b7802	v_fma_mixhi_f16 v187, v98, s45, 30
+5e9022cc2438e203	v_fma_mixhi_f16 v94, s36, v28, 0.15915494 op_sel:[0,1,0] clamp
+450622cc7e97a969	v_fma_mixhi_f16 v69, -v126, -|-11|, |vcc_lo| op_sel_hi:[1,0,0]
+53b422cc09e6bd36	v_fma_mixhi_f16 v83, -s9, -1.0, |v175| op_sel:[0,1,1] op_sel_hi:[0,1,0] clamp
+c4ed22ccf4628a65	v_fma_mixhi_f16 v196, -|2.0|, -v49, |v98| op_sel:[1,0,1] op_sel_hi:[0,0,1] clamp
+532722cc6afec17d0000803f	v_fma_mixhi_f16 v83, -|vcc_lo|, -|lit(0x3f800000)|, |v112| op_sel:[0,0,1] op_sel_hi:[1,1,0]
+3e3922ccafebddeb	v_fma_mixhi_f16 v62, -|v175|, neg(-2.0), neg(-4.0) op_sel:[1,1,1] op_sel_hi:[1,0,0]
+808022cc2a01cc03	v_fma_mixhi_f16 v128, v42, s0, -1.0 clamp
+058022cc859a2201	v_fma_mixhi_f16 v5, 5, v77, s72 clamp
+7ed422cc3f1e31f6	v_fma_mixhi_f16 v126, -s63, neg(15), -|v140| op_sel:[0,1,0] op_sel_hi:[0,1,1] clamp
+603c22cc09628ec2	v_fma_mixhi_f16 v96, s9, -v49, -|35| op_sel:[1,1,1]

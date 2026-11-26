@@ -374,3 +374,28 @@ pub static DS: [Option<OpInfo>; 256] = build(&[
     (0xfe, OpInfo { name: "ds_read_b96", slots: &[Slot::VDst(3), Slot::DsAddr], flags: 0 }),
     (0xff, OpInfo { name: "ds_read_b128", slots: &[Slot::VDst(4), Slot::DsAddr], flags: 0 }),
 ]);
+
+pub static VOP3P: [Option<OpInfo>; 128] = build(&[
+    (0x00, OpInfo { name: "v_pk_mad_i16", slots: &[Slot::VDst(1), Slot::Src0(1), Slot::Src1(1), Slot::Src2(1)], flags: 0 }),
+    (0x01, OpInfo { name: "v_pk_mul_lo_u16", slots: &[Slot::VDst(1), Slot::Src0(1), Slot::Src1(1)], flags: 0 }),
+    (0x02, OpInfo { name: "v_pk_add_i16", slots: &[Slot::VDst(1), Slot::Src0(1), Slot::Src1(1)], flags: 0 }),
+    (0x03, OpInfo { name: "v_pk_sub_i16", slots: &[Slot::VDst(1), Slot::Src0(1), Slot::Src1(1)], flags: 0 }),
+    (0x04, OpInfo { name: "v_pk_lshlrev_b16", slots: &[Slot::VDst(1), Slot::Src0(1), Slot::Src1(1)], flags: 0 }),
+    (0x05, OpInfo { name: "v_pk_lshrrev_b16", slots: &[Slot::VDst(1), Slot::Src0(1), Slot::Src1(1)], flags: 0 }),
+    (0x06, OpInfo { name: "v_pk_ashrrev_i16", slots: &[Slot::VDst(1), Slot::Src0(1), Slot::Src1(1)], flags: 0 }),
+    (0x07, OpInfo { name: "v_pk_max_i16", slots: &[Slot::VDst(1), Slot::Src0(1), Slot::Src1(1)], flags: 0 }),
+    (0x08, OpInfo { name: "v_pk_min_i16", slots: &[Slot::VDst(1), Slot::Src0(1), Slot::Src1(1)], flags: 0 }),
+    (0x09, OpInfo { name: "v_pk_mad_u16", slots: &[Slot::VDst(1), Slot::Src0(1), Slot::Src1(1), Slot::Src2(1)], flags: 0 }),
+    (0x0a, OpInfo { name: "v_pk_add_u16", slots: &[Slot::VDst(1), Slot::Src0(1), Slot::Src1(1)], flags: 0 }),
+    (0x0b, OpInfo { name: "v_pk_sub_u16", slots: &[Slot::VDst(1), Slot::Src0(1), Slot::Src1(1)], flags: 0 }),
+    (0x0c, OpInfo { name: "v_pk_max_u16", slots: &[Slot::VDst(1), Slot::Src0(1), Slot::Src1(1)], flags: 0 }),
+    (0x0d, OpInfo { name: "v_pk_min_u16", slots: &[Slot::VDst(1), Slot::Src0(1), Slot::Src1(1)], flags: 0 }),
+    (0x0e, OpInfo { name: "v_pk_fma_f16", slots: &[Slot::VDst(1), Slot::Src0(1), Slot::Src1(1), Slot::Src2(1)], flags: 0 }),
+    (0x0f, OpInfo { name: "v_pk_add_f16", slots: &[Slot::VDst(1), Slot::Src0(1), Slot::Src1(1)], flags: 0 }),
+    (0x10, OpInfo { name: "v_pk_mul_f16", slots: &[Slot::VDst(1), Slot::Src0(1), Slot::Src1(1)], flags: 0 }),
+    (0x11, OpInfo { name: "v_pk_min_f16", slots: &[Slot::VDst(1), Slot::Src0(1), Slot::Src1(1)], flags: 0 }),
+    (0x12, OpInfo { name: "v_pk_max_f16", slots: &[Slot::VDst(1), Slot::Src0(1), Slot::Src1(1)], flags: 0 }),
+    (0x20, OpInfo { name: "v_fma_mix_f32", slots: &[Slot::VDst(1), Slot::Src0(1), Slot::Src1(1), Slot::Src2(1)], flags: 458832 }),
+    (0x21, OpInfo { name: "v_fma_mixlo_f16", slots: &[Slot::VDst(1), Slot::Src0(1), Slot::Src1(1), Slot::Src2(1)], flags: 458832 }),
+    (0x22, OpInfo { name: "v_fma_mixhi_f16", slots: &[Slot::VDst(1), Slot::Src0(1), Slot::Src1(1), Slot::Src2(1)], flags: 458832 }),
+]);

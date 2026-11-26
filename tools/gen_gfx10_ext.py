@@ -288,6 +288,55 @@ def ds(fix, rnd):
     return ('DS', 256, rows)
 
 
+# ---------------------------------------------------------------- VOP3P
+
+PK_LITS = [0x12345678, 0x3c003c00, 0x3f800000, 0x00004000, 0xdeadbeef, 0x7, 0xffff0000]
+SRC_POOL = ([256 + r for r in range(0, 200, 7)] + list(range(0, 106, 9)) + [106, 107, 124, 126, 125, 253]
+            + list(range(128, 249, 5)) + [240, 241, 242, 243, 244, 245, 246, 247, 248, 255, 255])
+
+
+def vop3p_dw(op, vdst=1, srcs=(260, 261, 6), d0=0, d1=0):
+    lit = [PK_LITS[0]] if 255 in srcs else []
+    return [0xCC000000 | op << 16 | vdst | d0, srcs[0] | srcs[1] << 9 | srcs[2] << 18 | d1] + lit
+
+
+@family
+def vop3p(fix, rnd):
+    rows = []
+    for op in range(128):
+        t = dis(u(*vop3p_dw(op)), '1013')
+        if not t:
+            continue
+        name = t.split()[0]
+        # modifiers print as ` name:[...]` and `clamp`: strip them before counting operands
+        body = re.split(r' (?:op_sel|op_sel_hi|neg_lo|neg_hi|clamp)\b', t.partition(' ')[2])[0]
+        nsrc = len(split_ops(body)) - 1
+        mix = 'fma_mix' in name
+        slots = ['Slot::VDst(1)'] + ['Slot::Src%d(1)' % k for k in range(nsrc)]
+        flags = (1 << 6 | 7 << 16 | 16) if mix else 0
+        rows.append((op, name, slots, flags))
+        fix.append((u(*vop3p_dw(op)),))
+        for _ in range(60):
+            srcs = [rnd.choice(SRC_POOL) for _ in range(3)]
+            if nsrc < 3:
+                srcs[2] = rnd.choice([c for c in SRC_POOL if c != 255])
+            lit = rnd.choice(PK_LITS)
+            m = (1 << nsrc) - 1
+            d0 = (rnd.getrandbits(3) & m) << 8 | (rnd.getrandbits(3) & m) << 11 \
+                | rnd.getrandbits(1) << 14 | rnd.getrandbits(1) << 15
+            d1 = rnd.getrandbits(2) << 27 | (rnd.getrandbits(3) & m) << 29
+            if rnd.random() < 0.4:
+                d0 &= ~(7 << 8 | 7 << 11)
+                d1 &= ~(7 << 29)
+            b = u(*vop3p_dw(op, rnd.randrange(200), srcs, d0, d1))
+            if 255 in srcs[:nsrc]:
+                b = b[:8] + u(lit)
+            else:
+                b = b[:8]
+            fix.append((b,))
+    return ('VOP3P', 128, rows)
+
+
 def run():
     out_t, out_f = sys.argv[1], sys.argv[2]
     rnd = random.Random(1013)

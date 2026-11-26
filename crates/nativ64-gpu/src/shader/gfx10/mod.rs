@@ -48,6 +48,7 @@ pub enum Enc {
     Mimg,
     Mtbuf,
     Ds,
+    Vop3p,
 }
 
 impl Enc {
@@ -69,6 +70,7 @@ impl Enc {
             Self::Mimg => "MIMG",
             Self::Mtbuf => "MTBUF",
             Self::Ds => "DS",
+            Self::Vop3p => "VOP3P",
         }
     }
 }
@@ -103,6 +105,8 @@ pub struct Mods {
     pub clamp: bool,
     /// 0 none, 1 `mul:2`, 2 `mul:4`, 3 `div:2`.
     pub omod: u8,
+    /// VOP3P `op_sel_hi` (bit per source); `abs` holds `neg_hi` and `neg` holds `neg_lo` there.
+    pub opsel_hi: u8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

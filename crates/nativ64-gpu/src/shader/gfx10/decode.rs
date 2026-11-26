@@ -41,11 +41,11 @@ pub fn decode_wave(code: &[u8], at: usize, wave32: bool) -> Result<Instr, Decode
             0x3c => Enc::Mimg,
             0x3a => Enc::Mtbuf,
             0x36 => Enc::Ds,
+            0x33 => Enc::Vop3p,
             0x3d => Enc::Smem,
             0x3e => Enc::Exp,
             _ => {
                 let name = match top6 {
-                    0x33 => "VOP3P",
                     0x37 => "FLAT",
                     _ => "?",
                 };
@@ -68,6 +68,7 @@ pub fn decode_wave(code: &[u8], at: usize, wave32: bool) -> Result<Instr, Decode
         Enc::Mimg => c.mimg(d0),
         Enc::Mtbuf => c.mtbuf(d0),
         Enc::Ds => c.ds(d0),
+        Enc::Vop3p => c.vop3p(d0),
     }
 }
 
@@ -401,6 +402,38 @@ impl Cursor<'_> {
         Ok(i)
     }
 
+    fn vop3p(&self, d0: u32) -> Result<Instr, DecodeError> {
+        let d1 = self.dword(1)?;
+        let op = (d0 >> 16) & 0x7f;
+        let info = self.lookup(&table_ext::VOP3P, Enc::Vop3p, op)?;
+        let nsrc = info
+            .slots
+            .iter()
+            .filter(|s| matches!(s, Slot::Src0(_) | Slot::Src1(_) | Slot::Src2(_)))
+            .count();
+        let (neg_hi, opsel, neg_lo) = ((d0 >> 8 & 7) as u8, (d0 >> 11 & 7) as u8, (d1 >> 29) as u8);
+        if (neg_hi | opsel | neg_lo) >> nsrc != 0 {
+            return Err(self.err(ErrorKind::BadField("VOP3P modifier of a missing source")));
+        }
+        let f = Fields {
+            vdst: d0 & 0xff,
+            src0: d1 & 0x1ff,
+            src1: (d1 >> 9) & 0x1ff,
+            src2: (d1 >> 18) & 0x1ff,
+            ..Fields::default()
+        };
+        let mut i = self.finish(Enc::Vop3p, op, info, &f, 2, None)?;
+        i.mods = Mods {
+            abs: neg_hi,
+            neg: neg_lo,
+            opsel,
+            clamp: d0 >> 15 & 1 != 0,
+            omod: 0,
+            opsel_hi: (d1 >> 27 & 3) as u8 | ((d0 >> 14 & 1) as u8) << 2,
+        };
+        Ok(i)
+    }
+
     fn mtbuf(&self, d0: u32) -> Result<Instr, DecodeError> {
         let d1 = self.dword(1)?;
         // the d16 forms are opcodes of their own
@@ -679,6 +712,7 @@ impl Cursor<'_> {
             clamp: d0 >> 15 & 1 != 0,
             omod: (d1 >> 27 & 3) as u8,
             neg: (d1 >> 29 & 7) as u8,
+            opsel_hi: 0,
         };
         Ok(i)
     }
