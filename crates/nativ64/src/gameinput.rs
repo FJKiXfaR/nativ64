@@ -209,6 +209,10 @@ impl State {
                     timestamp,
                     buttons,
                 };
+                eprintln!(
+                    "nativ64: gamepad buttons {buttons:#x} at {:.2} s after the first query",
+                    elapsed.as_secs_f64()
+                );
                 history.push(entry);
                 if history.len() > HISTORY {
                     history.remove(0);
