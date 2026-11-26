@@ -77,6 +77,13 @@ impl SamplerDesc {
 pub struct Translated {
     pub words: Vec<u32>,
     pub samplers: Vec<SamplerDesc>,
+    /// The entry reads a texture or a sampler of the bindless set (set 0, binding 0 or 2) or a
+    /// static sampler: the draw needs images (chunk 10b).
+    pub images: bool,
+    /// A raw scalar load or a built buffer has a base that does not trace to user data (an
+    /// address read from memory): it reaches the GPU untranslated, so the backend skips the
+    /// pipeline.
+    pub memory_addresses: bool,
 }
 
 #[cfg(test)]

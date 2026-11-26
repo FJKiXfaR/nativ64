@@ -461,7 +461,7 @@ struct Tr<'a> {
 
 /// Translates a structured program to the probe module.
 pub fn translate(f: &Func, s: &Structured) -> Result<Probe, SpirvError> {
-    let (words, inputs, outputs, _) = build(f, s, None)?;
+    let (words, inputs, outputs, _, _) = build(f, s, None)?;
     Ok(Probe {
         words,
         inputs,
@@ -472,11 +472,22 @@ pub fn translate(f: &Func, s: &Structured) -> Result<Probe, SpirvError> {
 /// Translates a structured vertex or pixel program to a module with its real entry point:
 /// inputs from the root block and the stage's built-ins, outputs to the stage's variables.
 pub fn translate_io(f: &Func, s: &Structured, io: &StageIo) -> Result<Translated, SpirvError> {
-    let (words, _, _, samplers) = build(f, s, Some(io))?;
-    Ok(Translated { words, samplers })
+    let (words, _, _, samplers, flags) = build(f, s, Some(io))?;
+    Ok(Translated {
+        words,
+        samplers,
+        images: flags.0,
+        memory_addresses: flags.1,
+    })
 }
 
-type Built = (Vec<u32>, Vec<Reg>, Vec<(Reg, bool)>, Vec<SamplerDesc>);
+type Built = (
+    Vec<u32>,
+    Vec<Reg>,
+    Vec<(Reg, bool)>,
+    Vec<SamplerDesc>,
+    (bool, bool),
+);
 
 fn build<'a>(f: &'a Func, s: &'a Structured, io: Option<&'a StageIo>) -> Result<Built, SpirvError> {
     let mut g = Gen::new();
@@ -573,10 +584,12 @@ fn build<'a>(f: &'a Func, s: &'a Structured, io: Option<&'a StageIo>) -> Result<
     words.extend(inst(Op::FunctionEnd, &[]));
     t.g.m.add_function(&words);
     let mut samplers = Vec::new();
+    let mut flags = (false, false);
     match t.stage.take() {
         Some(st) => {
             iface.extend(st.interface());
             samplers = st.res.samplers.clone();
+            flags = st.res.flags();
             let model = st.model();
             t.g.m.entry_point(model, main, "main", &iface);
             st.exec_modes(&mut t.g.m, main);
@@ -588,7 +601,7 @@ fn build<'a>(f: &'a Func, s: &'a Structured, io: Option<&'a StageIo>) -> Result<
         }
     }
     t.g.m.name(main, "main");
-    Ok((t.g.m.finish(), inputs, outputs, samplers))
+    Ok((t.g.m.finish(), inputs, outputs, samplers, flags))
 }
 
 impl Tr<'_> {

@@ -2352,6 +2352,29 @@ mod stage {
     }
 
     #[test]
+    fn addresses_read_from_memory_are_flagged() {
+        // a root descriptor's address is user data: translated by the backend
+        let user = vs_lines(&["s_load_dwordx4 s[0:3], s[8:9], 0x0"]);
+        let t = translate_full(&vs_with(&user, |_| {}), None);
+        assert!(!t.memory_addresses && !t.images);
+        let built = vs_lines(&[
+            "s_mov_b32 s0, s8",
+            "s_or_b32 s1, s9, 0x10000",
+            "s_mov_b32 s2, -1",
+            "s_mov_b32 s3, 0x11014fac",
+            "v_mov_b32 v1, 0",
+            "buffer_load_dwordx4 v[4:7], v1, s[0:3], 0 offen",
+        ]);
+        assert!(!translate_full(&vs_with(&built, |_| {}), None).memory_addresses);
+        // a pointer stored in a buffer reaches the GPU as it was stored
+        let chased = vs_lines(&[
+            "s_load_dwordx2 s[4:5], s[8:9], 0x0",
+            "s_load_dwordx4 s[12:15], s[4:5], 0x0",
+        ]);
+        assert!(translate_full(&vs_with(&chased, |_| {}), None).memory_addresses);
+    }
+
+    #[test]
     fn raw_scalar_load_reads_a_root_descriptor_address() {
         let lines = vs_lines(&["s_load_dwordx4 s[0:3], s[8:9], 0x0"]);
         let w = translate(&vs_with(&lines, |_| {}), None);

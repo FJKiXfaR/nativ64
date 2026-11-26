@@ -37,6 +37,75 @@ pub(in crate::shader::spirv) struct Analysis {
     /// Every value that holds a dword of a loaded descriptor (the loads' results, and copies
     /// and phis of them).
     loaded: HashSet<Val>,
+    /// A raw scalar load or a built buffer has a base that does not trace to user data: an
+    /// address the program read from memory or computed from it, which the backend cannot
+    /// translate (`Translated::memory_addresses`).
+    memory_addresses: bool,
+}
+
+/// Whether `s` is computed from user data and constants only (scalar arithmetic, copies and
+/// phis of such): a root descriptor's address, or a flag word of a buffer the code builds.
+fn user_derived(f: &Func, s: Src, depth: u32) -> bool {
+    let Src::Val(v) = s else {
+        return matches!(s, Src::Const(_));
+    };
+    if depth > 24 {
+        return false;
+    }
+    let info = f.vals[v.0 as usize];
+    match info.def {
+        ValDef::Arg => matches!(info.reg, Reg::S(_)),
+        ValDef::Phi { block, index } => f.blocks[block].phis[index]
+            .args
+            .iter()
+            .all(|(_, a)| *a == s || user_derived(f, *a, depth + 1)),
+        ValDef::Inst { .. } => {
+            let Some(i) = def_inst(f, v) else {
+                return false;
+            };
+            matches!(i.instr.enc, Enc::Sop1 | Enc::Sop2 | Enc::Sopk)
+                && i.srcs
+                    .iter()
+                    .flatten()
+                    .all(|a| user_derived(f, *a, depth + 1))
+        }
+    }
+}
+
+/// Whether the program reads memory through an address that is not user data: a raw scalar
+/// load, or a buffer the code builds (not loaded from a table), whose words are not
+/// user-derived.
+fn reads_memory_addresses(
+    f: &Func,
+    loaded: &HashSet<Val>,
+    table_loads: &HashMap<(usize, usize), u16>,
+) -> bool {
+    let is_loaded = |s: &Src| matches!(s, Src::Val(v) if loaded.contains(v));
+    for (b, blk) in f.blocks.iter().enumerate() {
+        for (k, i) in blk.insts.iter().enumerate() {
+            let name = i.instr.name();
+            let words: Option<&[Src]> = match i.instr.enc {
+                Enc::Smem if name.starts_with("s_load_dword") => {
+                    if table_loads.contains_key(&(b, k)) {
+                        None
+                    } else {
+                        i.srcs.first().map(Vec::as_slice)
+                    }
+                }
+                Enc::Smem if name.starts_with("s_buffer_load") => i.srcs.first().map(Vec::as_slice),
+                Enc::Mubuf => i.srcs.len().checked_sub(2).map(|n| i.srcs[n].as_slice()),
+                _ => None,
+            };
+            let Some(w) = words else { continue };
+            if w.first().is_some_and(is_loaded) {
+                continue;
+            }
+            if !w.iter().all(|s| user_derived(f, *s, 0)) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn def_inst(f: &Func, v: Val) -> Option<&Inst> {
@@ -144,6 +213,7 @@ pub(in crate::shader::spirv) fn analyze(
     let mut a = Analysis {
         table_loads: HashMap::new(),
         loaded: HashSet::new(),
+        memory_addresses: false,
     };
     for (b, blk) in f.blocks.iter().enumerate() {
         for (k, i) in blk.insts.iter().enumerate() {
@@ -165,6 +235,7 @@ pub(in crate::shader::spirv) fn analyze(
         }
     }
     if a.loaded.is_empty() {
+        a.memory_addresses = reads_memory_addresses(f, &a.loaded, &a.table_loads);
         return Ok(a);
     }
     // copies and phis of loaded dwords are loaded dwords
@@ -216,6 +287,7 @@ pub(in crate::shader::spirv) fn analyze(
             }
         }
     }
+    a.memory_addresses = reads_memory_addresses(f, &a.loaded, &a.table_loads);
     Ok(a)
 }
 
@@ -238,6 +310,15 @@ pub(in crate::shader::spirv) struct Res {
 }
 
 impl Res {
+    /// Whether the entry reads a texture or a sampler of the bindless set, and whether it reads
+    /// memory through an address that is not user data.
+    pub(in crate::shader::spirv) fn flags(&self) -> (bool, bool) {
+        (
+            !self.textures.is_empty() || self.sampler_array.is_some() || !self.samplers.is_empty(),
+            self.analysis.memory_addresses,
+        )
+    }
+
     pub(super) fn new(analysis: Analysis) -> Self {
         Self {
             analysis,
