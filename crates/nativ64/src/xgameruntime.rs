@@ -20,6 +20,68 @@ use crate::com::{
     add_ref, query_interface, release, ComObject, Guid, IUnknownVtbl, E_INVALIDARG, E_POINTER,
 };
 
+/// A vtable as an array of untyped slots: slots 0-2 are `IUnknown`.
+#[repr(C)]
+pub struct Table<const N: usize>(pub [*const (); N]);
+
+// SAFETY: the slots are function pointers, never written.
+unsafe impl<const N: usize> Sync for Table<N> {}
+
+/// An object over a [`Table`].
+pub type Obj<const N: usize> = ComObject<Table<N>, ()>;
+
+/// A new object (one reference) answering `QueryInterface` for `iids`.
+pub fn new_object<const N: usize>(table: &'static Table<N>, iids: &'static [Guid]) -> *mut c_void {
+    Obj::<N>::create(table, iids, ()) as *mut c_void
+}
+
+/// `Table<$n>` with the `IUnknown` slots filled in, then the given methods (slot 3 on).
+macro_rules! table {
+    ($n:expr; $($slot:expr),* $(,)?) => {
+        $crate::xgameruntime::Table::<$n>([
+            $crate::com::query_interface::<$crate::xgameruntime::Table<$n>, ()> as *const (),
+            $crate::com::add_ref::<$crate::xgameruntime::Table<$n>, ()> as *const (),
+            $crate::com::release::<$crate::xgameruntime::Table<$n>, ()> as *const (),
+            $($slot as *const ()),*
+        ])
+    };
+}
+pub(crate) use table;
+
+/// Names of the areas a [`slot_trap`] can belong to.
+pub const AREAS: [&str; 2] = ["user", "task queue"];
+pub const AREA_USER: usize = 0;
+pub const AREA_QUEUE: usize = 1;
+
+static TRAPPED: Mutex<Option<HashSet<(usize, usize)>>> = Mutex::new(None);
+
+/// A method nobody implemented yet: logs the area and slot the first time, answers `E_NOTIMPL`.
+pub extern "win64" fn slot_trap<const AREA: usize, const SLOT: usize>() -> i32 {
+    let first = TRAPPED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_or_insert_with(HashSet::new)
+        .insert((AREA, SLOT));
+    if first {
+        eprintln!(
+            "nativ64: unimplemented xgameruntime {} method, slot {SLOT} (offset {:#x})",
+            AREAS[AREA],
+            SLOT * 8
+        );
+    }
+    E_NOTIMPL
+}
+
+/// Calls slot `slot` (index) of `obj` as the title does (tests).
+///
+/// # Safety
+/// `F` is the slot's real signature.
+#[cfg(test)]
+pub unsafe fn method<F: Copy>(obj: *mut c_void, slot: usize) -> F {
+    let table = *(obj as *const *const *const ());
+    std::mem::transmute_copy(&*table.add(slot))
+}
+
 pub const S_OK: i32 = 0;
 pub const E_NOTIMPL: i32 = 0x8000_4001u32 as i32;
 
@@ -113,12 +175,12 @@ static SYSTEM_VTBL: SystemVtbl = SystemVtbl {
 };
 static SYSTEM_IIDS: [Guid; 1] = [IID_SYSTEM];
 
-/// The answer to a request for an API: only the system API exists.
+/// The answer to a request for an API: the system, user and task queue APIs exist.
 fn query_api(api: &Guid, iid: &Guid) -> Option<*mut c_void> {
     if *api == API_SYSTEM && *iid == IID_SYSTEM {
         Some(SystemObj::create(&SYSTEM_VTBL, &SYSTEM_IIDS, ()) as *mut c_void)
     } else {
-        None
+        crate::xuser::query(api, iid).or_else(|| crate::xasync::query(api, iid))
     }
 }
 
@@ -270,6 +332,34 @@ mod tests {
             // The interface GUID must match too.
             assert_eq!(
                 QueryApiImpl(&API_SYSTEM, &API_SYSTEM, &mut obj),
+                E_API_NOT_FOUND
+            );
+            assert!(obj.is_null());
+        }
+    }
+
+    #[test]
+    fn user_and_task_queue_apis_are_served() {
+        use crate::{xasync, xuser};
+        unsafe {
+            for (api, iid) in [
+                (xuser::PROVIDER, xuser::IID),
+                (xuser::PROVIDER, xuser::GAMERTAG_IID),
+                (xasync::PROVIDER, xasync::PROVIDER),
+            ] {
+                let mut obj = std::ptr::null_mut();
+                assert_eq!(QueryApiImpl(&api, &iid, &mut obj), S_OK);
+                assert!(!obj.is_null());
+                assert_eq!(release(obj as *mut SystemObj), 0);
+            }
+            // A slot nobody implemented logs and answers E_NOTIMPL (task queue slot 6).
+            let mut q = std::ptr::null_mut();
+            QueryApiImpl(&xasync::PROVIDER, &xasync::PROVIDER, &mut q);
+            let run: extern "win64" fn(*mut c_void) -> i32 = method(q, 6);
+            assert_eq!(run(q), E_NOTIMPL);
+            let mut obj = std::ptr::null_mut();
+            assert_eq!(
+                QueryApiImpl(&xuser::PROVIDER, &xasync::PROVIDER, &mut obj),
                 E_API_NOT_FOUND
             );
             assert!(obj.is_null());

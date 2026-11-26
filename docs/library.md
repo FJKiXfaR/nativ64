@@ -49,6 +49,14 @@ per method in published order; fill a `static`. Tests call through the vtable
 (`gameinput.rs` is the model). Interfaces that inherit another's methods repeat them first in
 their own vtable struct.
 
+The game runtime (`xgameruntime.rs`) serves its APIs from `QueryApiImpl(api, iid)`: the system
+API, the user provider (`xuser.rs`: one offline local user "Player", signed in, every privilege)
+and the task queue / async provider (`xasync.rs`: queues with manual, thread-pool, serialized and
+immediate ports, async blocks completed through the block's queue; the minimum the user path
+needs). Their objects are `Table<N>`s of untyped slots built with `table!`; a slot with no method
+is `slot_trap::<AREA, SLOT>` which logs the area and slot once and answers `E_NOTIMPL`. Every
+other API is refused and logged.
+
 `GameInput.dll` is imported by ordinal: `src/gameinput.rs` has an `ORDINALS` table like
 `ws2_32`, wired in `lookup_ordinal`. It exposes an `IGameInput` with no devices (readings are
 `GAMEINPUT_E_READING_NOT_FOUND`); callbacks are stored and never fire (TODO: evdev input).

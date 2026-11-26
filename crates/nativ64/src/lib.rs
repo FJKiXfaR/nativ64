@@ -61,7 +61,9 @@ pub mod vcruntime140;
 pub mod windowing;
 pub mod ws2_32;
 pub mod xapu;
+pub mod xasync;
 pub mod xgameruntime;
+pub mod xuser;
 
 pub use api_ms_win_crt_runtime::{nativ64_set_command_line, set_command_line};
 pub use registry::{lookup, lookup_ordinal, nativ64_lookup, normalize_module, Export, Status};
