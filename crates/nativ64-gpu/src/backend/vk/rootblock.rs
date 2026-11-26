@@ -36,9 +36,9 @@ pub const STRIDE: usize = 512;
 /// The root arguments a list set on its graphics root signature.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RootArgs {
-    constants: BTreeMap<u32, Vec<u32>>,
-    tables: BTreeMap<u32, u64>,
-    views: BTreeMap<u32, u64>,
+    pub(super) constants: BTreeMap<u32, Vec<u32>>,
+    pub(super) tables: BTreeMap<u32, u64>,
+    pub(super) views: BTreeMap<u32, u64>,
     /// Start addresses of the bound resource and sampler heaps.
     resource_heap: u64,
     sampler_heap: u64,

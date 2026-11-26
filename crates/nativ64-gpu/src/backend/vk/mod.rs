@@ -10,6 +10,7 @@ mod draw;
 mod format;
 mod gpumem;
 mod image;
+mod inspect;
 mod instance;
 mod memory;
 mod pipeline;

@@ -324,6 +324,9 @@ impl<'g> VkBackend<'g> {
                 self.draw.reset_list();
                 for c in list {
                     self.stats.commands += 1;
+                    if self.inspecting() {
+                        self.inspect_command(c);
+                    }
                     self.record(d, cb, c, &mut staging);
                     if matches!(
                         c,

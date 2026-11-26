@@ -74,6 +74,9 @@ impl<'g> VkBackend<'g> {
         if let Some(dir) = self.dump.clone().filter(|_| dump_wanted(self.frames)) {
             self.dump_frame(resource, &dir);
         }
+        if self.inspecting_at_present() {
+            self.dump_targets();
+        }
         let Some(win) = window else { return };
         if !self.swapchains.contains_key(&win.hwnd) {
             let sc = match self.gpu.create_swapchain(win.surface, win.size) {

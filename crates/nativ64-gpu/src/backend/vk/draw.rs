@@ -65,17 +65,17 @@ impl DrawSkips {
 /// What a list set, as far as draws are concerned (graphics side only).
 #[derive(Default)]
 pub(super) struct ListState {
-    pipeline: usize,
-    topology: u32,
-    viewport: Option<[f32; 6]>,
-    scissor: Option<Rect>,
-    blend: Option<[f32; 4]>,
+    pub(super) pipeline: usize,
+    pub(super) topology: u32,
+    pub(super) viewport: Option<[f32; 6]>,
+    pub(super) scissor: Option<Rect>,
+    pub(super) blend: Option<[f32; 4]>,
     stencil_ref: u32,
     index: Option<IndexView>,
-    vertex: BTreeMap<u32, VertexView>,
+    pub(super) vertex: BTreeMap<u32, VertexView>,
     targets: Vec<u64>,
     depth: Option<u64>,
-    root: RootArgs,
+    pub(super) root: RootArgs,
 }
 
 impl ListState {
@@ -659,6 +659,10 @@ impl<'g> VkBackend<'g> {
         };
         arena.write(at, &block);
         let root_address = arena.address + at as u64;
+
+        if self.inspecting() {
+            self.inspect_draw(c, pd, &resources, extent, rects);
+        }
 
         // Rendering.
         let want = Open {

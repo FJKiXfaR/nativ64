@@ -269,6 +269,15 @@ The executable imports from `d3d12_xs` only `D3D12XboxCreateDevice` and
 - `NATIV64_DUMP_FRAMES=<dir>` writes each presented image as a PNG: the real check of each
   milestone is the title's own frames, compared with what the title shows on a console
   (captures from the user or public footage of the same screen).
+- `NATIV64_DUMP_TARGETS=<dir>` (with `NATIV64_DUMP_FRAMES`, same frames: 1, 2, 4, 8, ... and every
+  60th) describes what the replay did in those frames: one `inspect: cmd` line per command, one
+  `inspect: frame N draw` line per replayed draw (pipeline, targets, viewport, scissor, cull,
+  depth and blend state, raw pipeline description, root arguments, the first descriptors of each
+  table, the bytes of constant buffers, vertex buffers and root views), and after the present
+  every image the replay holds as `<dir>/frame_NNNNN_res<id>_<w>x<h>.png` with its owner (gpu or
+  host) and its count of non-zero bytes (formats the PNG dump does not convert are named only).
+  It reads every image back, so a run is slow (use `--timeout` of 60 or more); pipeline serials
+  are not stable from one run to the next (threads), read them within one run.
 
 ## Milestones and chunks
 
