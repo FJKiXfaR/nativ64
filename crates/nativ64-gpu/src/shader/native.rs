@@ -29,8 +29,9 @@ const SLOTS: [(&str, usize); 8] = [
 ];
 /// Offset of the stage data from the record start.
 const STAGE_DATA: usize = 0x54;
-/// Most layout or used-resource entries accepted.
-const MAX_TABLE: u32 = 64;
+/// Most layout or used-resource entries accepted (a title run's blobs reach a few hundred; the
+/// tables are bounds-checked against the payload anyway).
+const MAX_TABLE: u32 = 512;
 const MAX_IO: u32 = 32;
 const PATCH_ENTRIES: usize = 8;
 const PATCH_VARIANTS: usize = 10;
@@ -758,9 +759,11 @@ pub(super) mod tests {
         ));
         // Tables: too many, and past the payload.
         assert!(matches!(
-            bad(&|p| put_u32(p, vs_at + 0x38, 65), false),
+            bad(&|p| put_u32(p, vs_at + 0x38, 513), false),
             Some(ShaderError::Unsupported(_))
         ));
+        // Real programs list a few hundred entries (the cap was 64 and refused 2486 blobs).
+        assert!(bad(&|p| put_u32(p, vs_at + 0x38, 300), false).is_none());
         assert!(matches!(
             bad(&|p| put_u64(p, vs_at + 0x28, 0x1ff8), false),
             Some(ShaderError::BadOffset(_))
