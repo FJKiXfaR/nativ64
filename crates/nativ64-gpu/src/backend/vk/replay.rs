@@ -1,7 +1,8 @@
 //! Replay of the title's recorded command streams (G3): render targets and textures as
-//! device-local images made on first use, clears, copies and barriers executed, draws and
-//! dispatches counted and skipped. Images are always in `GENERAL` layout, so a title barrier is
-//! one conservative global memory barrier, never a layout change.
+//! device-local images made on first use, clears, copies and barriers executed, draws replayed
+//! when they can be (`draw.rs`, chunk 10a), dispatches, mesh draws and indirect draws counted
+//! and skipped. Images are always in `GENERAL` layout, so a title barrier is one conservative
+//! global memory barrier, never a layout change.
 //!
 //! Buffers are the title's own memory, so buffer copies are plain CPU copies at record time,
 //! in order with the staging of uploads (an upload reads its source bytes while recording).
@@ -21,7 +22,7 @@ const BUFFER: u32 = 1;
 const TEXTURE2D: u32 = 3;
 
 /// A device-local image standing for one title resource.
-struct TitleImage {
+pub(super) struct TitleImage {
     image: vk::Image,
     memory: vk::DeviceMemory,
     desc: ResourceDesc,
@@ -30,13 +31,13 @@ struct TitleImage {
 
 /// The copyable part of a `TitleImage`, used while recording.
 #[derive(Clone, Copy)]
-struct Img {
-    image: vk::Image,
-    info: FormatInfo,
-    width: u32,
-    height: u32,
-    mips: u32,
-    layers: u32,
+pub(super) struct Img {
+    pub(super) image: vk::Image,
+    pub(super) info: FormatInfo,
+    pub(super) width: u32,
+    pub(super) height: u32,
+    pub(super) mips: u32,
+    pub(super) layers: u32,
 }
 
 impl TitleImage {
@@ -65,7 +66,11 @@ pub struct ReplayStats {
     pub commands: u64,
     pub clears: u64,
     pub copies: u64,
+    /// `Draw`, `DrawIndexed` and `ExecuteIndirect` commands seen.
     pub draws: u64,
+    /// Draws recorded into Vulkan (the rest are in `draw_skips`, or indirect).
+    pub drawn: u64,
+    pub draw_skips: super::draw::DrawSkips,
     pub dispatches: u64,
     pub skipped: u64,
 }
@@ -82,6 +87,7 @@ pub struct Readback {
 pub struct VkBackend<'g> {
     pub(super) gpu: &'g Gpu,
     images: HashMap<usize, Option<TitleImage>>,
+    pub(super) draw: super::draw::DrawState<'g>,
     pub stats: ReplayStats,
     logged: HashSet<Discriminant<Command>>,
     pub(super) swapchains: HashMap<usize, Option<super::Swapchain<'g>>>,
@@ -106,7 +112,7 @@ fn range(
 }
 
 /// One memory barrier between everything before and after (all stages and accesses).
-fn global_barrier(d: &Device, cb: vk::CommandBuffer) {
+pub(super) fn global_barrier(d: &Device, cb: vk::CommandBuffer) {
     let access = vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE;
     let b = [vk::MemoryBarrier::default()
         .src_access_mask(access)
@@ -125,7 +131,7 @@ fn global_barrier(d: &Device, cb: vk::CommandBuffer) {
     };
 }
 
-fn mip_size(v: u32, mip: u32) -> u32 {
+pub(super) fn mip_size(v: u32, mip: u32) -> u32 {
     (v >> mip).max(1)
 }
 
@@ -139,7 +145,7 @@ fn covers(rects: &[Rect], w: u32, h: u32) -> bool {
 
 /// The mips and layers a render or depth view names, from its description words
 /// (`dimension_at` is where `ViewDimension` sits, `tex2d` and `array` the dimension values).
-fn view_range(img: Img, desc: Option<[u32; 6]>, depth: bool) -> (u32, u32, u32) {
+pub(super) fn view_range(img: Img, desc: Option<[u32; 6]>, depth: bool) -> (u32, u32, u32) {
     let Some(w) = desc else {
         return (0, 0, img.layers);
     };
@@ -161,6 +167,7 @@ impl<'g> VkBackend<'g> {
         VkBackend {
             gpu,
             images: HashMap::new(),
+            draw: super::draw::DrawState::new(gpu),
             stats: ReplayStats::default(),
             logged: HashSet::new(),
             swapchains: HashMap::new(),
@@ -173,9 +180,16 @@ impl<'g> VkBackend<'g> {
     pub fn execute(&mut self, lists: &[Vec<Command>]) {
         let gpu = self.gpu;
         let mut staging = Vec::new();
+        let draws = lists
+            .iter()
+            .flatten()
+            .filter(|c| matches!(c, Command::Draw { .. } | Command::DrawIndexed { .. }))
+            .count();
+        self.draw.begin(draws);
         let r = gpu.submit_once(|d, cb| {
             for list in lists {
                 self.stats.lists += 1;
+                self.draw.reset_list();
                 for c in list {
                     self.stats.commands += 1;
                     self.record(d, cb, c, &mut staging);
@@ -189,11 +203,13 @@ impl<'g> VkBackend<'g> {
                         global_barrier(d, cb);
                     }
                 }
+                self.end_rendering(d, cb);
             }
         });
         if let Err(e) = r {
             log_once(format!("replay submission failed: {e}"));
         }
+        self.draw.end();
         for s in staging {
             // SAFETY: the submission has completed (or failed before use).
             unsafe {
@@ -215,7 +231,7 @@ impl<'g> VkBackend<'g> {
         ))
     }
 
-    fn image(&mut self, d: &Device, cb: vk::CommandBuffer, res: usize) -> Option<Img> {
+    pub(super) fn image(&mut self, d: &Device, cb: vk::CommandBuffer, res: usize) -> Option<Img> {
         // SAFETY: `res` was recorded by a list method from a live resource of ours.
         let (desc, _) = unsafe { info_of(res as *mut _) }?;
         if let Some(Some(t)) = self.images.get(&res) {
@@ -224,6 +240,7 @@ impl<'g> VkBackend<'g> {
             }
         }
         if let Some(Some(old)) = self.images.remove(&res) {
+            self.draw.forget_image(res);
             // SAFETY: the GPU is idle between submissions; this one has not used it yet.
             unsafe { self.destroy(old) };
         }
@@ -231,6 +248,11 @@ impl<'g> VkBackend<'g> {
         let out = made.as_ref().map(TitleImage::img);
         self.images.insert(res, made);
         out
+    }
+
+    /// The description of the image made for `res`, if there is one.
+    pub(super) fn image_desc(&self, res: usize) -> Option<ResourceDesc> {
+        self.images.get(&res)?.as_ref().map(|t| t.desc)
     }
 
     fn make_image(
@@ -417,12 +439,45 @@ impl<'g> VkBackend<'g> {
         staging: &mut Vec<Staging>,
     ) {
         use Command as C;
+        self.draw.track(c);
+        // Rendering stays open over draws and state changes; anything else ends it.
+        if !matches!(
+            c,
+            C::Draw { .. }
+                | C::DrawIndexed { .. }
+                | C::SetPipeline { .. }
+                | C::ClearState { .. }
+                | C::Topology(_)
+                | C::Viewports(_)
+                | C::Scissors(_)
+                | C::BlendFactor(_)
+                | C::StencilRef(_)
+                | C::DepthBounds { .. }
+                | C::IndexBuffer(_)
+                | C::VertexBuffers { .. }
+                | C::StreamOutput { .. }
+                | C::RenderTargets { .. }
+                | C::Predication { .. }
+                | C::Heaps(_)
+                | C::RootSignature { .. }
+                | C::RootTable { .. }
+                | C::RootConstants { .. }
+                | C::RootView { .. }
+        ) {
+            self.end_rendering(d, cb);
+        }
         match c {
-            C::Draw { .. } | C::DrawIndexed { .. } => self.stats.draws += 1,
+            C::Draw { .. } | C::DrawIndexed { .. } => {
+                self.stats.draws += 1;
+                self.draw_command(d, cb, c);
+            }
             C::Dispatch { .. } | C::DispatchMesh { .. } | C::DispatchMeshX { .. } => {
                 self.stats.dispatches += 1
             }
-            C::ExecuteIndirect { .. } => self.stats.draws += 1,
+            C::ExecuteIndirect { .. } => {
+                self.stats.draws += 1;
+                self.stats.draw_skips.state += 1;
+            }
             C::Barriers(_) | C::BarrierGroups(_) | C::Sync { .. } => global_barrier(d, cb),
             C::ClearRenderTarget {
                 handle,
@@ -900,7 +955,7 @@ impl Drop for VkBackend<'_> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::super::tests::gpu_or_skip;
     use super::*;
     use crate::d3d12::descriptor::{create_depth_stencil_view, create_render_target_view};
@@ -909,7 +964,7 @@ mod tests {
     use std::ffi::c_void;
 
     /// A texture resource over `mem` (the address is never read for textures).
-    fn texture(w: u64, h: u32, format: u32, flags: u32) -> usize {
+    pub(in crate::backend::vk) fn texture(w: u64, h: u32, format: u32, flags: u32) -> usize {
         let desc = ResourceDesc {
             dimension: TEXTURE2D,
             alignment: 0,
@@ -940,7 +995,7 @@ mod tests {
         out as usize
     }
 
-    fn buffer(mem: &mut [u8]) -> usize {
+    pub(in crate::backend::vk) fn buffer(mem: &mut [u8]) -> usize {
         let desc = ResourceDesc {
             dimension: BUFFER,
             width: mem.len() as u64,
@@ -967,7 +1022,7 @@ mod tests {
     }
 
     /// An RTV slot for `res`; the slot's memory is leaked with the test.
-    fn rtv(res: usize) -> u64 {
+    pub(in crate::backend::vk) fn rtv(res: usize) -> u64 {
         let slot = Box::leak(Box::new([0u8; 128])).as_mut_ptr() as u64;
         // SAFETY: a live resource and a 128-byte slot.
         unsafe {
@@ -976,7 +1031,7 @@ mod tests {
         slot
     }
 
-    fn dsv(res: usize) -> u64 {
+    pub(in crate::backend::vk) fn dsv(res: usize) -> u64 {
         let slot = Box::leak(Box::new([0u8; 128])).as_mut_ptr() as u64;
         // SAFETY: as above.
         unsafe {

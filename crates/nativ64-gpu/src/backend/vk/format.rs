@@ -65,6 +65,59 @@ pub fn lookup(dxgi: u32, flags: u32) -> Option<FormatInfo> {
     }
 }
 
+/// The Vulkan format and byte size of a vertex attribute in DXGI format `dxgi` (typeless and
+/// block formats are not vertex formats).
+pub fn vertex(dxgi: u32) -> Option<(vk::Format, u32)> {
+    use vk::Format as F;
+    Some(match dxgi {
+        2 => (F::R32G32B32A32_SFLOAT, 16),
+        3 => (F::R32G32B32A32_UINT, 16),
+        4 => (F::R32G32B32A32_SINT, 16),
+        6 => (F::R32G32B32_SFLOAT, 12),
+        7 => (F::R32G32B32_UINT, 12),
+        8 => (F::R32G32B32_SINT, 12),
+        10 => (F::R16G16B16A16_SFLOAT, 8),
+        11 => (F::R16G16B16A16_UNORM, 8),
+        12 => (F::R16G16B16A16_UINT, 8),
+        13 => (F::R16G16B16A16_SNORM, 8),
+        14 => (F::R16G16B16A16_SINT, 8),
+        16 => (F::R32G32_SFLOAT, 8),
+        17 => (F::R32G32_UINT, 8),
+        18 => (F::R32G32_SINT, 8),
+        24 => (F::A2B10G10R10_UNORM_PACK32, 4),
+        25 => (F::A2B10G10R10_UINT_PACK32, 4),
+        26 => (F::B10G11R11_UFLOAT_PACK32, 4),
+        28 => (F::R8G8B8A8_UNORM, 4),
+        29 => (F::R8G8B8A8_SRGB, 4),
+        30 => (F::R8G8B8A8_UINT, 4),
+        31 => (F::R8G8B8A8_SNORM, 4),
+        32 => (F::R8G8B8A8_SINT, 4),
+        34 => (F::R16G16_SFLOAT, 4),
+        35 => (F::R16G16_UNORM, 4),
+        36 => (F::R16G16_UINT, 4),
+        37 => (F::R16G16_SNORM, 4),
+        38 => (F::R16G16_SINT, 4),
+        41 => (F::R32_SFLOAT, 4),
+        42 => (F::R32_UINT, 4),
+        43 => (F::R32_SINT, 4),
+        49 => (F::R8G8_UNORM, 2),
+        50 => (F::R8G8_UINT, 2),
+        51 => (F::R8G8_SNORM, 2),
+        52 => (F::R8G8_SINT, 2),
+        54 => (F::R16_SFLOAT, 2),
+        56 => (F::R16_UNORM, 2),
+        57 => (F::R16_UINT, 2),
+        58 => (F::R16_SNORM, 2),
+        59 => (F::R16_SINT, 2),
+        61 => (F::R8_UNORM, 1),
+        62 => (F::R8_UINT, 1),
+        63 => (F::R8_SNORM, 1),
+        64 => (F::R8_SINT, 1),
+        87 => (F::B8G8R8A8_UNORM, 4),
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -80,5 +133,13 @@ mod tests {
         );
         assert_eq!(lookup(39, 0).unwrap().format, vk::Format::R32_SFLOAT);
         assert!(lookup(71, 0).is_none(), "BC1 is not mapped");
+    }
+
+    #[test]
+    fn vertex_formats() {
+        assert_eq!(vertex(2), Some((vk::Format::R32G32B32A32_SFLOAT, 16)));
+        assert_eq!(vertex(28), Some((vk::Format::R8G8B8A8_UNORM, 4)));
+        assert_eq!(vertex(1), None, "typeless");
+        assert_eq!(vertex(71), None);
     }
 }

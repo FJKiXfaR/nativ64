@@ -4,13 +4,18 @@
 //! The loader (`libvulkan.so.1`) is opened at run time; a machine without it gets
 //! `VkError::Load`, never a link error. Driver failures are `VkError`s, not panics.
 
+mod bindless;
 mod device;
+mod draw;
 mod format;
+mod gpumem;
 mod image;
 mod instance;
 mod memory;
+mod pipeline;
 mod present;
 mod replay;
+mod rootblock;
 mod swapchain;
 
 use ash::vk;
@@ -19,6 +24,7 @@ use std::fmt;
 use std::sync::{Mutex, OnceLock};
 
 pub use device::Gpu;
+pub use draw::DrawSkips;
 pub use memory::{AlignedBuf, HostBuffer};
 pub use present::Window;
 pub use replay::{Readback, ReplayStats, VkBackend};
