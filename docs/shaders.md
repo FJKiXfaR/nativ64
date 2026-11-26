@@ -406,6 +406,36 @@ Sub-chunks, each with its corpus count (`--structure --waves` and `--structure -
 - **Far jumps** resolve in one pass over the code before building (one program chains more than
   16: the per-build loop of chunk 4 is quadratic there).
 
+**As built (7a)** (corpus of 8634 blobs; IR 8611 programs, was 8610):
+- **`s_andn1/andn2_wrexec_*`**: the IR lists the SGPR then EXEC as destinations, reads EXEC, sets
+  SCC; mask typing and the ALU (CPU and SPIR-V) treat them as the saveexec family. The semantics
+  (`exec = sdst = ~src & exec`, `src & ~exec`; SCC = result != 0) are the ISA text, **[unverified]**.
+  No corpus program uses them: no number moved. The bit-set facts of `s_andn2_saveexec` now
+  combine as `src & ~exec` (they had `exec & ~src`).
+- **Far jumps**: `resolve_jumps` runs a forward worklist over the instructions carrying the folded
+  scalar values (`fold`), keeping at a join what every path agrees on; the build then runs once
+  with every known target resolved. The per-build loop remains as the fallback for a target only
+  the SSA form knows. The CS chaining more than 16 jumps now builds (IR 8611/8634; the 23
+  refusals left are `v_movrels/movreld` indexed registers).
+- **Speculated scalar regions**: deviation from the select at the join. The decision is on the
+  branch, not on each phi: `BranchKind::Wave` is a lane-wise branch whose join has a scalar phi
+  with differing inputs and whose region has no scalar store, atomic or `s_sendmsg`. Every
+  invocation takes it on `OpGroupNonUniformAny(bit)` (capability `GroupNonUniformVote`), the
+  region's scalar instructions run in all of them, its vector instructions stay `Active`, and
+  no EXEC fact is drawn from its edges. This is the same value as the select (the region's when
+  any lane entered, else the old one), with registers staying variables and no phi to place.
+  The probe has one lane, so the vote is the lane's bit (the CPU evaluator reads `Wave` as
+  `Lane`). Structure 2862 -> 3060 of 8611 (cs 693, ps 1607, vs 760, mesh 0); ignoring cross-lane
+  uses 6549 -> 8603 of 8611; `divergent scalar` is gone (984 speculated branches), what is left
+  is 8 irreducible cs, which it used to hide.
+- **Scalar bits as lane masks**: a mask operation takes a non-mask scalar (or a constant other
+  than 0 / -1) beside at least one mask; scalars alone still do not make a mask. The ALU reads
+  bit 0 of the scalar's first dword (the probe's lane), for every dword of a wave64 mask. The
+  mask operations (`s_and_b32`, `s_andn2_b32`, `s_or_b32`, `s_and_saveexec_*`, ...) leave the
+  cross-lane list; the program counts do not move (the same programs still hold a readlane,
+  mbcnt or `s_ff1`): cs 2024, ps 1687, mesh 1569, vs 270. ALU coverage 8525/8611 programs
+  (3006/3060 structured).
+
 ## Inputs and outputs
 
 **User SGPRs.** A VS/PS/CS receives user-data dword i in `s[i]`; merged stages and mesh have 8
