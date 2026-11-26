@@ -169,6 +169,7 @@ dependencies = [
  "miniz_oxide 0.9.1",
  "nativ64",
  "png",
+ "spirv",
  "wayland-client",
  "wayland-protocols",
 ]
@@ -270,6 +271,15 @@ name = "smallvec"
 version = "1.16.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "149309498a5f7334b12ddae0cad8aba81ce785fe91755068867e017cf98fee46"
+
+[[package]]
+name = "spirv"
+version = "0.4.0+sdk-1.4.341.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d9571ea910ebd84c86af4b3ed27f9dbdc6ad06f17c5f96146b2b671e2976744f"
+dependencies = [
+ "bitflags",
+]
 
 [[package]]
 name = "unicode-ident"

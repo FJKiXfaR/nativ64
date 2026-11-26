@@ -4,8 +4,11 @@
 //! instruction per line of hex bytes (for diffing against `llvm-mc`). `--stats` counts the
 //! programs that decode and why the others do not; `--ir --stats` counts the programs whose IR
 //! builds, per stage, and the errors by kind; `--structure --stats` does the same for the
-//! structuring (cross-lane uses by instruction name included). Exit status 1 if any blob is refused or any code
-//! fails to decode.
+//! structuring (cross-lane uses by instruction name included). `--spirv --stats` translates the
+//! structured programs to the probe module (chunk 6) and validates them with `spirv-val` when it
+//! is in PATH, listing the others by first unsupported op; `--spirv --alu-stats` counts the
+//! programs whose every ALU instruction translates; `--spirv <blob> -o out.spv` writes one
+//! probe module. Exit status 1 if any blob is refused or any code fails to decode.
 
 use nativ64_gpu::shader::{self, gfx10};
 use std::process::ExitCode;
@@ -15,6 +18,21 @@ fn main() -> ExitCode {
     let disasm = args.first().is_some_and(|a| a == "--disasm");
     let ir = args.first().is_some_and(|a| a == "--ir");
     let structure = args.first().is_some_and(|a| a == "--structure");
+    if args.first().is_some_and(|a| a == "--spirv") {
+        args.remove(0);
+        return match args.first().map(String::as_str) {
+            Some("--stats") => spirv_stats(&args[1..], false),
+            Some("--alu-stats") => spirv_stats(&args[1..], true),
+            Some(_) if args.len() == 3 && args[1] == "-o" => spirv_write(&args[0], &args[2]),
+            _ => {
+                eprintln!(
+                    "usage: nativ64-shader --spirv (--stats | --alu-stats) <blob.dxbc>...\n       \
+                     nativ64-shader --spirv <blob.dxbc> -o <out.spv>"
+                );
+                ExitCode::from(2)
+            }
+        };
+    }
     if disasm || ir {
         args.remove(0);
     }
@@ -405,6 +423,224 @@ fn hex_lines(file: &str) -> ExitCode {
             Ok(i) => println!("ERR length {} != {}", i.len, bytes.len()),
             Err(e) => println!("ERR {e}"),
         }
+    }
+    ExitCode::SUCCESS
+}
+
+/// The probe module of a blob's program, written to `out`.
+fn spirv_write(blob: &str, out: &str) -> ExitCode {
+    use shader::{ir, spirv, structure};
+    let Ok(bytes) = std::fs::read(blob) else {
+        eprintln!("{blob}: unreadable");
+        return ExitCode::from(2);
+    };
+    let p = match shader::parse(&bytes) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("{blob}: refused: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let Some(rec) = p.record() else {
+        eprintln!("{blob}: no stage record to translate");
+        return ExitCode::FAILURE;
+    };
+    let regs = ir::EntryRegs::from_stage(rec);
+    let func = match ir::build(p.native.code(rec), gfx10::ENTRY, rec.wave32(), &regs) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("{blob}: IR error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let st = match structure::structure(&func) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{blob}: structuring: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match spirv::translate(&func, &st) {
+        Ok(probe) => {
+            let bytes: Vec<u8> = probe.words.iter().flat_map(|w| w.to_le_bytes()).collect();
+            if let Err(e) = std::fs::write(out, bytes) {
+                eprintln!("{out}: {e}");
+                return ExitCode::FAILURE;
+            }
+            println!(
+                "{out}: {} words, {} inputs, {} outputs",
+                probe.words.len(),
+                probe.inputs.len(),
+                probe.outputs.len()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("{blob}: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// True when `spirv-val` accepts the module (`None` when it is not installed).
+fn spirv_val(words: &[u32], scratch: &std::path::Path) -> Option<Result<(), String>> {
+    let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+    std::fs::write(scratch, bytes).ok()?;
+    let r = std::process::Command::new("spirv-val")
+        .args(["--target-env", "vulkan1.2"])
+        .arg(scratch)
+        .output()
+        .ok()?;
+    Some(if r.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&r.stderr).trim().to_string())
+    })
+}
+
+/// `--spirv --stats`: per stage, the programs that structure, translate and validate, and the
+/// others by first unsupported op. `--spirv --alu-stats`: the programs whose every ALU
+/// instruction translates, and the unsupported ALU ops by number of programs.
+fn spirv_stats(files: &[String], alu_only: bool) -> ExitCode {
+    use shader::spirv::{alu, SpirvError};
+    use shader::{ir, spirv, structure};
+    use std::collections::{BTreeMap, BTreeSet};
+    let scratch =
+        std::env::temp_dir().join(format!("nativ64-spirv-stats-{}.spv", std::process::id()));
+    // per stage: programs with IR, structured, translated, validated
+    let mut stage: BTreeMap<String, [u32; 4]> = BTreeMap::new();
+    let mut first: BTreeMap<(String, u8, String), u32> = BTreeMap::new();
+    let mut other: BTreeMap<String, u32> = BTreeMap::new();
+    let mut invalid: Vec<(u64, String)> = Vec::new();
+    let mut no_val = false;
+    // ALU coverage: programs, with every ALU instruction supported, per stage
+    let mut alu_ok: BTreeMap<String, [u32; 4]> = BTreeMap::new();
+    let mut alu_bad: BTreeMap<(u8, String), u32> = BTreeMap::new();
+    let mut alu_insts = (0u64, 0u64);
+    for f in files {
+        let Ok(bytes) = std::fs::read(f) else {
+            continue;
+        };
+        let Ok(p) = shader::parse(&bytes) else {
+            continue;
+        };
+        for (name, rec) in p.native.records() {
+            let code = p.native.code(rec);
+            let regs = ir::EntryRegs::from_stage(rec);
+            let Ok(func) = ir::build(code, gfx10::ENTRY, rec.wave32(), &regs) else {
+                continue;
+            };
+            let st = structure::structure(&func);
+            if alu_only {
+                let e = alu_ok.entry(name.to_string()).or_default();
+                e[0] += 1;
+                e[1] += u32::from(st.is_ok());
+                let mut bad: BTreeSet<(u8, String)> = BTreeSet::new();
+                for blk in &func.blocks {
+                    for i in &blk.insts {
+                        if alu::non_alu_chunk(&i.instr).is_some() {
+                            continue;
+                        }
+                        alu_insts.0 += 1;
+                        if let Err(u) = alu::supported(i) {
+                            alu_insts.1 += 1;
+                            bad.insert((u.chunk, u.op));
+                        }
+                    }
+                }
+                e[2] += u32::from(bad.is_empty());
+                e[3] += u32::from(bad.is_empty() && st.is_ok());
+                for b in bad {
+                    *alu_bad.entry(b).or_default() += 1;
+                }
+                continue;
+            }
+            let e = stage.entry(name.to_string()).or_default();
+            e[0] += 1;
+            let Ok(st) = st else {
+                continue;
+            };
+            e[1] += 1;
+            match spirv::translate(&func, &st) {
+                Ok(probe) => {
+                    e[2] += 1;
+                    match spirv_val(&probe.words, &scratch) {
+                        Some(Ok(())) => e[3] += 1,
+                        Some(Err(msg)) => invalid.push((
+                            shader::fnv1a64(&bytes),
+                            msg.lines().next().unwrap_or("").to_string(),
+                        )),
+                        None => no_val = true,
+                    }
+                }
+                Err(SpirvError::Unsupported(u)) => {
+                    *first.entry((name.to_string(), u.chunk, u.op)).or_default() += 1;
+                }
+                Err(SpirvError::Malformed(m)) => *other.entry(m).or_default() += 1,
+            }
+        }
+    }
+    let _ = std::fs::remove_file(&scratch);
+    let top = |mut v: Vec<(String, u32)>| {
+        v.sort_by_key(|a| std::cmp::Reverse(a.1));
+        v
+    };
+    if alu_only {
+        let sum = alu_ok.values().fold([0; 4], |a, v| {
+            [a[0] + v[0], a[1] + v[1], a[2] + v[2], a[3] + v[3]]
+        });
+        println!(
+            "ALU coverage: {}/{} programs with IR have every ALU instruction supported \
+             ({}/{} of the structured ones)",
+            sum[2], sum[0], sum[3], sum[1]
+        );
+        println!(
+            "ALU instructions: {} of {} unsupported",
+            alu_insts.1, alu_insts.0
+        );
+        for (s, v) in &alu_ok {
+            println!("  {s}: {}/{} ({}/{} structured)", v[2], v[0], v[3], v[1]);
+        }
+        println!("unsupported ALU ops (programs that have one):");
+        let v = alu_bad
+            .into_iter()
+            .map(|((c, o), n)| (format!("{o} (chunk {c})"), n))
+            .collect();
+        for (o, n) in top(v) {
+            println!("{n:6}  {o}");
+        }
+        return ExitCode::SUCCESS;
+    }
+    let sum = stage.values().fold([0; 4], |a, v| {
+        [a[0] + v[0], a[1] + v[1], a[2] + v[2], a[3] + v[3]]
+    });
+    println!(
+        "programs with IR: {}; structured: {}; translated: {}; validated: {}{}",
+        sum[0],
+        sum[1],
+        sum[2],
+        sum[3],
+        if no_val { " (spirv-val not found)" } else { "" }
+    );
+    for (s, v) in &stage {
+        println!(
+            "  {s}: {} IR, {} structured, {} translated, {} validated",
+            v[0], v[1], v[2], v[3]
+        );
+    }
+    println!("first unsupported op of the structured programs:");
+    let v = first
+        .into_iter()
+        .map(|((s, c, o), n)| (format!("{s}: {o} (chunk {c})"), n))
+        .collect();
+    for (o, n) in top(v) {
+        println!("{n:6}  {o}");
+    }
+    for (m, n) in top(other.into_iter().collect()) {
+        println!("{n:6}  malformed: {m}");
+    }
+    for (hash, msg) in invalid.iter().take(10) {
+        println!("INVALID {hash:016x}: {msg}");
     }
     ExitCode::SUCCESS
 }

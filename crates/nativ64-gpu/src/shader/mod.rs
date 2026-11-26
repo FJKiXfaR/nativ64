@@ -10,6 +10,7 @@ pub mod container;
 pub mod gfx10;
 pub mod ir;
 pub mod native;
+pub mod spirv;
 pub mod structure;
 
 use std::collections::HashSet;

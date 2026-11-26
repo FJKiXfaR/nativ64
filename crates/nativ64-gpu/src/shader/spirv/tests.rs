@@ -1,0 +1,1871 @@
+use std::collections::{BTreeMap, HashMap};
+use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, OnceLock};
+
+use super::alu::{exec, Cpu, Ctx, Opd, Unsupported};
+use super::emit::{translate, Probe, SpirvError};
+use super::gpu::{self, Gpu, Run};
+use crate::shader::ir::{build, EntryRegs, Func, Reg, Src, Term, Val};
+use crate::shader::structure::{structure, BranchKind, Guard, Structured};
+
+// Test programs are `fixtures.txt`: `hex<TAB>text` pairs, the text being what
+// `llvm-mc -arch=amdgcn -mcpu=gfx1013 -mattr=+wavefrontsize32 -show-encoding` assembled to that
+// hex (wavefrontsize64 for the lines that start with `[w64] `). A case is a few of these lines
+// plus `s_endpgm`; its vectors give registers on entry and the registers expected at the end.
+
+const FIXTURES: &str = include_str!("fixtures.txt");
+
+fn encoding(text: &str) -> Vec<u8> {
+    for l in FIXTURES.lines() {
+        if let Some((hex, t)) = l.split_once('\t') {
+            if t == text {
+                return (0..hex.len() / 2)
+                    .map(|k| u8::from_str_radix(&hex[2 * k..2 * k + 2], 16).unwrap())
+                    .collect();
+            }
+        }
+    }
+    panic!("no fixture for `{text}`");
+}
+
+fn code(lines: &[&str]) -> Vec<u8> {
+    let mut c: Vec<u8> = lines.iter().flat_map(|l| encoding(l)).collect();
+    c.extend([0x00, 0x00, 0x81, 0xbf]); // s_endpgm
+    c
+}
+
+fn func(lines: &[&str]) -> Func {
+    let wave32 = !lines.iter().any(|l| l.starts_with("[w64]"));
+    let regs = EntryRegs::new().with_sgprs(0..16).with_vgprs(0..8);
+    build(&code(lines), 0, wave32, &regs).unwrap()
+}
+
+fn words(w: &[u32]) -> Func {
+    let code: Vec<u8> = w.iter().flat_map(|w| w.to_le_bytes()).collect();
+    let regs = EntryRegs::new().with_sgprs(8..12).with_vgprs(0..4);
+    build(&code, 0, false, &regs).unwrap()
+}
+
+// ---------------------------------------------------------------------------------------
+// The evaluator: the program on the CPU backend, by its SSA values
+
+/// The last value written to each register variable (a mask as 0 or 1).
+type Out = BTreeMap<(Reg, bool), u32>;
+
+const NAN: u32 = 0x7fc0_0000;
+
+fn rd(env: &HashMap<Val, Opd<Cpu>>, s: Src) -> Result<Opd<Cpu>, SpirvError> {
+    Ok(match s {
+        Src::Val(v) => env[&v],
+        Src::Const(c) => Opd::V(c),
+        Src::Undef => Opd::V(0),
+        _ => {
+            return Err(SpirvError::Unsupported(Unsupported {
+                chunk: 9,
+                op: "code address".into(),
+            }))
+        }
+    })
+}
+
+fn as_u32(o: Opd<Cpu>) -> u32 {
+    match o {
+        Opd::V(v) => v,
+        Opd::B(b) => u32::from(b),
+    }
+}
+
+fn nonzero(o: Opd<Cpu>) -> bool {
+    match o {
+        Opd::V(v) => v != 0,
+        Opd::B(b) => b,
+    }
+}
+
+fn interp(f: &Func, s: &Structured, ins: &[(Reg, u32)]) -> Result<Out, SpirvError> {
+    let mut env: HashMap<Val, Opd<Cpu>> = HashMap::new();
+    let mut out = Out::new();
+    for &(reg, val) in &f.args {
+        let o = if s.masks.is_mask(val) {
+            Opd::B(true)
+        } else {
+            Opd::V(ins.iter().find(|(r, _)| *r == reg).map_or(0, |x| x.1))
+        };
+        env.insert(val, o);
+    }
+    let mut cb = f.entry;
+    let mut prev: Option<usize> = None;
+    for _ in 0..100_000 {
+        let blk = &f.blocks[cb];
+        let mut phis = Vec::new();
+        for p in &blk.phis {
+            let (_, src) = p.args.iter().find(|(b, _)| Some(*b) == prev).unwrap();
+            phis.push((p.reg, p.dst, rd(&env, *src)?));
+        }
+        for (reg, dst, o) in phis {
+            env.insert(dst, o);
+            out.insert((reg, s.masks.is_mask(dst)), as_u32(o));
+        }
+        for (k, i) in blk.insts.iter().enumerate() {
+            let srcs = i
+                .srcs
+                .iter()
+                .map(|v| {
+                    v.iter()
+                        .map(|&d| rd(&env, d))
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let imps = i
+                .imps
+                .iter()
+                .map(|&(r, d)| Ok((r, rd(&env, d)?)))
+                .collect::<Result<Vec<_>, SpirvError>>()?;
+            let active = if s.guards[cb][k] == Guard::Active {
+                i.imps
+                    .iter()
+                    .find(|(r, _)| *r == Reg::ExecLo)
+                    .map(|&(_, d)| {
+                        nonzero(
+                            env[&match d {
+                                Src::Val(v) => v,
+                                _ => panic!("EXEC is a value"),
+                            }],
+                        )
+                    })
+            } else {
+                None
+            };
+            let ctx = Ctx {
+                inst: i,
+                srcs,
+                imps,
+                dst_mask: i.dsts.iter().map(|(_, v)| s.masks.is_mask(*v)).collect(),
+                active,
+            };
+            let res = exec(&mut Cpu, &ctx)?;
+            for ((reg, val), o) in i.dsts.iter().zip(res) {
+                env.insert(*val, o);
+                out.insert((*reg, s.masks.is_mask(*val)), as_u32(o));
+            }
+        }
+        let next = match &blk.term {
+            Term::End => return Ok(out),
+            Term::Jump(t) => *t,
+            Term::Branch {
+                op,
+                cond,
+                taken,
+                fall,
+            } => {
+                let go = match &s.branches[cb] {
+                    Some(BranchKind::Lane(t)) => {
+                        let bit = nonzero(env[&t.vals[0]]);
+                        bit == t.taken_when_set
+                    }
+                    _ => {
+                        let nz = cond
+                            .iter()
+                            .map(|(_, c)| rd(&env, *c).map(nonzero))
+                            .collect::<Result<Vec<_>, _>>()?
+                            .into_iter()
+                            .any(|x| x);
+                        let set = matches!(
+                            *op,
+                            "s_cbranch_scc1" | "s_cbranch_vccnz" | "s_cbranch_execnz"
+                        );
+                        !cond.is_empty() && nz == set
+                    }
+                };
+                if go {
+                    *taken
+                } else {
+                    *fall
+                }
+            }
+        };
+        prev = Some(cb);
+        cb = next;
+    }
+    panic!("the program does not end");
+}
+
+fn get(out: &Out, r: Reg) -> u32 {
+    out.get(&(r, true))
+        .or_else(|| out.get(&(r, false)))
+        .copied()
+        .unwrap_or_else(|| panic!("{r} was not written: {out:?}"))
+}
+
+// ---------------------------------------------------------------------------------------
+// Validation
+
+fn validate(words: &[u32]) {
+    static N: AtomicUsize = AtomicUsize::new(0);
+    if Command::new("spirv-val").arg("--version").output().is_err() {
+        eprintln!("spirv-val is not in PATH: validation skipped");
+        return;
+    }
+    let path = std::env::temp_dir().join(format!(
+        "nativ64-spirv-{}-{}.spv",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
+    let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+    std::fs::write(&path, bytes).unwrap();
+    let r = Command::new("spirv-val")
+        .args(["--target-env", "vulkan1.2"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&path);
+    assert!(
+        r.status.success(),
+        "spirv-val: {}",
+        String::from_utf8_lossy(&r.stderr)
+    );
+}
+
+fn module_of(f: &Func) -> Result<Vec<u32>, SpirvError> {
+    let s = structure(f).unwrap_or_else(|e| panic!("{e}"));
+    let p = translate(f, &s)?;
+    validate(&p.words);
+    Ok(p.words)
+}
+
+// ---------------------------------------------------------------------------------------
+// Optional: the same vectors on a Vulkan device (`NATIV64_SPIRV_RUN=1`), compared with the
+// evaluator register by register
+
+static GPU: OnceLock<Option<Gpu>> = OnceLock::new();
+static GPU_LOCK: Mutex<()> = Mutex::new(());
+
+fn runner(p: &Probe) -> Option<Run<'static>> {
+    if !gpu::enabled() {
+        return None;
+    }
+    let g = GPU
+        .get_or_init(|| {
+            Some(Gpu::new().unwrap_or_else(|e| panic!("NATIV64_SPIRV_RUN is set: {e}")))
+        })
+        .as_ref()?;
+    Some(
+        g.load(&p.words, p.inputs.len(), p.outputs.len())
+            .unwrap_or_else(|e| panic!("the device refuses the module: {e}")),
+    )
+}
+
+/// Float results of the transcendental opcodes differ in the last bits between hosts.
+fn loose(asm: &[&str]) -> bool {
+    asm.iter().any(|a| {
+        [
+            "v_sin_f32",
+            "v_cos_f32",
+            "v_exp_f32",
+            "v_log_f32",
+            "v_rcp_f32",
+            "v_rsq_f32",
+            "v_sqrt_f32",
+        ]
+        .iter()
+        .any(|n| a.contains(n))
+    })
+}
+
+fn on_gpu(run: &Option<Run<'static>>, p: &Probe, asm: &[&str], ins: &[(Reg, u32)], want: &Out) {
+    let Some(run) = run else {
+        return;
+    };
+    let words: Vec<u32> = p
+        .inputs
+        .iter()
+        .map(|r| ins.iter().find(|(x, _)| x == r).map_or(0, |x| x.1))
+        .collect();
+    let got = {
+        let _l = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        run.go(&words).unwrap_or_else(|e| panic!("{e}"))
+    };
+    for (k, key) in p.outputs.iter().enumerate() {
+        let Some(&w) = want.get(key) else {
+            continue;
+        };
+        let (a, b) = (got[k], w);
+        let (fa, fb) = (f32::from_bits(a), f32::from_bits(b));
+        let ok = a == b
+            || (fa.is_nan() && fb.is_nan())
+            || (loose(asm) && (fa - fb).abs() <= 1e-5 * fa.abs().max(fb.abs()).max(1e-30));
+        assert!(
+            ok,
+            "{asm:?} {ins:x?}: {} on the device {a:#010x} ({fa}), evaluator {b:#010x} ({fb})",
+            key.0
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// Vectors
+
+type Io<'a> = &'a [(Reg, u32)];
+
+const V0: Reg = Reg::V(0);
+const V1: Reg = Reg::V(1);
+const V2: Reg = Reg::V(2);
+const V3: Reg = Reg::V(3);
+const V4: Reg = Reg::V(4);
+const S0: Reg = Reg::S(0);
+const S1: Reg = Reg::S(1);
+const S2: Reg = Reg::S(2);
+const S3: Reg = Reg::S(3);
+const S4: Reg = Reg::S(4);
+const S6: Reg = Reg::S(6);
+const S7: Reg = Reg::S(7);
+const SCC: Reg = Reg::Scc;
+const VCC: Reg = Reg::VccLo;
+const EXEC: Reg = Reg::ExecLo;
+
+const fn f(x: f32) -> u32 {
+    x.to_bits()
+}
+
+const INF: f32 = f32::INFINITY;
+
+/// Runs a case: the program translates and validates, and every vector gives its outputs.
+fn check(asm: &[&str], vecs: &[(Io, Io)]) {
+    let fun = func(asm);
+    let s = structure(&fun).unwrap_or_else(|e| panic!("{asm:?}: {e}"));
+    let p = translate(&fun, &s).unwrap_or_else(|e| panic!("{asm:?}: {e}"));
+    validate(&p.words);
+    let run = runner(&p);
+    for (k, (ins, outs)) in vecs.iter().enumerate() {
+        let out = interp(&fun, &s, ins).unwrap_or_else(|e| panic!("{asm:?}: {e}"));
+        on_gpu(&run, &p, asm, ins, &out);
+        for &(r, want) in *outs {
+            let got = get(&out, r);
+            let ok = got == want || (want == NAN && f32::from_bits(got).is_nan());
+            assert!(
+                ok,
+                "{asm:?} vector {k} {ins:x?}: {r} = {got:#010x} ({}), want {want:#010x} ({})",
+                f32::from_bits(got),
+                f32::from_bits(want)
+            );
+        }
+    }
+}
+
+fn near(asm: &[&str], x: u32, want: f32, tol: f32) {
+    let fun = func(asm);
+    let s = structure(&fun).unwrap();
+    let p = translate(&fun, &s).unwrap();
+    validate(&p.words);
+    let out = interp(&fun, &s, &[(V0, x)]).unwrap();
+    on_gpu(&runner(&p), &p, asm, &[(V0, x)], &out);
+    let got = f32::from_bits(get(&out, V3));
+    assert!(
+        got == want || (got - want).abs() <= tol,
+        "{asm:?} {}: {got}, want {want}",
+        f32::from_bits(x)
+    );
+}
+
+#[test]
+fn float_arithmetic() {
+    let (n, z, nz) = (NAN, 0.0f32, -0.0f32);
+    let two = |a: f32, b: f32| -> Io { Box::leak(Box::new([(V0, f(a)), (V1, f(b))])) };
+    let one = |r: u32| -> Io { Box::leak(Box::new([(V3, r)])) };
+    check(
+        &["v_add_f32 v3, v0, v1"],
+        &[
+            (two(1.0, 2.0), one(f(3.0))),
+            (two(INF, -INF), one(n)),
+            (two(nz, nz), one(f(nz))),
+        ],
+    );
+    check(&["v_sub_f32 v3, v0, v1"], &[(two(3.0, 1.0), one(f(2.0)))]);
+    check(
+        &["v_subrev_f32 v3, v0, v1"],
+        &[(two(3.0, 1.0), one(f(-2.0)))],
+    );
+    check(
+        &["v_mul_f32 v3, v0, v1"],
+        &[(two(2.0, 4.0), one(f(8.0))), (two(0.0, INF), one(n))],
+    );
+    // the legacy multiply: 0 * x = 0, even for infinities and NaNs
+    check(
+        &["v_mul_legacy_f32 v3, v0, v1"],
+        &[
+            (two(2.0, 3.0), one(f(6.0))),
+            (two(0.0, INF), one(f(0.0))),
+            (two(INF, 0.0), one(f(0.0))),
+            (&[(V0, n), (V1, f(0.0))], one(f(0.0))),
+            (two(INF, 2.0), one(f(INF))),
+        ],
+    );
+    // IEEE-mode min / max: a NaN operand gives the other, -0 is below +0
+    let min = [
+        (two(1.0, 2.0), one(f(1.0))),
+        (&[(V0, n), (V1, f(2.0))] as Io, one(f(2.0))),
+        (&[(V0, f(2.0)), (V1, n)], one(f(2.0))),
+        (&[(V0, n), (V1, n)], one(n)),
+        (two(z, nz), one(f(nz))),
+        (two(nz, z), one(f(nz))),
+    ];
+    check(&["v_min_f32 v3, v0, v1"], &min);
+    let max = [
+        (two(1.0, 2.0), one(f(2.0))),
+        (&[(V0, n), (V1, f(2.0))] as Io, one(f(2.0))),
+        (&[(V0, f(2.0)), (V1, n)], one(f(2.0))),
+        (two(z, nz), one(f(z))),
+        (two(nz, z), one(f(z))),
+    ];
+    check(&["v_max_f32 v3, v0, v1"], &max);
+    let three = |a: f32, b: f32, c: f32| -> Io {
+        Box::leak(Box::new([(V0, f(a)), (V1, f(b)), (V2, f(c))]))
+    };
+    check(
+        &["v_fma_f32 v3, v0, v1, v2"],
+        &[(three(2.0, 3.0, 4.0), one(f(10.0)))],
+    );
+    check(
+        &["v_mad_f32 v3, v0, v1, v2"],
+        &[(three(2.0, 3.0, 4.0), one(f(10.0)))],
+    );
+    check(
+        &["v_mad_legacy_f32 v3, v0, v1, v2"],
+        &[
+            (three(2.0, 3.0, 4.0), one(f(10.0))),
+            (three(0.0, INF, 5.0), one(f(5.0))),
+        ],
+    );
+    // the destination is read: v3 starts at 1.0
+    let acc =
+        |a: f32, b: f32| -> Io { Box::leak(Box::new([(V0, f(a)), (V1, f(b)), (V3, f(1.0))])) };
+    check(&["v_fmac_f32 v3, v0, v1"], &[(acc(2.0, 3.0), one(f(7.0)))]);
+    check(&["v_mac_f32 v3, v0, v1"], &[(acc(2.0, 3.0), one(f(7.0)))]);
+    // literal forms: 0x40400000 = 3.0
+    for t in [
+        "v_madak_f32 v3, v0, v1, 0x40400000",
+        "v_fmaak_f32 v3, v0, v1, 0x40400000",
+    ] {
+        check(&[t], &[(two(2.0, 4.0), one(f(11.0)))]);
+    }
+    for t in [
+        "v_madmk_f32 v3, v0, 0x40400000, v1",
+        "v_fmamk_f32 v3, v0, 0x40400000, v1",
+    ] {
+        check(&[t], &[(two(2.0, 4.0), one(f(10.0)))]);
+    }
+    check(
+        &["v_med3_f32 v3, v0, v1, v2"],
+        &[
+            (three(1.0, 5.0, 3.0), one(f(3.0))),
+            (three(5.0, 1.0, 3.0), one(f(3.0))),
+            (three(3.0, 3.0, 1.0), one(f(3.0))),
+            (three(-2.0, -7.0, 4.0), one(f(-2.0))),
+            // a NaN operand: the minimum of the others (the table's reading, unverified)
+            (&[(V0, n), (V1, f(1.0)), (V2, f(2.0))], one(f(1.0))),
+        ],
+    );
+    check(
+        &["v_min3_f32 v3, v0, v1, v2"],
+        &[(three(3.0, 1.0, 2.0), one(f(1.0)))],
+    );
+    check(
+        &["v_max3_f32 v3, v0, v1, v2"],
+        &[(three(3.0, 1.0, 2.0), one(f(3.0)))],
+    );
+}
+
+#[test]
+fn float_modifiers() {
+    let two = |a: f32, b: f32| -> Io { Box::leak(Box::new([(V0, f(a)), (V1, f(b))])) };
+    let one = |r: u32| -> Io { Box::leak(Box::new([(V3, r)])) };
+    // -|v0| + v1, clamped to [0, 1], NaN to 0
+    check(
+        &["v_add_f32_e64 v3, -|v0|, v1 clamp"],
+        &[
+            (two(-2.0, 3.0), one(f(1.0))),
+            (two(1.0, 0.25), one(f(0.0))),
+            (two(-0.25, 2.0), one(f(1.0))),
+            (two(-0.5, 1.0), one(f(0.5))),
+            (&[(V0, NAN), (V1, f(1.0))], one(f(0.0))),
+        ],
+    );
+    check(
+        &["v_add_f32_e64 v3, |v0|, -v1"],
+        &[(two(-2.0, -3.0), one(f(5.0)))],
+    );
+    check(
+        &["v_mul_f32_e64 v3, v0, v1 mul:4"],
+        &[(two(1.5, 2.0), one(f(12.0)))],
+    );
+    check(
+        &["v_mul_f32_e64 v3, v0, v1 div:2"],
+        &[(two(3.0, 2.0), one(f(3.0)))],
+    );
+}
+
+#[test]
+fn float_unary_and_conversions() {
+    let x = |a: u32| -> Io { Box::leak(Box::new([(V0, a)])) };
+    let one = |r: u32| -> Io { Box::leak(Box::new([(V3, r)])) };
+    check(
+        &["v_floor_f32 v3, v0"],
+        &[(x(f(-1.5)), one(f(-2.0))), (x(f(2.5)), one(f(2.0)))],
+    );
+    check(
+        &["v_ceil_f32 v3, v0"],
+        &[(x(f(-1.5)), one(f(-1.0))), (x(f(1.25)), one(f(2.0)))],
+    );
+    check(
+        &["v_trunc_f32 v3, v0"],
+        &[(x(f(-1.5)), one(f(-1.0))), (x(f(1.75)), one(f(1.0)))],
+    );
+    check(
+        &["v_rndne_f32 v3, v0"],
+        &[
+            (x(f(2.5)), one(f(2.0))),
+            (x(f(3.5)), one(f(4.0))),
+            (x(f(-0.5)), one(f(-0.0))),
+        ],
+    );
+    check(
+        &["v_fract_f32 v3, v0"],
+        &[(x(f(1.25)), one(f(0.25))), (x(f(-0.25)), one(f(0.75)))],
+    );
+    check(
+        &["v_rcp_f32 v3, v0"],
+        &[(x(f(4.0)), one(f(0.25))), (x(f(0.0)), one(f(INF)))],
+    );
+    check(&["v_rsq_f32 v3, v0"], &[(x(f(4.0)), one(f(0.5)))]);
+    check(
+        &["v_sqrt_f32 v3, v0"],
+        &[(x(f(16.0)), one(f(4.0))), (x(f(-1.0)), one(NAN))],
+    );
+    check(
+        &["v_exp_f32 v3, v0"],
+        &[(x(f(3.0)), one(f(8.0))), (x(f(-INF)), one(f(0.0)))],
+    );
+    check(
+        &["v_log_f32 v3, v0"],
+        &[(x(f(8.0)), one(f(3.0))), (x(f(0.0)), one(f(-INF)))],
+    );
+    // the sine takes revolutions: host precision accepted
+    near(&["v_sin_f32 v3, v0"], f(0.25), 1.0, 1e-6);
+    near(&["v_sin_f32 v3, v0"], f(0.0), 0.0, 1e-6);
+    near(&["v_cos_f32 v3, v0"], f(0.5), -1.0, 1e-6);
+    near(&["v_cos_f32 v3, v0"], f(0.0), 1.0, 1e-6);
+
+    check(
+        &["v_cvt_f32_u32 v3, v0"],
+        &[
+            (x(7), one(f(7.0))),
+            (x(0xffff_ffff), one(f(4_294_967_296.0))),
+        ],
+    );
+    check(
+        &["v_cvt_f32_i32 v3, v0"],
+        &[(x(-3i32 as u32), one(f(-3.0)))],
+    );
+    check(
+        &["v_cvt_u32_f32 v3, v0"],
+        &[
+            (x(f(-1.0)), one(0)),
+            (x(f(3.7)), one(3)),
+            (x(NAN), one(0)),
+            (x(f(5.0e9)), one(0xffff_ffff)),
+            (x(f(4.0e9)), one(4_000_000_000)),
+        ],
+    );
+    check(
+        &["v_cvt_i32_f32 v3, v0"],
+        &[
+            (x(f(-3.7)), one(-3i32 as u32)),
+            (x(f(3.0e9)), one(0x7fff_ffff)),
+            (x(f(-3.0e9)), one(0x8000_0000)),
+            (x(NAN), one(0)),
+        ],
+    );
+    check(
+        &["v_cvt_flr_i32_f32 v3, v0"],
+        &[(x(f(-1.5)), one(-2i32 as u32))],
+    );
+    check(
+        &["v_cvt_rpi_i32_f32 v3, v0"],
+        &[(x(f(-1.5)), one(-1i32 as u32)), (x(f(2.5)), one(3))],
+    );
+    for (k, t) in [
+        "v_cvt_f32_ubyte0 v3, v0",
+        "v_cvt_f32_ubyte1 v3, v0",
+        "v_cvt_f32_ubyte2 v3, v0",
+        "v_cvt_f32_ubyte3 v3, v0",
+    ]
+    .iter()
+    .enumerate()
+    {
+        check(&[t], &[(x(0x0403_0201), one(f(k as f32 + 1.0)))]);
+    }
+    check(
+        &["v_frexp_exp_i32_f32 v3, v0"],
+        &[
+            (x(f(8.0)), one(4)),
+            (x(f(-12.0)), one(4)),
+            (x(f(0.5)), one(0)),
+            (x(f(0.0)), one(0)),
+            (x(f(INF)), one(0)),
+        ],
+    );
+    check(
+        &["v_frexp_mant_f32 v3, v0"],
+        &[
+            (x(f(8.0)), one(f(0.5))),
+            (x(f(-12.0)), one(f(-0.75))),
+            (x(f(0.0)), one(f(0.0))),
+            (x(f(INF)), one(f(INF))),
+        ],
+    );
+    let two = |a: u32, b: u32| -> Io { Box::leak(Box::new([(V0, a), (V1, b)])) };
+    check(
+        &["v_ldexp_f32 v3, v0, v1"],
+        &[
+            (two(f(1.5), 3), one(f(12.0))),
+            (two(f(1.0), -2i32 as u32), one(f(0.25))),
+            (two(f(1.0), 1000), one(f(INF))),
+            (two(f(1.0), -1000i32 as u32), one(f(0.0))),
+        ],
+    );
+}
+
+#[test]
+fn half_precision_conversions() {
+    let two = |a: u32, b: u32| -> Io { Box::leak(Box::new([(V0, a), (V1, b)])) };
+    let one = |r: u32| -> Io { Box::leak(Box::new([(V3, r)])) };
+    // 1 + 3 * 2^-12 is 3/4 of a half-precision step above 1: round-to-zero keeps 0x3c00
+    let above = 1.0 + 3.0 / 4096.0;
+    check(
+        &["v_cvt_pkrtz_f16_f32 v3, v0, v1"],
+        &[
+            (two(f(1.0), f(-2.0)), one(0xc000_3c00)),
+            (two(f(above), f(65520.0)), one(0x7bff_3c00)),
+            (two(f(1.0e-8), f(3.0e-6)), one(0x0032_0000)),
+            (two(NAN, f(INF)), one(0x7c00_7e00)),
+            (two(f(-INF), f(-65536.0)), one(0xfbff_fc00)),
+            (two(f(-1.0e-8), f(6.0e-8)), one(0x0001_8000)),
+        ],
+    );
+    // round to nearest even: 0x3c01
+    check(
+        &["v_cvt_f16_f32 v3, v0"],
+        &[
+            (&[(V0, f(1.0))], one(0x3c00)),
+            (&[(V0, f(above))], one(0x3c01)),
+            (&[(V0, f(65520.0))], one(0x7c00)),
+            (&[(V0, f(-2.0))], one(0xc000)),
+        ],
+    );
+    check(
+        &["v_cvt_f32_f16 v3, v0"],
+        &[
+            (&[(V0, 0x3c00)], one(f(1.0))),
+            (&[(V0, 0xfc00)], one(f(-INF))),
+            (&[(V0, 0x0001)], one(0x3380_0000)),
+            (&[(V0, 0x7e00)], one(NAN)),
+        ],
+    );
+    check(
+        &["v_pack_b32_f16 v3, v0, v1"],
+        &[(two(0x1111_aaaa, 0x2222_bbbb), one(0xbbbb_aaaa))],
+    );
+    check(
+        &["v_pack_b32_f16 v3, v0, v1 op_sel:[1,1]"],
+        &[(two(0x1111_aaaa, 0x2222_bbbb), one(0x2222_1111))],
+    );
+    let three = |a: u32, b: u32, c: u32| -> Io { Box::leak(Box::new([(V0, a), (V1, b), (V2, c)])) };
+    check(
+        &["v_fma_mix_f32 v3, v0, v1, v2"],
+        &[(three(f(2.0), f(3.0), f(4.0)), one(f(10.0)))],
+    );
+    // sources 0 and 2 are the low halves of f16 values: 1.0 * 3.0 + 2.0
+    check(
+        &["v_fma_mix_f32 v3, v0, v1, v2 op_sel_hi:[1,0,1]"],
+        &[(three(0x3c00, f(3.0), 0x4000), one(f(5.0)))],
+    );
+    // source 0 is the high half
+    check(
+        &["v_fma_mix_f32 v3, v0, v1, v2 op_sel:[1,0,0] op_sel_hi:[1,0,0]"],
+        &[(three(0x4000_3c00, f(3.0), f(4.0)), one(f(10.0)))],
+    );
+    // the low or high half of the destination takes the f16 result; the other half stays
+    let old = |v: u32| -> Io {
+        Box::leak(Box::new([
+            (V0, f(2.0)),
+            (V1, f(3.0)),
+            (V2, f(4.0)),
+            (V3, v),
+        ]))
+    };
+    check(
+        &["v_fma_mixlo_f16 v3, v0, v1, v2"],
+        &[(old(0xabcd_0000), one(0xabcd_4900))],
+    );
+    check(
+        &["v_fma_mixhi_f16 v3, v0, v1, v2"],
+        &[(old(0x0000_1234), one(0x4900_1234))],
+    );
+}
+
+#[test]
+fn cube_map_ops() {
+    let xyz = |x: f32, y: f32, z: f32| -> Io {
+        Box::leak(Box::new([(V0, f(x)), (V1, f(y)), (V2, f(z))]))
+    };
+    let one = |r: f32| -> Io { Box::leak(Box::new([(V3, f(r))])) };
+    // (x, y, z): the major axis and its sign pick the face
+    let cases = [
+        ((2.0, 1.0, 0.0), 0.0),
+        ((-3.0, 1.0, 0.0), 1.0),
+        ((0.0, 4.0, 1.0), 2.0),
+        ((0.0, -4.0, 1.0), 3.0),
+        ((0.5, 1.0, 2.0), 4.0),
+        ((0.0, 0.0, -1.0), 5.0),
+    ];
+    let vecs: Vec<(Io, Io)> = cases
+        .iter()
+        .map(|&((x, y, z), id)| (xyz(x, y, z), one(id)))
+        .collect();
+    check(&["v_cubeid_f32 v3, v0, v1, v2"], &vecs);
+    check(
+        &["v_cubema_f32 v3, v0, v1, v2"],
+        &[
+            (xyz(2.0, 1.0, 0.0), one(4.0)),
+            (xyz(0.0, -4.0, 1.0), one(-8.0)),
+            (xyz(0.5, 1.0, 2.0), one(4.0)),
+        ],
+    );
+    check(
+        &["v_cubesc_f32 v3, v0, v1, v2"],
+        &[
+            (xyz(4.0, 1.0, 2.0), one(-2.0)),
+            (xyz(-4.0, 1.0, 2.0), one(2.0)),
+            (xyz(0.0, -4.0, 1.0), one(0.0)),
+            (xyz(0.5, 1.0, 2.0), one(0.5)),
+            (xyz(1.0, 0.5, -2.0), one(-1.0)),
+        ],
+    );
+    check(
+        &["v_cubetc_f32 v3, v0, v1, v2"],
+        &[
+            (xyz(4.0, 1.0, 2.0), one(-1.0)),
+            (xyz(0.0, -4.0, 1.0), one(-1.0)),
+            (xyz(0.0, 4.0, 1.0), one(1.0)),
+            (xyz(0.5, 1.0, 2.0), one(-1.0)),
+            (xyz(1.0, 0.5, -2.0), one(-0.5)),
+        ],
+    );
+}
+
+const INTS: [u32; 9] = [
+    0,
+    1,
+    2,
+    31,
+    0x7fff_ffff,
+    0x8000_0000,
+    0xffff_ffff,
+    0x1234_5678,
+    0xdead_beef,
+];
+
+/// Runs `asm` (inputs v0, v1, v2, result v3) over every triple of the interesting values.
+fn sweep(asm: &str, want: impl Fn(u32, u32, u32) -> u32) {
+    let fun = func(&[asm]);
+    let s = structure(&fun).unwrap();
+    let p = translate(&fun, &s).unwrap();
+    validate(&p.words);
+    let run = runner(&p);
+    for a in INTS {
+        for b in INTS {
+            for c in [0, 5, 0x8000_0000, 0xffff_ffff] {
+                let out = interp(&fun, &s, &[(V0, a), (V1, b), (V2, c)]).unwrap();
+                on_gpu(&run, &p, &[asm], &[(V0, a), (V1, b), (V2, c)], &out);
+                assert_eq!(
+                    get(&out, V3),
+                    want(a, b, c),
+                    "{asm}: {a:#x}, {b:#x}, {c:#x}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn integer_vector_ops() {
+    let sh = |x: u32| x & 31;
+    sweep("v_add_nc_u32 v3, v0, v1", |a, b, _| a.wrapping_add(b));
+    sweep("v_sub_nc_u32 v3, v0, v1", |a, b, _| a.wrapping_sub(b));
+    sweep("v_subrev_nc_u32 v3, v0, v1", |a, b, _| b.wrapping_sub(a));
+    sweep("v_and_b32 v3, v0, v1", |a, b, _| a & b);
+    sweep("v_or_b32 v3, v0, v1", |a, b, _| a | b);
+    sweep("v_xor_b32 v3, v0, v1", |a, b, _| a ^ b);
+    sweep("v_xnor_b32 v3, v0, v1", |a, b, _| !(a ^ b));
+    sweep("v_not_b32 v3, v0", |a, _, _| !a);
+    sweep("v_bfrev_b32 v3, v0", |a, _, _| a.reverse_bits());
+    sweep("v_lshlrev_b32 v3, v0, v1", move |a, b, _| b << sh(a));
+    sweep("v_lshrrev_b32 v3, v0, v1", move |a, b, _| b >> sh(a));
+    sweep("v_ashrrev_i32 v3, v0, v1", move |a, b, _| {
+        ((b as i32) >> sh(a)) as u32
+    });
+    sweep("v_min_i32 v3, v0, v1", |a, b, _| {
+        (a as i32).min(b as i32) as u32
+    });
+    sweep("v_max_i32 v3, v0, v1", |a, b, _| {
+        (a as i32).max(b as i32) as u32
+    });
+    sweep("v_min_u32 v3, v0, v1", |a, b, _| a.min(b));
+    sweep("v_max_u32 v3, v0, v1", |a, b, _| a.max(b));
+    sweep("v_mul_lo_u32 v3, v0, v1", |a, b, _| a.wrapping_mul(b));
+    sweep("v_mul_hi_u32 v3, v0, v1", |a, b, _| {
+        ((u64::from(a) * u64::from(b)) >> 32) as u32
+    });
+    sweep("v_mul_hi_i32 v3, v0, v1", |a, b, _| {
+        ((i64::from(a as i32) * i64::from(b as i32)) >> 32) as u32
+    });
+    let u24 = |x: u32| u64::from(x & 0xff_ffff);
+    let i24 = |x: u32| i64::from(((x << 8) as i32) >> 8);
+    sweep("v_mul_u32_u24 v3, v0, v1", move |a, b, _| {
+        (u24(a) * u24(b)) as u32
+    });
+    sweep("v_mul_hi_u32_u24 v3, v0, v1", move |a, b, _| {
+        ((u24(a) * u24(b)) >> 32) as u32
+    });
+    sweep("v_mul_i32_i24 v3, v0, v1", move |a, b, _| {
+        (i24(a) * i24(b)) as u32
+    });
+    sweep("v_mul_hi_i32_i24 v3, v0, v1", move |a, b, _| {
+        ((i24(a) * i24(b)) >> 32) as u32
+    });
+    sweep("v_mad_u32_u24 v3, v0, v1, v2", move |a, b, c| {
+        ((u24(a) * u24(b)) as u32).wrapping_add(c)
+    });
+    sweep("v_mad_i32_i24 v3, v0, v1, v2", move |a, b, c| {
+        ((i24(a) * i24(b)) as u32).wrapping_add(c)
+    });
+    sweep("v_bfi_b32 v3, v0, v1, v2", |m, a, b| (m & a) | (!m & b));
+    sweep("v_alignbit_b32 v3, v0, v1, v2", move |a, b, c| {
+        ((u64::from(a) << 32 | u64::from(b)) >> sh(c)) as u32
+    });
+    sweep("v_alignbyte_b32 v3, v0, v1, v2", |a, b, c| {
+        ((u64::from(a) << 32 | u64::from(b)) >> (8 * (c & 3))) as u32
+    });
+    sweep("v_med3_i32 v3, v0, v1, v2", |a, b, c| {
+        let mut v = [a as i32, b as i32, c as i32];
+        v.sort_unstable();
+        v[1] as u32
+    });
+    sweep("v_med3_u32 v3, v0, v1, v2", |a, b, c| {
+        let mut v = [a, b, c];
+        v.sort_unstable();
+        v[1]
+    });
+    sweep("v_min3_u32 v3, v0, v1, v2", |a, b, c| a.min(b).min(c));
+    sweep("v_max3_i32 v3, v0, v1, v2", |a, b, c| {
+        (a as i32).max(b as i32).max(c as i32) as u32
+    });
+    sweep("v_add3_u32 v3, v0, v1, v2", |a, b, c| {
+        a.wrapping_add(b).wrapping_add(c)
+    });
+    sweep("v_lshl_add_u32 v3, v0, v1, v2", move |a, b, c| {
+        (a << sh(b)).wrapping_add(c)
+    });
+    sweep("v_add_lshl_u32 v3, v0, v1, v2", move |a, b, c| {
+        a.wrapping_add(b) << sh(c)
+    });
+    sweep("v_lshl_or_b32 v3, v0, v1, v2", move |a, b, c| {
+        (a << sh(b)) | c
+    });
+    sweep("v_and_or_b32 v3, v0, v1, v2", |a, b, c| (a & b) | c);
+    sweep("v_or3_b32 v3, v0, v1, v2", |a, b, c| a | b | c);
+    sweep("v_xad_u32 v3, v0, v1, v2", |a, b, c| {
+        (a ^ b).wrapping_add(c)
+    });
+    sweep("v_bcnt_u32_b32 v3, v0, v1", |a, b, _| {
+        a.count_ones().wrapping_add(b)
+    });
+    sweep("v_bfm_b32 v3, v0, v1", move |a, b, _| {
+        (((1u64 << sh(a)) - 1) as u32) << sh(b)
+    });
+    sweep("v_ffbh_u32 v3, v0", |a, _, _| {
+        if a == 0 {
+            u32::MAX
+        } else {
+            a.leading_zeros()
+        }
+    });
+    sweep("v_ffbl_b32 v3, v0", |a, _, _| {
+        if a == 0 {
+            u32::MAX
+        } else {
+            a.trailing_zeros()
+        }
+    });
+    sweep("v_ffbh_i32 v3, v0", |a, _, _| {
+        if a == 0 || a == u32::MAX {
+            u32::MAX
+        } else if (a as i32) < 0 {
+            (!a).leading_zeros()
+        } else {
+            a.leading_zeros()
+        }
+    });
+    // field extraction: offset and width are 5 bits; width 0 gives 0
+    sweep("v_bfe_u32 v3, v0, v1, v2", move |a, b, c| {
+        let w = c & 31;
+        if w == 0 {
+            0
+        } else {
+            (a >> sh(b)) & (((1u64 << w) - 1) as u32)
+        }
+    });
+    sweep("v_bfe_i32 v3, v0, v1, v2", move |a, b, c| {
+        let w = c & 31;
+        if w == 0 {
+            0
+        } else {
+            let x = (((a as i32) >> sh(b)) as u32) & (((1u64 << w) - 1) as u32);
+            (((x << (32 - w)) as i32) >> (32 - w)) as u32
+        }
+    });
+}
+
+#[test]
+fn byte_permute() {
+    let abs = |a: u32, b: u32, c: u32| -> Io { Box::leak(Box::new([(V0, a), (V1, b), (V2, c)])) };
+    let one = |r: u32| -> Io { Box::leak(Box::new([(V3, r)])) };
+    // bytes 0..=3 are the second source, 4..=7 the first
+    check(
+        &["v_perm_b32 v3, v0, v1, v2"],
+        &[
+            (abs(0x0f0e_0d0c, 0x0302_0100, 0x0706_0504), one(0x0f0e_0d0c)),
+            (abs(0x0f0e_0d0c, 0x0302_0100, 0x0001_0203), one(0x0001_0203)),
+            (abs(0x0f0e_0d0c, 0x0302_0100, 0x0c0c_0c0c), one(0)),
+            (abs(0, 0, 0xffff_ffff), one(0xffff_ffff)),
+            // 8 and 9: 0xff when bit 15 / 31 of the second source is set; 10, 11: the first
+            (abs(0, 0x0000_8000, 0x0c0c_0c08), one(0x0000_00ff)),
+            (abs(0, 0x8000_0000, 0x0c0c_0c09), one(0x0000_00ff)),
+            (abs(0x0000_8000, 0, 0x0c0c_0c0a), one(0x0000_00ff)),
+            (abs(0x0000_8000, 0, 0x0c0c_0c0b), one(0)),
+        ],
+    );
+}
+
+#[test]
+fn integer_vector_64_bit_shifts() {
+    let ins =
+        |lo: u32, hi: u32, n: u32| -> Io { Box::leak(Box::new([(V0, n), (V1, lo), (V2, hi)])) };
+    let out = |lo: u32, hi: u32| -> Io { Box::leak(Box::new([(V3, lo), (V4, hi)])) };
+    check(
+        &["v_lshlrev_b64 v[3:4], v0, v[1:2]"],
+        &[
+            (ins(0xf000_0000, 1, 4), out(0, 0x1f)),
+            (ins(1, 0, 36), out(0, 0x10)),
+            (ins(0x1234, 0x5678, 0), out(0x1234, 0x5678)),
+            (ins(1, 0, 64), out(1, 0)),
+        ],
+    );
+    check(
+        &["v_lshrrev_b64 v[3:4], v0, v[1:2]"],
+        &[
+            (ins(0, 0x1f, 4), out(0xf000_0000, 1)),
+            (ins(0, 0x10, 36), out(1, 0)),
+            (ins(0x1234, 0x5678, 0), out(0x1234, 0x5678)),
+        ],
+    );
+    check(
+        &["v_ashrrev_i64 v[3:4], v0, v[1:2]"],
+        &[
+            (ins(0, 0x8000_0000, 36), out(0xf800_0000, 0xffff_ffff)),
+            (ins(0, 0x8000_0000, 63), out(0xffff_ffff, 0xffff_ffff)),
+            (ins(0, 0x4000_0000, 62), out(1, 0)),
+        ],
+    );
+}
+
+#[test]
+fn carries_and_selects() {
+    let ab = |a: u32, b: u32| -> Io { Box::leak(Box::new([(V0, a), (V1, b)])) };
+    let r = |v: u32, c: u32| -> Io { Box::leak(Box::new([(V3, v), (S2, c)])) };
+    check(
+        &["v_add_co_u32 v3, s2, v0, v1"],
+        &[(ab(0xffff_ffff, 1), r(0, 1)), (ab(1, 2), r(3, 0))],
+    );
+    check(
+        &["v_sub_co_u32 v3, s2, v0, v1"],
+        &[(ab(1, 2), r(0xffff_ffff, 1)), (ab(2, 1), r(1, 0))],
+    );
+    check(
+        &["v_subrev_co_u32 v3, s2, v0, v1"],
+        &[(ab(2, 1), r(0xffff_ffff, 1)), (ab(1, 2), r(1, 0))],
+    );
+    // the carry in comes out of a compare: v2 < v4
+    let cin = |a: u32, b: u32, c: bool| -> Io {
+        // v2 < v4 exactly when `c`
+        Box::leak(Box::new([(V0, a), (V1, b), (V2, 0), (V4, u32::from(c))]))
+    };
+    let rv = |v: u32, c: u32| -> Io { Box::leak(Box::new([(V3, v), (VCC, c)])) };
+    let lt = "v_cmp_lt_u32 vcc_lo, v2, v4";
+    check(
+        &[lt, "v_add_co_ci_u32 v3, vcc_lo, v0, v1, vcc_lo"],
+        &[
+            (cin(0xffff_fffe, 1, true), rv(0, 1)),
+            (cin(0xffff_ffff, 0, true), rv(0, 1)),
+            (cin(0xffff_ffff, 0, false), rv(0xffff_ffff, 0)),
+            (cin(1, 2, true), rv(4, 0)),
+        ],
+    );
+    check(
+        &[lt, "v_sub_co_ci_u32 v3, vcc_lo, v0, v1, vcc_lo"],
+        &[
+            (cin(0, 0, true), rv(0xffff_ffff, 1)),
+            (cin(5, 3, true), rv(1, 0)),
+            (cin(3, 3, true), rv(0xffff_ffff, 1)),
+            (cin(3, 3, false), rv(0, 0)),
+        ],
+    );
+    check(
+        &[lt, "v_subrev_co_ci_u32 v3, vcc_lo, v0, v1, vcc_lo"],
+        &[
+            (cin(3, 5, true), rv(1, 0)),
+            (cin(5, 3, true), rv(0xffff_fffd, 1)),
+        ],
+    );
+    // select by a compare, and by a scalar whose bit 0 is the lane's bit
+    let sel = |a: u32, b: u32, m: u32| -> Io { Box::leak(Box::new([(V0, a), (V1, b), (S2, m)])) };
+    let o = |v: u32| -> Io { Box::leak(Box::new([(V3, v)])) };
+    check(
+        &["v_cndmask_b32_e64 v3, v0, v1, s2"],
+        &[(sel(10, 20, 0), o(10)), (sel(10, 20, 1), o(20))],
+    );
+    check(
+        &[
+            "v_cmp_lt_u32 vcc_lo, v0, v1",
+            "v_cndmask_b32 v3, v0, v1, vcc_lo",
+        ],
+        &[
+            (sel(10, 20, 0), o(20)),
+            (sel(20, 10, 0), o(20)),
+            (sel(7, 7, 0), o(7)),
+        ],
+    );
+}
+
+const FPAIRS: [(f32, f32); 5] = [
+    (1.0, 2.0),
+    (2.0, 1.0),
+    (1.0, 1.0),
+    (f32::NAN, 1.0),
+    (1.0, f32::NAN),
+];
+
+#[test]
+fn float_compares() {
+    // (opcode, truth on each pair of FPAIRS): ordered tests are false on NaN, `n*` true
+    let table: [(&str, [u32; 5]); 16] = [
+        ("v_cmp_f_f32 vcc_lo, v0, v1", [0, 0, 0, 0, 0]),
+        ("v_cmp_lt_f32 vcc_lo, v0, v1", [1, 0, 0, 0, 0]),
+        ("v_cmp_eq_f32 vcc_lo, v0, v1", [0, 0, 1, 0, 0]),
+        ("v_cmp_le_f32 vcc_lo, v0, v1", [1, 0, 1, 0, 0]),
+        ("v_cmp_gt_f32 vcc_lo, v0, v1", [0, 1, 0, 0, 0]),
+        ("v_cmp_lg_f32 vcc_lo, v0, v1", [1, 1, 0, 0, 0]),
+        ("v_cmp_ge_f32 vcc_lo, v0, v1", [0, 1, 1, 0, 0]),
+        ("v_cmp_o_f32 vcc_lo, v0, v1", [1, 1, 1, 0, 0]),
+        ("v_cmp_u_f32 vcc_lo, v0, v1", [0, 0, 0, 1, 1]),
+        ("v_cmp_nge_f32 vcc_lo, v0, v1", [1, 0, 0, 1, 1]),
+        ("v_cmp_nlg_f32 vcc_lo, v0, v1", [0, 0, 1, 1, 1]),
+        ("v_cmp_ngt_f32 vcc_lo, v0, v1", [1, 0, 1, 1, 1]),
+        ("v_cmp_nle_f32 vcc_lo, v0, v1", [0, 1, 0, 1, 1]),
+        ("v_cmp_neq_f32 vcc_lo, v0, v1", [1, 1, 0, 1, 1]),
+        ("v_cmp_nlt_f32 vcc_lo, v0, v1", [0, 1, 1, 1, 1]),
+        ("v_cmp_tru_f32 vcc_lo, v0, v1", [1, 1, 1, 1, 1]),
+    ];
+    for (asm, truth) in table {
+        let fun = func(&[asm]);
+        let s = structure(&fun).unwrap();
+        let p = translate(&fun, &s).unwrap();
+        validate(&p.words);
+        let run = runner(&p);
+        for (k, (a, b)) in FPAIRS.iter().enumerate() {
+            let out = interp(&fun, &s, &[(V0, f(*a)), (V1, f(*b))]).unwrap();
+            on_gpu(&run, &p, &[asm], &[(V0, f(*a)), (V1, f(*b))], &out);
+            assert_eq!(get(&out, VCC), truth[k], "{asm}: {a}, {b}");
+        }
+    }
+    // the VOP3 form: source modifiers, the result in an SGPR
+    check(
+        &["v_cmp_lt_f32_e64 s2, -v0, |v1|"],
+        &[
+            (&[(V0, f(-2.0)), (V1, f(-3.0))], &[(S2, 1)]),
+            (&[(V0, f(2.0)), (V1, f(3.0))], &[(S2, 1)]),
+            (&[(V0, f(-2.0)), (V1, f(1.0))], &[(S2, 0)]),
+        ],
+    );
+}
+
+#[test]
+fn integer_compares_and_class() {
+    let pairs: [(u32, u32); 5] = [(1, 2), (2, 1), (5, 5), (0xffff_ffff, 1), (1, 0xffff_ffff)];
+    type Cmp = fn(u32, u32) -> bool;
+    let ops: [(&str, Cmp, Cmp); 6] = [
+        ("eq", |a, b| a == b, |a, b| a == b),
+        ("ne", |a, b| a != b, |a, b| a != b),
+        ("lt", |a, b| (a as i32) < b as i32, |a, b| a < b),
+        ("le", |a, b| (a as i32) <= b as i32, |a, b| a <= b),
+        ("gt", |a, b| (a as i32) > b as i32, |a, b| a > b),
+        ("ge", |a, b| (a as i32) >= b as i32, |a, b| a >= b),
+    ];
+    for (op, si, un) in ops {
+        for (ty, g) in [("i32", si), ("u32", un)] {
+            let asm = format!("v_cmp_{op}_{ty} vcc_lo, v0, v1");
+            let fun = func(&[asm.as_str()]);
+            let s = structure(&fun).unwrap();
+            let p = translate(&fun, &s).unwrap();
+            validate(&p.words);
+            let run = runner(&p);
+            for (a, b) in pairs {
+                let out = interp(&fun, &s, &[(V0, a), (V1, b)]).unwrap();
+                on_gpu(&run, &p, &[asm.as_str()], &[(V0, a), (V1, b)], &out);
+                assert_eq!(get(&out, VCC), u32::from(g(a, b)), "{asm}: {a:#x} {b:#x}");
+            }
+        }
+    }
+    // 64-bit compares
+    let wide = |lo0, hi0, lo1, hi1| -> Io {
+        Box::leak(Box::new([(V0, lo0), (V1, hi0), (V2, lo1), (V3, hi1)]))
+    };
+    let b = |x: u32| -> Io { Box::leak(Box::new([(VCC, x)])) };
+    check(
+        &["v_cmp_lt_u64 vcc_lo, v[0:1], v[2:3]"],
+        &[
+            (wide(5, 1, 4, 2), b(1)),
+            (wide(5, 2, 4, 1), b(0)),
+            (wide(4, 1, 5, 1), b(1)),
+            (wide(5, 1, 5, 1), b(0)),
+            (wide(0, 0x8000_0000, 0, 1), b(0)),
+        ],
+    );
+    check(
+        &["v_cmp_lt_i64 vcc_lo, v[0:1], v[2:3]"],
+        &[
+            (wide(0, 0x8000_0000, 0, 1), b(1)),
+            (wide(0, 1, 0, 0x8000_0000), b(0)),
+        ],
+    );
+    check(
+        &["v_cmp_eq_u64 vcc_lo, v[0:1], v[2:3]"],
+        &[
+            (wide(1, 2, 1, 2), b(1)),
+            (wide(1, 2, 1, 3), b(0)),
+            (wide(1, 2, 0, 2), b(0)),
+        ],
+    );
+    // class: the mask bits are sNaN, qNaN, -inf, -normal, -denormal, -0, +0, +denormal,
+    // +normal, +inf
+    let class = |x: u32, mask: u32, want: u32| {
+        check(
+            &["v_cmp_class_f32 vcc_lo, v0, v1"],
+            &[(&[(V0, x), (V1, mask)][..], &[(VCC, want)][..])],
+        );
+    };
+    class(f(1.0), 0x100, 1);
+    class(f(1.0), 0x0ff, 0);
+    class(f(-1.0), 0x008, 1);
+    class(f(-0.0), 0x020, 1);
+    class(f(0.0), 0x020, 0);
+    class(f(0.0), 0x040, 1);
+    class(f(INF), 0x200, 1);
+    class(f(-INF), 0x004, 1);
+    class(0x7fc0_0000, 0x003, 1);
+    class(0x7fc0_0000, 0x001, 0);
+    class(0x7fa0_0000, 0x001, 1);
+    class(0x7fa0_0000, 0x002, 0);
+    class(0x0000_0001, 0x080, 1);
+    class(0x8000_0001, 0x010, 1);
+    class(0x8000_0001, 0x080, 0);
+    // v_cmpx writes EXEC
+    check(
+        &["v_cmpx_lt_f32 v0, v1"],
+        &[
+            (&[(V0, f(1.0)), (V1, f(2.0))], &[(EXEC, 1)]),
+            (&[(V0, f(2.0)), (V1, f(1.0))], &[(EXEC, 0)]),
+        ],
+    );
+}
+
+#[test]
+fn scalar_arithmetic_and_scc() {
+    let ab = |a: u32, b: u32| -> Io { Box::leak(Box::new([(S0, a), (S1, b)])) };
+    let r = |v: u32, scc: u32| -> Io { Box::leak(Box::new([(S2, v), (SCC, scc)])) };
+    let m = 0xffff_ffffu32;
+    check(
+        &["s_add_u32 s2, s0, s1"],
+        &[(ab(m, 1), r(0, 1)), (ab(1, 2), r(3, 0))],
+    );
+    check(
+        &["s_sub_u32 s2, s0, s1"],
+        &[(ab(1, 2), r(m, 1)), (ab(2, 1), r(1, 0))],
+    );
+    // signed overflow
+    check(
+        &["s_add_i32 s2, s0, s1"],
+        &[
+            (ab(0x7fff_ffff, 1), r(0x8000_0000, 1)),
+            (ab(1, 2), r(3, 0)),
+            (ab(m, m), r(m - 1, 0)),
+            (ab(0x8000_0000, 0x8000_0000), r(0, 1)),
+        ],
+    );
+    check(
+        &["s_sub_i32 s2, s0, s1"],
+        &[
+            (ab(0x8000_0000, 1), r(0x7fff_ffff, 1)),
+            (ab(0, 1), r(m, 0)),
+            (ab(0x7fff_ffff, m), r(0x8000_0000, 1)),
+        ],
+    );
+    // the carry in is SCC of an earlier compare: s6 == s7
+    let cin = |a: u32, b: u32, c: bool| -> Io {
+        Box::leak(Box::new([(S0, a), (S1, b), (S6, 1), (S7, u32::from(c))]))
+    };
+    let eq = "s_cmp_eq_u32 s6, s7";
+    check(
+        &[eq, "s_addc_u32 s2, s0, s1"],
+        &[
+            (cin(m, 0, true), r(0, 1)),
+            (cin(1, 1, true), r(3, 0)),
+            (cin(m, 0, false), r(m, 0)),
+            (cin(m, m, true), r(m, 1)),
+        ],
+    );
+    check(
+        &[eq, "s_subb_u32 s2, s0, s1"],
+        &[
+            (cin(0, 0, true), r(m, 1)),
+            (cin(5, 3, true), r(1, 0)),
+            (cin(3, 3, true), r(m, 1)),
+            (cin(3, 3, false), r(0, 0)),
+        ],
+    );
+    // the selected operand sets SCC
+    check(&["s_min_i32 s2, s0, s1"], &[(ab(m, 1), r(m, 1))]);
+    check(&["s_min_u32 s2, s0, s1"], &[(ab(m, 1), r(1, 0))]);
+    check(&["s_max_i32 s2, s0, s1"], &[(ab(m, 1), r(1, 0))]);
+    check(&["s_max_u32 s2, s0, s1"], &[(ab(m, 1), r(m, 1))]);
+    check(
+        &["s_mul_i32 s2, s0, s1"],
+        &[
+            (ab(0x10000, 0x10000), &[(S2, 0)][..]),
+            (ab(m, 3), &[(S2, m - 2)][..]),
+        ],
+    );
+    check(
+        &["s_mul_hi_u32 s2, s0, s1"],
+        &[(ab(m, m), &[(S2, m - 1)][..])],
+    );
+    check(&["s_mul_hi_i32 s2, s0, s1"], &[(ab(m, m), &[(S2, 0)][..])]);
+    check(
+        &["s_lshl_b32 s2, s0, s1"],
+        &[(ab(1, 33), r(2, 1)), (ab(0x8000_0000, 1), r(0, 0))],
+    );
+    check(
+        &["s_lshr_b32 s2, s0, s1"],
+        &[(ab(0x8000_0000, 31), r(1, 1))],
+    );
+    check(
+        &["s_ashr_i32 s2, s0, s1"],
+        &[(ab(0x8000_0000, 31), r(m, 1))],
+    );
+    let w = |lo: u32, hi: u32, n: u32| -> Io { Box::leak(Box::new([(S0, lo), (S1, hi), (S4, n)])) };
+    let w2 = |lo: u32, hi: u32, scc: u32| -> Io {
+        Box::leak(Box::new([(S2, lo), (S3, hi), (SCC, scc)]))
+    };
+    check(
+        &["s_lshl_b64 s[2:3], s[0:1], s4"],
+        &[
+            (w(0x8000_0000, 0, 1), w2(0, 1, 1)),
+            (w(1, 0, 64), w2(1, 0, 1)),
+            (w(0, 0, 3), w2(0, 0, 0)),
+        ],
+    );
+    check(
+        &["s_lshr_b64 s[2:3], s[0:1], s4"],
+        &[
+            (w(0, 1, 1), w2(0x8000_0000, 0, 1)),
+            (w(0, 1, 32), w2(1, 0, 1)),
+        ],
+    );
+    check(
+        &["s_ashr_i64 s[2:3], s[0:1], s4"],
+        &[
+            (w(0, 0x8000_0000, 63), w2(m, m, 1)),
+            (w(0, 0x8000_0000, 32), w2(0x8000_0000, m, 1)),
+        ],
+    );
+    check(
+        &["s_bfm_b32 s2, s0, s1"],
+        &[
+            (ab(4, 8), &[(S2, 0xf00)][..]),
+            (ab(0, 8), &[(S2, 0)][..]),
+            (ab(32, 8), &[(S2, 0)][..]),
+        ],
+    );
+    // offset in bits 4:0, width in bits 22:16 of the second operand
+    check(
+        &["s_bfe_u32 s2, s0, s1"],
+        &[
+            (ab(0xabcd_1234, 8 << 16 | 8), r(0x12, 1)),
+            (ab(0xabcd_1234, 8), r(0, 0)),
+            (ab(0xabcd_1234, 32 << 16), r(0xabcd_1234, 1)),
+        ],
+    );
+    check(
+        &["s_bfe_i32 s2, s0, s1"],
+        &[
+            (ab(0x80, 8 << 16), r(0xffff_ff80, 1)),
+            (ab(0x7f, 8 << 16), r(0x7f, 1)),
+        ],
+    );
+    check(
+        &["s_absdiff_i32 s2, s0, s1"],
+        &[
+            (ab(3, 10), r(7, 1)),
+            (ab(10, 3), r(7, 1)),
+            (ab(5, 5), r(0, 0)),
+        ],
+    );
+    check(
+        &["s_lshl2_add_u32 s2, s0, s1"],
+        &[(ab(1, 2), r(6, 0)), (ab(0x8000_0000, 0), r(0, 1))],
+    );
+    check(
+        &["s_pack_ll_b32_b16 s2, s0, s1"],
+        &[(ab(0x1234_abcd, 0x5678_ef01), &[(S2, 0xef01_abcd)][..])],
+    );
+    check(
+        &["s_pack_hh_b32_b16 s2, s0, s1"],
+        &[(ab(0x1234_abcd, 0x5678_ef01), &[(S2, 0x5678_1234)][..])],
+    );
+}
+
+#[test]
+fn scalar_bit_ops_and_compares() {
+    let ab = |a: u32, b: u32| -> Io { Box::leak(Box::new([(S0, a), (S1, b)])) };
+    let r = |v: u32, scc: u32| -> Io { Box::leak(Box::new([(S2, v), (SCC, scc)])) };
+    let m = 0xffff_ffffu32;
+    let nz = |v: u32| u32::from(v != 0);
+    let bit = |asm: &str, g: fn(u32, u32) -> u32| {
+        let vecs: Vec<(Io, Io)> = [(0xf0f0_f0f0, 0xff00_ff00), (1, 2), (m, m), (0, 5)]
+            .iter()
+            .map(|&(a, b)| (ab(a, b), r(g(a, b), nz(g(a, b)))))
+            .collect();
+        check(&[asm], &vecs);
+    };
+    bit("s_and_b32 s2, s0, s1", |a, b| a & b);
+    bit("s_or_b32 s2, s0, s1", |a, b| a | b);
+    bit("s_xor_b32 s2, s0, s1", |a, b| a ^ b);
+    bit("s_andn2_b32 s2, s0, s1", |a, b| a & !b);
+    bit("s_orn2_b32 s2, s0, s1", |a, b| a | !b);
+    bit("s_nand_b32 s2, s0, s1", |a, b| !(a & b));
+    bit("s_nor_b32 s2, s0, s1", |a, b| !(a | b));
+    bit("s_xnor_b32 s2, s0, s1", |a, b| !(a ^ b));
+    check(
+        &["s_not_b32 s2, s0"],
+        &[(ab(0, 0), r(m, 1)), (ab(m, 0), r(0, 0))],
+    );
+    check(&["s_mov_b32 s2, s0"], &[(ab(7, 0), &[(S2, 7)][..])]);
+    check(
+        &["s_brev_b32 s2, s0"],
+        &[(ab(1, 0), &[(S2, 0x8000_0000)][..])],
+    );
+    check(
+        &["s_bcnt0_i32_b32 s2, s0"],
+        &[(ab(0xffff_0000, 0), r(16, 1)), (ab(m, 0), r(0, 0))],
+    );
+    check(
+        &["s_bcnt1_i32_b32 s2, s0"],
+        &[(ab(0xffff_0000, 0), r(16, 1)), (ab(0, 0), r(0, 0))],
+    );
+    check(
+        &["s_ff1_i32_b32 s2, s0"],
+        &[(ab(8, 0), &[(S2, 3)][..]), (ab(0, 0), &[(S2, m)][..])],
+    );
+    check(
+        &["s_ff0_i32_b32 s2, s0"],
+        &[(ab(0xf, 0), &[(S2, 4)][..]), (ab(m, 0), &[(S2, m)][..])],
+    );
+    check(
+        &["s_flbit_i32_b32 s2, s0"],
+        &[
+            (ab(1, 0), &[(S2, 31)][..]),
+            (ab(0, 0), &[(S2, m)][..]),
+            (ab(0x8000_0000, 0), &[(S2, 0)][..]),
+        ],
+    );
+    check(
+        &["s_flbit_i32 s2, s0"],
+        &[
+            (ab(m, 0), &[(S2, m)][..]),
+            (ab(0xffff_fff0, 0), &[(S2, 28)][..]),
+            (ab(1, 0), &[(S2, 31)][..]),
+        ],
+    );
+    check(
+        &["s_sext_i32_i8 s2, s0"],
+        &[(ab(0x80, 0), &[(S2, 0xffff_ff80)][..])],
+    );
+    check(
+        &["s_sext_i32_i16 s2, s0"],
+        &[(ab(0x8000, 0), &[(S2, 0xffff_8000)][..])],
+    );
+    check(
+        &["s_abs_i32 s2, s0"],
+        &[
+            (ab(-5i32 as u32, 0), r(5, 1)),
+            (ab(0, 0), r(0, 0)),
+            (ab(0x8000_0000, 0), r(0x8000_0000, 1)),
+        ],
+    );
+    // compares: SCC only
+    let c = |asm: &str, want: [(u32, u32, u32); 3]| {
+        let vecs: Vec<(Io, Io)> = want
+            .iter()
+            .map(|&(a, b, s)| {
+                (
+                    ab(a, b),
+                    &*Box::leak(Box::new([(SCC, s)]) as Box<[(Reg, u32); 1]>) as Io,
+                )
+            })
+            .collect();
+        check(&[asm], &vecs);
+    };
+    c("s_cmp_eq_u32 s0, s1", [(1, 1, 1), (1, 2, 0), (m, m, 1)]);
+    c("s_cmp_lg_u32 s0, s1", [(1, 1, 0), (1, 2, 1), (m, 0, 1)]);
+    c("s_cmp_gt_i32 s0, s1", [(m, 1, 0), (2, 1, 1), (1, 1, 0)]);
+    c("s_cmp_lt_u32 s0, s1", [(1, m, 1), (m, 1, 0), (1, 1, 0)]);
+    c("s_cmp_ge_i32 s0, s1", [(m, 1, 0), (1, 1, 1), (2, 1, 1)]);
+    c("s_cmp_le_u32 s0, s1", [(m, 1, 0), (1, 1, 1), (0, 1, 1)]);
+    c(
+        "s_bitcmp1_b32 s0, s1",
+        [(4, 2, 1), (4, 1, 0), (0x8000_0000, 31, 1)],
+    );
+    check(
+        &["s_cmp_eq_u64 s[0:1], s[2:3]"],
+        &[
+            (&[(S0, 1), (S1, 2), (S2, 1), (S3, 2)], &[(SCC, 1)][..]),
+            (&[(S0, 1), (S1, 2), (S2, 1), (S3, 3)], &[(SCC, 0)][..]),
+        ],
+    );
+    check(
+        &["s_cmpk_lt_i32 s0, 0xffff"],
+        &[
+            (&[(S0, -5i32 as u32)], &[(SCC, 1)][..]),
+            (&[(S0, 0)], &[(SCC, 0)][..]),
+        ],
+    );
+    check(
+        &["s_cmpk_eq_u32 s0, 0xffff"],
+        &[
+            (&[(S0, 0xffff)], &[(SCC, 1)][..]),
+            (&[(S0, m)], &[(SCC, 0)][..]),
+        ],
+    );
+    // SCC selects
+    let sel = |a: u32, b: u32, c: bool| -> Io {
+        Box::leak(Box::new([
+            (S0, a),
+            (S1, b),
+            (S2, 9),
+            (S6, 1),
+            (S7, u32::from(c)),
+        ]))
+    };
+    check(
+        &["s_cmp_eq_u32 s6, s7", "s_cselect_b32 s2, s0, s1"],
+        &[
+            (sel(10, 20, true), &[(S2, 10)][..]),
+            (sel(10, 20, false), &[(S2, 20)][..]),
+        ],
+    );
+    check(
+        &["s_cmp_eq_u32 s6, s7", "s_cmov_b32 s2, s0"],
+        &[
+            (sel(10, 20, true), &[(S2, 10)][..]),
+            (sel(10, 20, false), &[(S2, 9)][..]),
+        ],
+    );
+    // the 16-bit immediates
+    // the constant folds away: only its use is left
+    check(
+        &["s_movk_i32 s2, 0xfffe", "s_add_u32 s3, s2, s0"],
+        &[(&[(S0, 5)], &[(S3, 3)][..])],
+    );
+    check(
+        &["s_addk_i32 s2, 0x7fff"],
+        &[
+            (&[(S2, 1)], &[(S2, 0x8000), (SCC, 0)][..]),
+            (&[(S2, 0x7fff_ffff)], &[(S2, 0x8000_7ffe), (SCC, 1)][..]),
+        ],
+    );
+    check(
+        &["s_mulk_i32 s2, 0xfffd"],
+        &[(&[(S2, 5)], &[(S2, -15i32 as u32)][..])],
+    );
+}
+
+#[test]
+fn sdwa_selects_and_destination_modes() {
+    let o = |v: u32| -> Io { Box::leak(Box::new([(V3, v)])) };
+    let ins =
+        |a: u32, b: u32, old: u32| -> Io { Box::leak(Box::new([(V0, a), (V1, b), (V3, old)])) };
+    // word 1 of v0 plus byte 2 of v1, into byte 1 of v3 (the rest of v3 kept)
+    check(
+        &["v_add_nc_u32_sdwa v3, v0, v1 dst_sel:BYTE_1 dst_unused:UNUSED_PRESERVE src0_sel:WORD_1 src1_sel:BYTE_2"],
+        &[(ins(0x0003_0000, 0x0005_0000, 0xaabb_ccdd), o(0xaabb_08dd))],
+    );
+    check(
+        &["v_cvt_f32_u32_sdwa v3, v0 dst_sel:DWORD dst_unused:UNUSED_PAD src0_sel:BYTE_1"],
+        &[(ins(0x0000_1200, 0, 0), o(f(18.0)))],
+    );
+    check(
+        &["v_add_nc_u32_sdwa v3, sext(v0), v1 dst_sel:DWORD dst_unused:UNUSED_PAD src0_sel:BYTE_0 src1_sel:DWORD"],
+        &[(ins(0xff, 5, 0), o(4)), (ins(0x7f, 5, 0), o(0x84))],
+    );
+    check(
+        &["v_add_nc_u32_sdwa v3, v0, v1 dst_sel:WORD_0 dst_unused:UNUSED_SEXT src0_sel:DWORD src1_sel:DWORD"],
+        &[(ins(0x7fff, 1, 0x1234_5678), o(0xffff_8000)), (ins(1, 1, 0x1234_5678), o(2))],
+    );
+    check(
+        &["v_add_nc_u32_sdwa v3, v0, v1 dst_sel:WORD_0 dst_unused:UNUSED_PAD src0_sel:DWORD src1_sel:DWORD"],
+        &[(ins(0x7fff, 1, 0x1234_5678), o(0x8000))],
+    );
+    check(
+        &["v_cmp_eq_u32_sdwa vcc_lo, v0, v1 src0_sel:BYTE_0 src1_sel:BYTE_1"],
+        &[
+            (ins(0x1234, 0x3400, 0), &[(VCC, 1)][..]),
+            (ins(0x1234, 0x3500, 0), &[(VCC, 0)][..]),
+        ],
+    );
+    check(
+        &["v_add_f32_sdwa v3, |v0|, -v1 dst_sel:DWORD dst_unused:UNUSED_PAD src0_sel:DWORD src1_sel:DWORD"],
+        &[(ins(f(-2.0), f(-3.0), 0), o(f(5.0)))],
+    );
+}
+
+#[test]
+fn sixteen_bit_integer_ops() {
+    let ab = |a: u32, b: u32| -> Io { Box::leak(Box::new([(V0, a), (V1, b)])) };
+    let o = |v: u32| -> Io { Box::leak(Box::new([(V3, v)])) };
+    check(
+        &["v_lshrrev_b16 v3, v0, v1"],
+        &[(ab(4, 0xabcd_1234), o(0x123))],
+    );
+    check(
+        &["v_lshlrev_b16 v3, v0, v1"],
+        &[(ab(4, 0xabcd_1234), o(0x2340))],
+    );
+    check(&["v_ashrrev_i16 v3, v0, v1"], &[(ab(4, 0x8000), o(0xf800))]);
+    check(
+        &["v_cmp_lt_i16 vcc_lo, v0, v1"],
+        &[
+            (ab(0x8000, 1), &[(VCC, 1)][..]),
+            (ab(1, 0x8000), &[(VCC, 0)][..]),
+        ],
+    );
+    check(
+        &["v_cmp_eq_u16 vcc_lo, v0, v1"],
+        &[
+            (ab(0x1_0005, 5), &[(VCC, 1)][..]),
+            (ab(6, 5), &[(VCC, 0)][..]),
+        ],
+    );
+}
+
+#[test]
+fn bit_set_and_clear_read_the_destination() {
+    let r = |a: u32, old: u32| -> Io { Box::leak(Box::new([(S0, a), (S2, old)])) };
+    check(
+        &["s_bitset0_b32 s2, s0"],
+        &[
+            (r(4, 0xffff_ffff), &[(S2, 0xffff_ffef)][..]),
+            (r(36, 0xff), &[(S2, 0xef)][..]),
+        ],
+    );
+    check(
+        &["s_bitset1_b32 s2, s0"],
+        &[(r(31, 1), &[(S2, 0x8000_0001)][..])],
+    );
+}
+
+#[test]
+fn hardware_register_writes() {
+    // the f32 round / denormal bits of MODE are not modelled: refused. Other fields and
+    // FLAT_SCRATCH (hidden state) are not ALU state.
+    let ok = |asm: &str| {
+        let fun = func(&[asm]);
+        module_of(&fun).unwrap();
+    };
+    ok("s_setreg_imm32_b32 hwreg(HW_REG_MODE, 2, 2), 3");
+    ok("s_setreg_imm32_b32 hwreg(HW_REG_FLAT_SCR_LO), 0");
+    let fun = func(&["s_setreg_imm32_b32 hwreg(HW_REG_MODE, 0, 2), 3"]);
+    let s = structure(&fun).unwrap();
+    assert!(matches!(
+        translate(&fun, &s),
+        Err(SpirvError::Unsupported(Unsupported { chunk: 6, .. }))
+    ));
+}
+
+#[test]
+fn mask_ops_in_wave32_and_wave64() {
+    let ab = |a: u32, b: u32| -> Io { Box::leak(Box::new([(V0, a), (V1, b)])) };
+    let f1 = f(1.0);
+    let f2 = f(2.0);
+    // v_cmp then s_and_saveexec: s2 gets the old EXEC, EXEC the compare
+    check(
+        &[
+            "v_cmp_lt_f32 vcc_lo, v0, v1",
+            "s_and_saveexec_b32 s2, vcc_lo",
+        ],
+        &[
+            (ab(f1, f2), &[(S2, 1), (EXEC, 1), (SCC, 1)][..]),
+            (ab(f2, f1), &[(S2, 1), (EXEC, 0), (SCC, 0)][..]),
+        ],
+    );
+    // a wave64 mask is two dwords holding the lane's bit twice
+    check(
+        &[
+            "[w64] v_cmp_lt_f32 vcc, v0, v1",
+            "[w64] s_and_saveexec_b64 s[2:3], vcc",
+        ],
+        &[
+            (
+                ab(f1, f2),
+                &[
+                    (VCC, 1),
+                    (Reg::VccHi, 1),
+                    (S2, 1),
+                    (S3, 1),
+                    (EXEC, 1),
+                    (Reg::ExecHi, 1),
+                ][..],
+            ),
+            (
+                ab(f2, f1),
+                &[
+                    (VCC, 0),
+                    (Reg::VccHi, 0),
+                    (EXEC, 0),
+                    (Reg::ExecHi, 0),
+                    (SCC, 0),
+                ][..],
+            ),
+        ],
+    );
+    let cmp = "[w64] v_cmp_lt_f32 vcc, v0, v1";
+    check(
+        &[cmp, "[w64] s_and_b64 s[2:3], exec, vcc"],
+        &[
+            (ab(f1, f2), &[(S2, 1), (S3, 1), (SCC, 1)][..]),
+            (ab(f2, f1), &[(S2, 0), (S3, 0), (SCC, 0)][..]),
+        ],
+    );
+    check(
+        &[cmp, "[w64] s_andn2_b64 s[2:3], exec, vcc"],
+        &[
+            (ab(f1, f2), &[(S2, 0), (SCC, 0)][..]),
+            (ab(f2, f1), &[(S2, 1), (SCC, 1)][..]),
+        ],
+    );
+    check(
+        &[cmp, "[w64] s_not_b64 s[2:3], vcc"],
+        &[(ab(f1, f2), &[(S2, 0)][..]), (ab(f2, f1), &[(S2, 1)][..])],
+    );
+    check(
+        &[cmp, "[w64] s_mov_b64 s[2:3], vcc"],
+        &[(ab(f1, f2), &[(S2, 1), (S3, 1)][..])],
+    );
+    check(
+        &[cmp, "[w64] v_cndmask_b32 v3, v0, v1, vcc"],
+        &[(ab(f1, f2), &[(V3, f2)][..]), (ab(f2, f1), &[(V3, f2)][..])],
+    );
+    check(
+        &[
+            cmp,
+            "[w64] s_cmp_eq_u32 s6, s7",
+            "[w64] s_cselect_b64 s[2:3], vcc, exec",
+        ],
+        &[(
+            &[(V0, f1), (V1, f2), (S6, 1), (S7, 1)],
+            &[(S2, 1), (S3, 1)][..],
+        )],
+    );
+    check(
+        &["[w64] v_add_co_u32 v3, s[2:3], v0, v1"],
+        &[
+            (ab(m(), 1), &[(V3, 0), (S2, 1), (S3, 1)][..]),
+            (ab(1, 1), &[(V3, 2), (S2, 0)][..]),
+        ],
+    );
+    check(
+        &[cmp, "[w64] v_add_co_ci_u32 v3, vcc, v0, v1, vcc"],
+        &[(ab(f1, f2), &[(V3, f1.wrapping_add(f2).wrapping_add(1))][..])],
+    );
+    check(
+        &["[w64] v_cmpx_lt_f32 v0, v1"],
+        &[
+            (ab(f1, f2), &[(EXEC, 1), (Reg::ExecHi, 1)][..]),
+            (ab(f2, f1), &[(EXEC, 0)][..]),
+        ],
+    );
+    // 64-bit scalar values that are data, not masks
+    let w = |lo: u32, hi: u32| -> Io { Box::leak(Box::new([(S0, lo), (S1, hi)])) };
+    check(
+        &["[w64] s_brev_b64 s[2:3], s[0:1]"],
+        &[(w(1, 0), &[(S2, 0), (S3, 0x8000_0000)][..])],
+    );
+    check(
+        &["[w64] s_bcnt1_i32_b64 s2, s[0:1]"],
+        &[
+            (w(0xff, 0xf), &[(S2, 12), (SCC, 1)][..]),
+            (w(0, 0), &[(S2, 0), (SCC, 0)][..]),
+        ],
+    );
+    check(
+        &["[w64] s_ff1_i32_b64 s2, s[0:1]"],
+        &[
+            (w(0, 8), &[(S2, 35)][..]),
+            (w(4, 8), &[(S2, 2)][..]),
+            (w(0, 0), &[(S2, m())][..]),
+        ],
+    );
+    check(
+        &["[w64] s_flbit_i32_b64 s2, s[0:1]"],
+        &[
+            (w(1, 0), &[(S2, 63)][..]),
+            (w(0, 1), &[(S2, 31)][..]),
+            (w(0, 0), &[(S2, m())][..]),
+        ],
+    );
+}
+
+fn m() -> u32 {
+    u32::MAX
+}
+
+// ---------------------------------------------------------------------------------------
+// Structured flow
+
+// v_cmp_lt_f32 vcc, v0, v1 ; if (lane) v2 = 1.0 ; v3 = v2 + v2   (wave64)
+const IF: [u32; 7] = [
+    0x7c020300, 0xbe82246a, 0xbf880001, 0x7e0402f2, 0xbefe0402, 0x06060502, 0xbf810000,
+];
+
+// the same with an else that sets v2 = 0
+const IF_ELSE: [u32; 11] = [
+    0x7c020300, 0xbe82246a, 0x8982027e, 0xbf880001, 0x7e0402f2, 0xbe822702, 0xbf880001, 0x7e040280,
+    0x88fe027e, 0x06060502, 0xbf810000,
+];
+
+const NESTED: [u32; 13] = [
+    0x7c020300, 0xbe82246a, 0xbf880007, 0x7e0402f2, 0x7c080302, 0xbe84246a, 0xbf880001, 0x7e0602f4,
+    0x88fe047e, 0x06040503, 0x88fe027e, 0x06060502, 0xbf810000,
+];
+
+// s0 = 0 ; LH: s0 += 1 ; if s0 == s8 goto LCONT ; if s0 == s9 goto LEXIT ; v0 += v1 ;
+// LCONT: if s0 < 8 goto LH ; LEXIT: v1 = v0 ; s_endpgm
+const LOOP: [u32; 11] = [
+    0xbe800380, 0x80008100, 0xbf060800, 0xbf850003, 0xbf060900, 0xbf850003, 0x06000300, 0xbf0a8800,
+    0xbf85fff8, 0x7e020300, 0xbf810000,
+];
+
+// an inner loop exit that leaves two levels
+const BREAK2: [u32; 16] = [
+    0xbf068009, 0xbf85000c, 0xbe800380, 0x80008100, 0xbe810380, 0x80018101, 0xbf060801, 0xbf850006,
+    0x06000300, 0xbf0a8401, 0xbf85fffa, 0x10020301, 0xbf0a8400, 0xbf85fff5, 0x7e040300, 0xbf810000,
+];
+
+fn run_words(w: &[u32], ins: &[(Reg, u32)]) -> Out {
+    let fun = words(w);
+    let s = structure(&fun).unwrap();
+    let p = translate(&fun, &s).unwrap_or_else(|e| panic!("{e}"));
+    validate(&p.words);
+    let out = interp(&fun, &s, ins).unwrap();
+    on_gpu(&runner(&p), &p, &["flow"], ins, &out);
+    out
+}
+
+#[test]
+fn if_patterns_translate_and_run() {
+    let (f1, f2) = (f(1.0), f(2.0));
+    // v0 < v1: v2 = 1.0, v3 = 2.0; else v2 keeps its entry value (0 here)
+    let o = run_words(&IF, &[(V0, f1), (V1, f2), (V2, f(5.0))]);
+    assert_eq!((get(&o, V2), get(&o, V3)), (f1, f2));
+    let o = run_words(&IF, &[(V0, f2), (V1, f1), (V2, f(5.0))]);
+    assert_eq!((get(&o, V2), get(&o, V3)), (f(5.0), f(10.0)));
+    let o = run_words(&IF_ELSE, &[(V0, f1), (V1, f2), (V2, f(5.0))]);
+    assert_eq!((get(&o, V2), get(&o, V3)), (f1, f2));
+    let o = run_words(&IF_ELSE, &[(V0, f2), (V1, f1), (V2, f(5.0))]);
+    assert_eq!((get(&o, V2), get(&o, V3)), (0, 0));
+    let o = run_words(&NESTED, &[(V0, f1), (V1, f2)]);
+    assert_eq!((get(&o, V2), get(&o, V3)), (f1, f2));
+}
+
+#[test]
+fn loops_with_continue_break_and_deep_exit() {
+    // s8 = 3: iteration 3 skips the add, so v0 gains 7 * v1 over the 8 iterations
+    let ins = |s9: u32| [(V0, f(1.0)), (V1, f(2.0)), (Reg::S(8), 3), (Reg::S(9), s9)];
+    let o = run_words(&LOOP, &ins(100));
+    assert_eq!(get(&o, V1), f(1.0 + 7.0 * 2.0));
+    // s9 = 5: leaves at iteration 5, after the adds of iterations 1, 2 and 4
+    let o = run_words(&LOOP, &ins(5));
+    assert_eq!(get(&o, V1), f(1.0 + 3.0 * 2.0));
+    // the two-level exit translates and validates
+    let fun = words(&BREAK2);
+    module_of(&fun).unwrap();
+}
+
+#[test]
+fn non_alu_instructions_are_unsupported_by_chunk() {
+    let fun = func(&["s_load_dwordx4 s[0:3], s[4:5], 0x0"]);
+    let s = structure(&fun).unwrap();
+    match translate(&fun, &s) {
+        Err(SpirvError::Unsupported(u)) => {
+            assert_eq!((u.chunk, u.op.as_str()), (9, "s_load_dwordx4"))
+        }
+        r => panic!("{:?}", r.map(|p| p.words.len())),
+    }
+}
+
+#[test]
+fn module_layout_is_declared() {
+    let fun = func(&["v_add_f32 v3, v0, v1"]);
+    let s = structure(&fun).unwrap();
+    let p = translate(&fun, &s).unwrap();
+    assert_eq!(p.words[0], 0x0723_0203);
+    assert_eq!(p.words[1], 0x0001_0500);
+    assert!(p.inputs.contains(&V0) && p.inputs.contains(&V1) && p.inputs.contains(&EXEC));
+    assert!(p.outputs.contains(&(V3, false)));
+}
+
+#[test]
+fn f16_rounding_helpers_agree_with_hardware_values() {
+    use super::alu::{f16_to_f32, f32_to_f16_rte};
+    for h in 0..=0xffffu32 {
+        let x = f16_to_f32(h);
+        if f32::from_bits(x).is_nan() {
+            assert!(f32::from_bits(f16_to_f32(f32_to_f16_rte(x))).is_nan());
+        } else {
+            assert_eq!(f32_to_f16_rte(x), h, "{h:#x}");
+        }
+    }
+    // ties go to even
+    assert_eq!(f32_to_f16_rte(f(1.0 + 1.0 / 2048.0)), 0x3c00);
+    assert_eq!(f32_to_f16_rte(f(1.0 + 3.0 / 2048.0)), 0x3c02);
+}

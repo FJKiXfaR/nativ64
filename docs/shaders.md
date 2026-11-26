@@ -515,11 +515,70 @@ it says otherwise.
    removal, discard → demote, Ramsey tree, multi-level break lowering plan. Tests: if, if/else,
    nested ifs, loop with break and continue, a 2-level break, an irreducible graph (error), a
    cross-lane use (error); corpus count of programs that structure.
-6. **SPIR-V builder + ALU** (`spirv/`): module builder, types/constants, registers as
+6. **SPIR-V builder + ALU** (done; `spirv/`): module builder, types/constants, registers as
    variables, structured flow from chunk 5, scalar and VOP1/2/3/C ALU for f32/i32/u32 and the
    exact-semantics list, `v_cvt_pkrtz`, `v_fma_mix*` (2179 + 135 uses in the corpus: the only
    VOP3P seen). Tests: `spirv-val` on each test program; opcode vectors through a small CPU
    evaluator of our IR where a GPU is absent.
+   Scope decisions (Opus, before chunk 6): I/O and resources come later, so chunk 6 emits a
+   **probe entry**: `GLCompute`, `LocalSize 1 1 1`, one invocation = one lane; every entry
+   register is a `Private` `u32` variable initialised from a `StorageBuffer` input array (one
+   dword per live-in, index in `EntryRegs` order), and every register still live at
+   `s_endpgm` is written to an output array, so tests run vectors on a GPU when one exists
+   (lavapipe in CI) and on the CPU evaluator otherwise, with the same bytes. EXEC and masks
+   are a `bool` per lane (the lane is always active in the probe); SCC/VCC a `bool`/`u32`
+   per the mask typing of chunk 5. Memory, export, interpolation, `s_sendmsg` and wave
+   instructions are not emitted: the translator stops on the first one with
+   `Unsupported { chunk: 7|8|9, op }`. `nativ64-shader --spirv --stats` reports, over the
+   structured programs, those that translate and validate, and the others by first
+   unsupported op; `--spirv --alu-stats` counts programs whose every **ALU** instruction is
+   supported (non-ALU ops ignored): the chunk's acceptance is ALU coverage, not full
+   translation. `--spirv <blob> -o x.spv` writes a probe module.
+   **As built** (`spirv/`: `builder.rs` module builder over the `spirv` crate, `alu.rs` the
+   semantics, `emit.rs` the translation, `gpu.rs` the optional device runner of the tests).
+   * One table, two backends. `alu::exec` is the per-opcode table, written once over a
+     `Backend` of ~20 primitives on 32-bit bits (`ibin`, `fma`, `fcmp`, `select`, `pack_half`...);
+     `Cpu` (the evaluator the unit tests run on) and the SPIR-V `Gen` both implement it, and
+     `Dry` asks whether an opcode is supported (`--alu-stats`). Everything else (abs, neg,
+     clamp, omod, opsel, SDWA selects, guards `v = active ? new : old`) is in the table.
+   * Probe layout (`Probe`): bindings 0 / 1 of set 0, `inputs` = one dword per entry register
+     sorted by `Reg` (EXEC's slot unused, EXEC starts true), `outputs` = one dword per
+     register variable `(Reg, is_mask)`, written at each `s_endpgm`; a mask is 0 or 1. A wave64
+     mask pair holds the lane's bit in both dwords (a pair is one bit, as the branch tests
+     read it); the lane is console lane 0, so a scalar read as a mask is its bit 0.
+   * Flow: `Block` and `Loop` are `OpLoopMerge` with a continue block that only goes back;
+     a multi-level `Br` stores a `target` code (block * 2 + kind + 1) in a function variable,
+     breaks, and the `forwards` re-tests after each merge (reset to 0 where it resolves).
+     Phi dsts need no copies: they share the register variable with their inputs; only a
+     phi input that is a folded constant is stored, at the end of its predecessor, after the
+     branch condition is read. Demotes are ignored (the probe only honours EXEC).
+   * ALU covered: SOP1/2/C/K (32-bit, `_b64` moves, shifts, mask ops, `saveexec`, SCC rules,
+     `s_setreg` of anything but the f32 round / denormal bits of MODE, which is `Unsupported`),
+     VOP1/2/3/C for f32 / i32 / u32 (+ i64/u64 compares and shifts, 16-bit shifts / compares /
+     add), SDWA (select, sext, abs, neg, `dst_sel`, `dst_unused`), `v_cvt_pkrtz_f16_f32`
+     (integer round-toward-zero code), `v_cvt_f16_f32` / `v_cvt_f32_f16` (`PackHalf2x16`),
+     `v_pack_b32_f16`, `v_fma_mix*`, `v_cube*`, `v_cmp_class_f32`, `v_perm_b32`, `v_bfe/bfi`,
+     `v_alignbit/byte`, carries, 24-bit multiplies. f16 arithmetic, `v_pk_*`, f64 and
+     `v_swap_b32` are `Unsupported { chunk: 6 }` (plan item 11).
+   * Tests (23 in `spirv/tests.rs`): `fixtures.txt` holds the `llvm-mc` hex of every
+     instruction used (`[w64] ` prefix for wavefrontsize64); each case gives vectors, runs
+     them on the evaluator, translates and validates with `spirv-val --target-env vulkan1.2`
+     (skipped when absent). `NATIV64_SPIRV_RUN=1 NATIV64_SPIRV_DEVICE=llvmpipe cargo test -p
+     nativ64-gpu spirv -- --test-threads 1` also runs every vector (and the integer sweeps)
+     on the device and compares register by register: all 23 agree on llvmpipe.
+   * Corpus (8610 programs with IR, 2862 structure): `--spirv --alu-stats`: **8524** programs
+     have every ALU instruction supported (2810 of the 2862 structured ones; cs 2633/2717, ps
+     3292/3294, vs 1030/1030, mesh 1569/1569); 2176 of 15.3 M ALU instructions are not (f16
+     and `v_pk_*`: 38 programs at most per opcode, `v_swap_b32` 10, f64 5).
+     `--spirv --stats`: 5 programs translate and validate (all cs); the other structured
+     ones stop on their first non-ALU instruction: `s_load_dwordx4/x8/x16/dword` (chunk 9;
+     1973 programs), `s_swappc_b64` (the VS fetch call, chunk 8; 324), `v_interp_*` (261),
+     `exp` (295), `ds_write*` (4).
+   * Two IR gaps found: `s_bitset0/1_b32` did not read their destination (fixed in `ir.rs`:
+     it is now an old-value read like `s_cmov`), and `s_andn1/andn2_wrexec_b32/b64` (52 k uses)
+     write EXEC but the IR lists only their SGPR destination: they are `Unsupported` chunk 7
+     until `ir.rs` models the EXEC write (`exec = sdst = src & ~exec`, `andn1`: `~src & exec`,
+     per the ISA text, unverified).
 7. **Wave ops and speculation** (`structure.rs`, `spirv/`): the decisions after chunk 5 above
    (speculated scalar regions, scalar bits as masks, far jumps in one pass), then the cross-lane
    instructions by corpus count: `v_readfirstlane`, `v_mbcnt`, `v_readlane/writelane`, DPP,
@@ -546,6 +605,19 @@ it says otherwise.
 
 ## Open questions
 
+- Unverified ALU semantics (no hardware data, the table follows the ISA text / LLVM): sign of
+  the zero of `v_mul_legacy_f32` and `v_mad_legacy_f32` (the product's sign here), `v_med3_f32`
+  with a NaN (the minimum of the others), `v_cube*` (LLVM's description), `v_frexp_*` of
+  denormals (treated like zero), `v_cvt_pk_u8_f32` (truncates, saturates to 255), `v_perm_b32`
+  selectors 8..11 (sign bits 15, 31, 47, 63), `v_bfe_i32` with offset + width past 32 (the
+  arithmetic shift fills the field), 16-bit VOP2 ops zeroing the high half of the destination.
+- f32 denormals and rounding: the emitted code uses the host's (SPIR-V has no per-instruction
+  mode; `DenormPreserve` / `RoundingModeRTE` need `SPV_KHR_float_controls`, core in 1.4).
+  A program that writes the f32 bits of MODE is refused; the default MODE of a stage is not
+  decoded yet. `PackHalf2x16` rounds as the host does (llvmpipe: to nearest even);
+  `v_mad_f32` / `v_mac_f32` are `OpFMul` + `OpFAdd` without `NoContraction`, so a driver may
+  fuse them.
+- `s_wqm` is a move in the probe; in a pixel shader it is a quad-wise OR (chunk 8).
 - Wave32 bit (record +0x14 bit 5) and the VS system VGPR layout are VIctory's readings, not
   confirmed by the corpus (all wave64, VS reads only v0).
 - Root-layout and used-resource tables have up to a few hundred entries (the chunk 1 cap of 64

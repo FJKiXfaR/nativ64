@@ -1,0 +1,257 @@
+00030606	v_add_f32 v3, v0, v1
+00030608	v_sub_f32 v3, v0, v1
+0003060a	v_subrev_f32 v3, v0, v1
+00030610	v_mul_f32 v3, v0, v1
+0003060e	v_mul_legacy_f32 v3, v0, v1
+0003061e	v_min_f32 v3, v0, v1
+00030620	v_max_f32 v3, v0, v1
+03004bd500030a04	v_fma_f32 v3, v0, v1, v2
+030041d500030a04	v_mad_f32 v3, v0, v1, v2
+030040d500030a04	v_mad_legacy_f32 v3, v0, v1, v2
+00030656	v_fmac_f32 v3, v0, v1
+0003063e	v_mac_f32 v3, v0, v1
+0003064200004040	v_madak_f32 v3, v0, v1, 0x40400000
+0003064000004040	v_madmk_f32 v3, v0, 0x40400000, v1
+0003065a00004040	v_fmaak_f32 v3, v0, v1, 0x40400000
+0003065800004040	v_fmamk_f32 v3, v0, 0x40400000, v1
+030057d500030a04	v_med3_f32 v3, v0, v1, v2
+030051d500030a04	v_min3_f32 v3, v0, v1, v2
+030054d500030a04	v_max3_f32 v3, v0, v1, v2
+038103d500030222	v_add_f32_e64 v3, -|v0|, v1 clamp
+030103d500030242	v_add_f32_e64 v3, |v0|, -v1
+030008d500030212	v_mul_f32_e64 v3, v0, v1 mul:4
+030008d50003021a	v_mul_f32_e64 v3, v0, v1 div:2
+0049067e	v_floor_f32 v3, v0
+0045067e	v_ceil_f32 v3, v0
+0043067e	v_trunc_f32 v3, v0
+0047067e	v_rndne_f32 v3, v0
+0041067e	v_fract_f32 v3, v0
+0055067e	v_rcp_f32 v3, v0
+005d067e	v_rsq_f32 v3, v0
+0067067e	v_sqrt_f32 v3, v0
+004b067e	v_exp_f32 v3, v0
+004f067e	v_log_f32 v3, v0
+006b067e	v_sin_f32 v3, v0
+006d067e	v_cos_f32 v3, v0
+000d067e	v_cvt_f32_u32 v3, v0
+000b067e	v_cvt_f32_i32 v3, v0
+000f067e	v_cvt_u32_f32 v3, v0
+0011067e	v_cvt_i32_f32 v3, v0
+001b067e	v_cvt_flr_i32_f32 v3, v0
+0019067e	v_cvt_rpi_i32_f32 v3, v0
+0023067e	v_cvt_f32_ubyte0 v3, v0
+0025067e	v_cvt_f32_ubyte1 v3, v0
+0027067e	v_cvt_f32_ubyte2 v3, v0
+0029067e	v_cvt_f32_ubyte3 v3, v0
+007f067e	v_frexp_exp_i32_f32 v3, v0
+0081067e	v_frexp_mant_f32 v3, v0
+030062d700030202	v_ldexp_f32 v3, v0, v1
+0003065e	v_cvt_pkrtz_f16_f32 v3, v0, v1
+0015067e	v_cvt_f16_f32 v3, v0
+0017067e	v_cvt_f32_f16 v3, v0
+030011d700030202	v_pack_b32_f16 v3, v0, v1
+031811d700030202	v_pack_b32_f16 v3, v0, v1 op_sel:[1,1]
+030020cc00030a04	v_fma_mix_f32 v3, v0, v1, v2
+034020cc00030a0c	v_fma_mix_f32 v3, v0, v1, v2 op_sel_hi:[1,0,1]
+030820cc00030a0c	v_fma_mix_f32 v3, v0, v1, v2 op_sel:[1,0,0] op_sel_hi:[1,0,0]
+030021cc00030a04	v_fma_mixlo_f16 v3, v0, v1, v2
+030022cc00030a04	v_fma_mixhi_f16 v3, v0, v1, v2
+030044d500030a04	v_cubeid_f32 v3, v0, v1, v2
+030045d500030a04	v_cubesc_f32 v3, v0, v1, v2
+030046d500030a04	v_cubetc_f32 v3, v0, v1, v2
+030047d500030a04	v_cubema_f32 v3, v0, v1, v2
+0003064a	v_add_nc_u32 v3, v0, v1
+0003064c	v_sub_nc_u32 v3, v0, v1
+0003064e	v_subrev_nc_u32 v3, v0, v1
+00030636	v_and_b32 v3, v0, v1
+00030638	v_or_b32 v3, v0, v1
+0003063a	v_xor_b32 v3, v0, v1
+0003063c	v_xnor_b32 v3, v0, v1
+006f067e	v_not_b32 v3, v0
+0071067e	v_bfrev_b32 v3, v0
+00030634	v_lshlrev_b32 v3, v0, v1
+0003062c	v_lshrrev_b32 v3, v0, v1
+00030630	v_ashrrev_i32 v3, v0, v1
+00030622	v_min_i32 v3, v0, v1
+00030624	v_max_i32 v3, v0, v1
+00030626	v_min_u32 v3, v0, v1
+00030628	v_max_u32 v3, v0, v1
+030069d500030202	v_mul_lo_u32 v3, v0, v1
+03006ad500030202	v_mul_hi_u32 v3, v0, v1
+03006cd500030202	v_mul_hi_i32 v3, v0, v1
+00030616	v_mul_u32_u24 v3, v0, v1
+00030612	v_mul_i32_i24 v3, v0, v1
+00030618	v_mul_hi_u32_u24 v3, v0, v1
+00030614	v_mul_hi_i32_i24 v3, v0, v1
+030043d500030a04	v_mad_u32_u24 v3, v0, v1, v2
+030042d500030a04	v_mad_i32_i24 v3, v0, v1, v2
+030048d500030a04	v_bfe_u32 v3, v0, v1, v2
+030049d500030a04	v_bfe_i32 v3, v0, v1, v2
+03004ad500030a04	v_bfi_b32 v3, v0, v1, v2
+03004ed500030a04	v_alignbit_b32 v3, v0, v1, v2
+03004fd500030a04	v_alignbyte_b32 v3, v0, v1, v2
+030044d700030a04	v_perm_b32 v3, v0, v1, v2
+030058d500030a04	v_med3_i32 v3, v0, v1, v2
+030059d500030a04	v_med3_u32 v3, v0, v1, v2
+030053d500030a04	v_min3_u32 v3, v0, v1, v2
+030055d500030a04	v_max3_i32 v3, v0, v1, v2
+03006dd700030a04	v_add3_u32 v3, v0, v1, v2
+030046d700030a04	v_lshl_add_u32 v3, v0, v1, v2
+030047d700030a04	v_add_lshl_u32 v3, v0, v1, v2
+03006fd700030a04	v_lshl_or_b32 v3, v0, v1, v2
+030071d700030a04	v_and_or_b32 v3, v0, v1, v2
+030072d700030a04	v_or3_b32 v3, v0, v1, v2
+030045d700030a04	v_xad_u32 v3, v0, v1, v2
+030064d700030202	v_bcnt_u32_b32 v3, v0, v1
+030063d700030202	v_bfm_b32 v3, v0, v1
+0073067e	v_ffbh_u32 v3, v0
+0075067e	v_ffbl_b32 v3, v0
+0077067e	v_ffbh_i32 v3, v0
+0300ffd600030202	v_lshlrev_b64 v[3:4], v0, v[1:2]
+030000d700030202	v_lshrrev_b64 v[3:4], v0, v[1:2]
+030001d700030202	v_ashrrev_i64 v[3:4], v0, v[1:2]
+00030602	v_cndmask_b32 v3, v0, v1, vcc_lo
+030001d500030a00	v_cndmask_b32_e64 v3, v0, v1, s2
+03020fd700030202	v_add_co_u32 v3, s2, v0, v1
+030210d700030202	v_sub_co_u32 v3, s2, v0, v1
+030219d700030202	v_subrev_co_u32 v3, s2, v0, v1
+00030650	v_add_co_ci_u32 v3, vcc_lo, v0, v1, vcc_lo
+00030652	v_sub_co_ci_u32 v3, vcc_lo, v0, v1, vcc_lo
+00030654	v_subrev_co_ci_u32 v3, vcc_lo, v0, v1, vcc_lo
+0003007c	v_cmp_f_f32 vcc_lo, v0, v1
+0003027c	v_cmp_lt_f32 vcc_lo, v0, v1
+0003047c	v_cmp_eq_f32 vcc_lo, v0, v1
+0003067c	v_cmp_le_f32 vcc_lo, v0, v1
+0003087c	v_cmp_gt_f32 vcc_lo, v0, v1
+00030a7c	v_cmp_lg_f32 vcc_lo, v0, v1
+00030c7c	v_cmp_ge_f32 vcc_lo, v0, v1
+00030e7c	v_cmp_o_f32 vcc_lo, v0, v1
+0003107c	v_cmp_u_f32 vcc_lo, v0, v1
+0003127c	v_cmp_nge_f32 vcc_lo, v0, v1
+0003147c	v_cmp_nlg_f32 vcc_lo, v0, v1
+0003167c	v_cmp_ngt_f32 vcc_lo, v0, v1
+0003187c	v_cmp_nle_f32 vcc_lo, v0, v1
+00031a7c	v_cmp_neq_f32 vcc_lo, v0, v1
+00031c7c	v_cmp_nlt_f32 vcc_lo, v0, v1
+00031e7c	v_cmp_tru_f32 vcc_lo, v0, v1
+020201d400030222	v_cmp_lt_f32_e64 s2, -v0, |v1|
+0003047d	v_cmp_eq_i32 vcc_lo, v0, v1
+00030a7d	v_cmp_ne_i32 vcc_lo, v0, v1
+0003027d	v_cmp_lt_i32 vcc_lo, v0, v1
+0003067d	v_cmp_le_i32 vcc_lo, v0, v1
+0003087d	v_cmp_gt_i32 vcc_lo, v0, v1
+00030c7d	v_cmp_ge_i32 vcc_lo, v0, v1
+0003847d	v_cmp_eq_u32 vcc_lo, v0, v1
+00038a7d	v_cmp_ne_u32 vcc_lo, v0, v1
+0003827d	v_cmp_lt_u32 vcc_lo, v0, v1
+0003867d	v_cmp_le_u32 vcc_lo, v0, v1
+0003887d	v_cmp_gt_u32 vcc_lo, v0, v1
+00038c7d	v_cmp_ge_u32 vcc_lo, v0, v1
+0005c27d	v_cmp_lt_u64 vcc_lo, v[0:1], v[2:3]
+0005427d	v_cmp_lt_i64 vcc_lo, v[0:1], v[2:3]
+0005c47d	v_cmp_eq_u64 vcc_lo, v[0:1], v[2:3]
+0003107d	v_cmp_class_f32 vcc_lo, v0, v1
+0003227c	v_cmpx_lt_f32 v0, v1
+00010280	s_add_u32 s2, s0, s1
+00018280	s_sub_u32 s2, s0, s1
+00010281	s_add_i32 s2, s0, s1
+00018281	s_sub_i32 s2, s0, s1
+00010282	s_addc_u32 s2, s0, s1
+00018282	s_subb_u32 s2, s0, s1
+00010283	s_min_i32 s2, s0, s1
+00018283	s_min_u32 s2, s0, s1
+00010284	s_max_i32 s2, s0, s1
+00018284	s_max_u32 s2, s0, s1
+00010293	s_mul_i32 s2, s0, s1
+0001829a	s_mul_hi_u32 s2, s0, s1
+0001029b	s_mul_hi_i32 s2, s0, s1
+0001028f	s_lshl_b32 s2, s0, s1
+00010290	s_lshr_b32 s2, s0, s1
+00010291	s_ashr_i32 s2, s0, s1
+0004828f	s_lshl_b64 s[2:3], s[0:1], s4
+00048290	s_lshr_b64 s[2:3], s[0:1], s4
+00048291	s_ashr_i64 s[2:3], s[0:1], s4
+00010292	s_bfm_b32 s2, s0, s1
+00018293	s_bfe_u32 s2, s0, s1
+00010294	s_bfe_i32 s2, s0, s1
+00010296	s_absdiff_i32 s2, s0, s1
+00018297	s_lshl2_add_u32 s2, s0, s1
+00010299	s_pack_ll_b32_b16 s2, s0, s1
+0001029a	s_pack_hh_b32_b16 s2, s0, s1
+00010287	s_and_b32 s2, s0, s1
+00010288	s_or_b32 s2, s0, s1
+00010289	s_xor_b32 s2, s0, s1
+0001028a	s_andn2_b32 s2, s0, s1
+0001028b	s_orn2_b32 s2, s0, s1
+0001028c	s_nand_b32 s2, s0, s1
+0001028d	s_nor_b32 s2, s0, s1
+0001028e	s_xnor_b32 s2, s0, s1
+000782be	s_not_b32 s2, s0
+000382be	s_mov_b32 s2, s0
+000b82be	s_brev_b32 s2, s0
+000d82be	s_bcnt0_i32_b32 s2, s0
+000f82be	s_bcnt1_i32_b32 s2, s0
+001382be	s_ff1_i32_b32 s2, s0
+001182be	s_ff0_i32_b32 s2, s0
+001582be	s_flbit_i32_b32 s2, s0
+001782be	s_flbit_i32 s2, s0
+001982be	s_sext_i32_i8 s2, s0
+001a82be	s_sext_i32_i16 s2, s0
+003482be	s_abs_i32 s2, s0
+000106bf	s_cmp_eq_u32 s0, s1
+000107bf	s_cmp_lg_u32 s0, s1
+000102bf	s_cmp_gt_i32 s0, s1
+00010abf	s_cmp_lt_u32 s0, s1
+000103bf	s_cmp_ge_i32 s0, s1
+00010bbf	s_cmp_le_u32 s0, s1
+00010dbf	s_bitcmp1_b32 s0, s1
+000212bf	s_cmp_eq_u64 s[0:1], s[2:3]
+00010285	s_cselect_b32 s2, s0, s1
+000582be	s_cmov_b32 s2, s0
+feff02b0	s_movk_i32 s2, 0xfffe
+ff7f82b7	s_addk_i32 s2, 0x7fff
+fdff02b8	s_mulk_i32 s2, 0xfffd
+ffff80b3	s_cmpk_lt_i32 s0, 0xffff
+ffff80b4	s_cmpk_eq_u32 s0, 0xffff
+003c82be	s_and_saveexec_b32 s2, s0
+003d82be	s_or_saveexec_b32 s2, s0
+003f82be	s_andn2_saveexec_b32 s2, s0
+810880ba03000000	s_setreg_imm32_b32 hwreg(HW_REG_MODE, 2, 2), 3
+010880ba03000000	s_setreg_imm32_b32 hwreg(HW_REG_MODE, 0, 2), 3
+14f880ba00000000	s_setreg_imm32_b32 hwreg(HW_REG_FLAT_SCR_LO), 0
+0209827d	v_cmp_lt_u32 vcc_lo, v2, v4
+060706bf	s_cmp_eq_u32 s6, s7
+6a3c82be	s_and_saveexec_b32 s2, vcc_lo
+020008f4000000fa	s_load_dwordx4 s[0:3], s[4:5], 0x0
+02000380	s_add_u32 s3, s2, s0
+001b82be	s_bitset0_b32 s2, s0
+001d82be	s_bitset1_b32 s2, s0
+f902064a00110502	v_add_nc_u32_sdwa v3, v0, v1 dst_sel:BYTE_1 dst_unused:UNUSED_PRESERVE src0_sel:WORD_1 src1_sel:BYTE_2
+f90c067e00060100	v_cvt_f32_u32_sdwa v3, v0 dst_sel:DWORD dst_unused:UNUSED_PAD src0_sel:BYTE_1
+f902064a00060806	v_add_nc_u32_sdwa v3, sext(v0), v1 dst_sel:DWORD dst_unused:UNUSED_PAD src0_sel:BYTE_0 src1_sel:DWORD
+f902064a000c0606	v_add_nc_u32_sdwa v3, v0, v1 dst_sel:WORD_0 dst_unused:UNUSED_SEXT src0_sel:DWORD src1_sel:DWORD
+f902064a00040606	v_add_nc_u32_sdwa v3, v0, v1 dst_sel:WORD_0 dst_unused:UNUSED_PAD src0_sel:DWORD src1_sel:DWORD
+f902847d00000001	v_cmp_eq_u32_sdwa vcc_lo, v0, v1 src0_sel:BYTE_0 src1_sel:BYTE_1
+f902060600062616	v_add_f32_sdwa v3, |v0|, -v1 dst_sel:DWORD dst_unused:UNUSED_PAD src0_sel:DWORD src1_sel:DWORD
+030007d700030202	v_lshrrev_b16 v3, v0, v1
+030014d700030202	v_lshlrev_b16 v3, v0, v1
+030008d700030202	v_ashrrev_i16 v3, v0, v1
+0003127d	v_cmp_lt_i16 vcc_lo, v0, v1
+0003547d	v_cmp_eq_u16 vcc_lo, v0, v1
+0003027c	[w64] v_cmp_lt_f32 vcc, v0, v1
+6a2482be	[w64] s_and_saveexec_b64 s[2:3], vcc
+7e6a8287	[w64] s_and_b64 s[2:3], exec, vcc
+7e6a828a	[w64] s_andn2_b64 s[2:3], exec, vcc
+6a0882be	[w64] s_not_b64 s[2:3], vcc
+6a7e8285	[w64] s_cselect_b64 s[2:3], vcc, exec
+6a0482be	[w64] s_mov_b64 s[2:3], vcc
+00030602	[w64] v_cndmask_b32 v3, v0, v1, vcc
+030001d500030a00	[w64] v_cndmask_b32_e64 v3, v0, v1, s[2:3]
+03020fd700030202	[w64] v_add_co_u32 v3, s[2:3], v0, v1
+00030650	[w64] v_add_co_ci_u32 v3, vcc, v0, v1, vcc
+000c82be	[w64] s_brev_b64 s[2:3], s[0:1]
+001082be	[w64] s_bcnt1_i32_b64 s2, s[0:1]
+001482be	[w64] s_ff1_i32_b64 s2, s[0:1]
+001682be	[w64] s_flbit_i32_b64 s2, s[0:1]
+0003227c	[w64] v_cmpx_lt_f32 v0, v1
+060706bf	[w64] s_cmp_eq_u32 s6, s7
