@@ -14,12 +14,12 @@
 
 use super::format::{self, FormatInfo};
 use super::textures::TexState;
-use super::{log_once, vk_try, Gpu, Result, VkError};
+use super::{Gpu, Result, VkError, log_once, vk_try};
 use crate::d3d12::command::{Command, CopyLocation, Rect};
 use crate::d3d12::descriptor::{depth_stencil_view, render_target_view};
-use crate::d3d12::resource::{info_of, ResourceDesc};
+use crate::d3d12::resource::{ResourceDesc, info_of};
 use crate::texture::Layout;
-use ash::{vk, Device};
+use ash::{Device, vk};
 use std::collections::{HashMap, HashSet};
 use std::mem::Discriminant;
 
@@ -99,6 +99,17 @@ impl TitleImage {
 pub(super) struct Staging {
     buffer: vk::Buffer,
     memory: vk::DeviceMemory,
+}
+
+/// Frees staging buffers whose submission has completed (or failed before using them).
+fn free_staging(gpu: &Gpu, staging: Vec<Staging>) {
+    for s in staging {
+        // SAFETY: see above.
+        unsafe {
+            gpu.device.destroy_buffer(s.buffer, None);
+            gpu.device.free_memory(s.memory, None);
+        }
+    }
 }
 
 /// What a replay has seen so far (for logs and tests).
@@ -287,10 +298,27 @@ impl<'g> VkBackend<'g> {
             .count();
         self.draw.begin(draws);
         self.tex.submission += 1;
-        let r = gpu.submit_once(|d, cb| {
-            if draws > 0 {
-                self.sync_textures(d, cb, &mut staging);
+        if draws > 0 {
+            // The textures are synced in passes of at most `UPLOAD_CAP` staged bytes, each
+            // submitted and waited for, so that the staging of a scene change's textures
+            // does not pile up (pinned host memory) before the draws.
+            self.tex.capped = true;
+            loop {
+                self.tex.staged = 0;
+                self.tex.more = false;
+                let mut pass = Vec::new();
+                let r = gpu.submit_once(|d, cb| self.sync_textures(d, cb, &mut pass));
+                free_staging(gpu, pass);
+                if let Err(e) = &r {
+                    log_once(format!("texture sync failed: {e}"));
+                }
+                if !self.tex.more || r.is_err() {
+                    break;
+                }
             }
+            self.tex.capped = false;
+        }
+        let r = gpu.submit_once(|d, cb| {
             for list in lists {
                 self.stats.lists += 1;
                 self.draw.reset_list();
@@ -314,13 +342,7 @@ impl<'g> VkBackend<'g> {
             log_once(format!("replay submission failed: {e}"));
         }
         self.draw.end();
-        for s in staging {
-            // SAFETY: the submission has completed (or failed before use).
-            unsafe {
-                gpu.device.destroy_buffer(s.buffer, None);
-                gpu.device.free_memory(s.memory, None);
-            }
-        }
+        free_staging(gpu, staging);
     }
 
     /// Image of `res`, made (and moved to `GENERAL`) at first use; None when the resource is

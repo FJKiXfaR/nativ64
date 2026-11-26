@@ -26,13 +26,13 @@
 //! of a placed view is read from words 10 and 11 of its description **[unverified]**.
 
 use super::format::FormatInfo;
-use super::replay::{global_barrier, mip_count, stage_bytes, Staging, TitleImage, VkBackend};
+use super::replay::{Staging, TitleImage, VkBackend, global_barrier, mip_count, stage_bytes};
 use super::sampler::Spec;
-use super::{log_once, Gpu};
-use crate::d3d12::descriptor::{views_from, View};
-use crate::d3d12::resource::{info_of_checked, ResourceDesc};
+use super::{Gpu, log_once};
+use crate::d3d12::descriptor::{View, views_from};
+use crate::d3d12::resource::{ResourceDesc, info_of_checked};
 use crate::texture::detile;
-use ash::{vk, Device};
+use ash::{Device, vk};
 use nativ64::api_ms_win_core_memory as table;
 use std::collections::HashSet;
 
@@ -85,7 +85,18 @@ pub(super) struct TexState {
     /// Submissions that synced, to hash a texture once in each.
     pub(super) submission: u64,
     hole: Option<Hole>,
+    /// While the textures are synced in passes: an upload stops once `staged` reaches the cap
+    /// (`UPLOAD_CAP`, or `cap` when set), leaves the rest for the next pass and sets `more`.
+    pub(super) capped: bool,
+    pub(super) staged: u64,
+    pub(super) more: bool,
+    pub(super) cap: Option<u64>,
 }
+
+/// The most a pass of texture uploads stages before it is submitted and the staging freed: the
+/// staging buffers are host memory the driver pins, and a scene change can upload gigabytes
+/// of textures at once.
+pub(super) const UPLOAD_CAP: u64 = 256 << 20;
 
 impl TexState {
     /// Destroys the hole image; the queue is idle.
@@ -267,11 +278,16 @@ fn upload(
     d: &Device,
     cb: vk::CommandBuffer,
     t: &mut TitleImage,
-    submission: u64,
     staging: &mut Vec<Staging>,
     stats: &mut super::ReplayStats,
+    tex: &mut TexState,
 ) -> bool {
+    let submission = tex.submission;
     if t.gpu_owned || t.seen == submission {
+        return false;
+    }
+    if tex.capped && tex.staged >= tex.cap.unwrap_or(UPLOAD_CAP) {
+        tex.more = true;
         return false;
     }
     t.seen = submission;
@@ -355,6 +371,7 @@ fn upload(
             });
         }
     }
+    tex.staged += bytes.len() as u64;
     let buffer = match stage_bytes(gpu, &bytes, staging) {
         Ok(b) => b,
         Err(err) => {
@@ -390,7 +407,6 @@ impl<'g> VkBackend<'g> {
         if info_of_checked(res as *mut _).is_none() || self.image(d, cb, res).is_none() {
             return false;
         }
-        let submission = self.tex.submission;
         let Some(Some(mut t)) = self.images.remove(&res) else {
             return false;
         };
@@ -399,9 +415,9 @@ impl<'g> VkBackend<'g> {
             d,
             cb,
             &mut t,
-            submission,
             staging,
             &mut self.stats,
+            &mut self.tex,
         );
         self.images.insert(res, Some(t));
         did
@@ -457,11 +473,10 @@ impl<'g> VkBackend<'g> {
         if !self.placed_image(d, cb, key) {
             return false;
         }
-        let submission = self.tex.submission;
         let Some(Some(t)) = self.placed.get_mut(&key) else {
             return false;
         };
-        upload(self.gpu, d, cb, t, submission, staging, &mut self.stats)
+        upload(self.gpu, d, cb, t, staging, &mut self.stats, &mut self.tex)
     }
 
     /// The 1x1 zero RGBA8 view every index that is not a texture holds.
@@ -634,6 +649,10 @@ impl<'g> VkBackend<'g> {
         if uploaded {
             global_barrier(d, cb);
         }
+        if self.tex.more {
+            // the rest is uploaded by the next pass, which also writes the descriptors
+            return;
+        }
         // 3. descriptors
         let total = self.tex.entries.len();
         let from = self.tex.dirty_from.min(total);
@@ -721,7 +740,7 @@ impl<'g> VkBackend<'g> {
 #[cfg(test)]
 mod tests {
     use super::super::draw::tests::{
-        clear, draw, floats, pipeline, pixel, state, title_memory, TRIANGLE,
+        TRIANGLE, clear, draw, floats, pipeline, pixel, state, title_memory,
     };
     use super::super::replay::tests::{resource_at, rtv, texture};
     use super::super::tests::gpu_or_skip;
@@ -731,7 +750,7 @@ mod tests {
         create_placed_shader_resource_view, create_sampler, create_shader_resource_view,
     };
     use crate::shader::spirv::tests::stage;
-    use crate::texture::{tile, Layout};
+    use crate::texture::{Layout, tile};
 
     #[test]
     fn the_hash_sees_every_byte() {
@@ -943,6 +962,35 @@ mod tests {
         b.execute(&[list]);
         assert_eq!(uploads_of(&b, tex), 2);
         assert!(b.read_back(t0).unwrap().bytes.contains(&0xee));
+    }
+
+    #[test]
+    fn textures_are_uploaded_in_passes_when_the_staging_cap_is_reached() {
+        let Some(g) = gpu_or_skip() else { return };
+        let mut b = VkBackend::new(&g);
+        // every pass stages one texture at most
+        b.tex.cap = Some(1);
+        let d = desc(8, 8, 1, 28, 0, 0);
+        let (red, blue) = (vec![255, 0, 0, 255], vec![0, 0, 255, 255]);
+        let a = resource_at(tiled_memory(&d, |_, _, _, _| red.clone()), d);
+        let c = resource_at(tiled_memory(&d, |_, _, _, _| blue.clone()), d);
+        let pipe = sampling_pipeline(SAMPLING());
+        let target = texture(16, 8, 28, TARGET);
+        let handle = rtv(target);
+        let (t1, t2) = (table(), table());
+        srv(a, None, t1 + 0x20);
+        srv(c, None, t2 + 0x20);
+        let mut first = clear(handle, [0.0, 1.0, 0.0, 1.0]);
+        first.extend(textured_draw(pipe, handle, t1));
+        let mut second = clear(handle, [0.0, 1.0, 0.0, 1.0]);
+        second.extend(textured_draw(pipe, handle, t2));
+        b.execute(&[first]);
+        assert_eq!((uploads_of(&b, a), uploads_of(&b, c)), (1, 1));
+        assert!(all_pixels(&b.read_back(target).unwrap(), [255, 0, 0, 255]));
+        b.execute(&[second]);
+        assert_eq!((uploads_of(&b, a), uploads_of(&b, c)), (1, 1));
+        assert!(all_pixels(&b.read_back(target).unwrap(), [0, 0, 255, 255]));
+        assert!(!b.tex.capped && !b.tex.more);
     }
 
     #[test]

@@ -15,19 +15,25 @@
 //! import is kept (`retired`) until the next `sync`, since commands already recorded in the
 //! submission in progress name its buffer.
 //!
-//! shortcuts: a run is imported whole (a huge committed run is one buffer: a driver limit on
-//! the allocation size surfaces as an import error, logged, and the draw is skipped); the run
-//! is shrunk inwards to the import alignment, so a run smaller than it cannot be imported;
+//! shortcuts: a run is imported in windows of `WINDOW` (an access longer than the window gets
+//! its own import, so a driver limit on the allocation size surfaces as an import error,
+//! logged, and the draw is skipped); the run is shrunk inwards to the import alignment, so a
+//! run smaller than it cannot be imported;
 //! a pointer stored in memory is not translated (the stage is skipped instead, see
 //! `Translated::memory_addresses`).
 
-use super::{log_once, Gpu, HostBuffer};
+use super::{Gpu, HostBuffer, log_once};
 use ash::vk;
 use nativ64::api_ms_win_core_memory as table;
 use std::collections::BTreeMap;
 
 /// Device addresses must stay below this (a built V# keeps 48 bits of base).
 const ADDRESS_LIMIT: u64 = 1 << 48;
+
+/// The most a miss imports around the address (more when the access itself is longer): the
+/// driver pins the host pages of an import, and a title can commit a multi-gigabyte run (2.2 GB
+/// in the first title) of which a draw reads a few megabytes.
+const WINDOW: usize = 8 << 20;
 
 /// Where a title address lives on the device.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -114,7 +120,12 @@ impl<'g> GpuMemory<'g> {
             ));
             return None;
         }
-        // An import of this run that is too small (the run grew): replaced by the whole run.
+        // Only a window of the run is imported (see `WINDOW`), aligned to the window and
+        // extended to the end of the access when that crosses the window's end.
+        let window = WINDOW.next_multiple_of(align);
+        let start = start + (at - start) / window * window;
+        let run_end = run_end.min((start + window).max(end.next_multiple_of(align)));
+        // Imports overlapping the window (too small, or the run grew): replaced by it.
         let old: Vec<usize> = self
             .imports
             .range(..run_end)
@@ -234,6 +245,26 @@ mod tests {
         // the next submission lets the old import go
         m.sync();
         assert_eq!(m.retired(), 0);
+        table::release(a).unwrap();
+        m.sync();
+    }
+
+    #[test]
+    fn a_huge_run_is_imported_in_windows() {
+        let Some(g) = gpu_or_skip() else { return };
+        let mut m = GpuMemory::new(&g);
+        let run = 4 * WINDOW;
+        let a = table::alloc(0, run, RESERVE | COMMIT, RW, None).unwrap();
+        let first = m.translate(a as u64 + 0x100, 16).unwrap();
+        assert_eq!(m.imports(), 1);
+        // an address in another window imports that window only
+        let far = m.translate((a + 3 * WINDOW + 8) as u64, 4).unwrap();
+        assert_eq!(m.imports(), 2);
+        assert_ne!(first.buffer, far.buffer);
+        assert_eq!(far.offset, 8);
+        // an access across a window's end gets an import covering it
+        let across = m.translate((a + WINDOW - 8) as u64, 16).unwrap();
+        assert_eq!(across.offset, WINDOW as u64 - 8);
         table::release(a).unwrap();
         m.sync();
     }
