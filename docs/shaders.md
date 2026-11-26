@@ -175,6 +175,23 @@ SSA over 32-bit register dwords, one function per program:
 - **Entry values**: every register live at entry is an `Arg(reg)`; I/O raising and resource
   tracing give them meaning (user SGPRs, system SGPRs, input VGPRs). A live-in that nothing
   explains is an error naming the register.
+- **As built** (`ir.rs`, chunk 3). Registers are `S(n)`, `T(n)` (ttmp), `V(n)`, `VccLo/Hi`,
+  `ExecLo/Hi`, `M0`, `Scc`; wave32 only has the `Lo` halves. An `Inst` keeps its decoded `Instr`
+  plus `dsts` (explicit dwords, then EXEC for `*_saveexec` / `v_cmpx`, then SCC), `srcs` (one
+  `Vec<Src>` per explicit source operand, one `Src` per dword) and `imps` (implicit reads:
+  EXEC for every vector instruction except `v_readlane/writelane`, VCC for `v_div_fmas`, SCC
+  for `s_cselect/addc/subb/cmov`, M0 for `v_interp*` / `s_sendmsg`, and the old value of every
+  written VGPR, which is `undef` when nothing defined it). `s_cbranch_*` are `Term::Branch`
+  with their condition registers as reads. A `Src` is a `Val`, a `Const`, `CodeLo(off)` /
+  `CodeHi` (the program's own address: `s_getpc_b64` + offsets; the code is assumed aligned so
+  the low add never carries, SCC from it folds to 0) or `Undef` (phi input of a path that never
+  defined the register). Folded instructions leave no `Inst`; their SCC folds too. Phis go on
+  the iterated dominance frontier of the registers that are read somewhere, then trivial and
+  dead phis are removed. `Func` carries `idom` and `rpo` for chunk 4. Encodings the decoder
+  does not read, and `s_setpc/swappc/rfe/call`, `s_movrel*`, `v_movrel*`, scalar atomics,
+  MUBUF-to-LDS are typed `IrError`s. `EntryRegs` names the entry SGPR/VGPR ranges (EXEC is
+  always one); `from_record` is a first guess from the root layout. `nativ64-shader --ir`
+  prints the IR.
 - **Analyses on SSA**: constant folding of scalar values (literals, `s_getpc` + offset, loads
   from appended constant data), lane-mask typing, resource tracing, uniform/lane classification.
   Emission does not need phis (below).
@@ -378,7 +395,7 @@ Opus review after each. Module paths are in `crates/nativ64-gpu/src/shader/`.
    modifiers; DPP/SDWA fields decoded), VINTRP, EXP, MUBUF; flow following; `disasm()` in LLVM
    syntax. Tests: per encoding from `llvm-mc` fixtures; the corpus diff (skipping the 24-byte
    marker) when `NATIV64_SHADER_CORPUS` is set.
-3. **IR** (`ir.rs`): blocks, SSA dwords, implicit operands, phis, entry `Arg`s, constant
+3. **IR** (done; `ir.rs`): blocks, SSA dwords, implicit operands, phis, entry `Arg`s, constant
    folding, `s_getpc` data. Tests: small programs, SSA shape asserted textually.
 4. **Structuring** (`structure.rs`): mask typing, per-lane branches, guards and their
    removal, discard → demote, Ramsey tree, multi-level break lowering plan. Tests: if, if/else,
@@ -422,7 +439,9 @@ SGPRs **[VIctory]**), merged stages and NGG (decode their layouts first), mesh, 
 - Root-layout and used-resource tables have up to a few hundred entries (the chunk 1 cap of 64
   refused 2486 vertex/pixel blobs; now 512, bounds-checked against the payload).
 - VOP3 interpolation (`v_interp_*_e64`) decodes; the f16 forms print `high`, not decoded.
-- `s0..s7` of the hardware VS/PS: content unknown; a read stops translation.
+- `s0..s7` of the hardware VS/PS: content unknown; a read stops translation. With entry SGPRs
+  from s8 only, 941 of the 1705 fully decoded programs fail on an `s0..s7` read (compute and
+  mesh programs read them: 1363 build when s0 is allowed); 332 stop at an indirect jump.
 - Kind 0x12 XDAT entry, `PRIV` part (12 bytes), program-record bytes not listed: meaning unknown,
   ignored.
 - Bindless limits and `VK_EXT_shader_demote_to_helper_invocation` on lavapipe and the Intel

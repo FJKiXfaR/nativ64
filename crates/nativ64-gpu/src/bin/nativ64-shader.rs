@@ -1,6 +1,6 @@
 //! Prints the parsed container of shader blobs (the files `NATIV64_DUMP_SHADERS` writes):
-//! `nativ64-shader [--disasm] <blob>...`. With `--disasm` each program's code is followed from
-//! its entry and printed in LLVM syntax. `nativ64-shader --hex <file>` disassembles one
+//! `nativ64-shader [--disasm | --ir] <blob>...`. With `--disasm` each program's code is followed
+//! from its entry and printed in LLVM syntax; with `--ir` it is printed as the SSA IR. `nativ64-shader --hex <file>` disassembles one
 //! instruction per line of hex bytes (for diffing against `llvm-mc`). Exit status 1 if any
 //! blob is refused or any code fails to decode.
 
@@ -10,7 +10,8 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let disasm = args.first().is_some_and(|a| a == "--disasm");
-    if disasm {
+    let ir = args.first().is_some_and(|a| a == "--ir");
+    if disasm || ir {
         args.remove(0);
     }
     if args.first().is_some_and(|a| a == "--stats") {
@@ -23,7 +24,7 @@ fn main() -> ExitCode {
         };
     }
     if args.is_empty() {
-        eprintln!("usage: nativ64-shader [--disasm] <blob.dxbc>... | --hex <file>");
+        eprintln!("usage: nativ64-shader [--disasm | --ir] <blob.dxbc>... | --hex <file>");
         return ExitCode::from(2);
     }
     let mut failed = false;
@@ -44,7 +45,9 @@ fn main() -> ExitCode {
         match shader::parse(&bytes) {
             Ok(p) => {
                 print!("{p}");
-                if disasm {
+                if ir {
+                    failed |= !print_ir(&p);
+                } else if disasm {
                     failed |= !print_code(&p);
                 }
             }
@@ -58,6 +61,25 @@ fn main() -> ExitCode {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+/// Prints the SSA IR of the program's VS or PS record.
+fn print_ir(p: &shader::ParsedShader) -> bool {
+    let Some(rec) = p.record() else {
+        return true;
+    };
+    let code = p.native.code(rec);
+    let regs = shader::ir::EntryRegs::from_record(rec);
+    match shader::ir::build(code, gfx10::ENTRY, rec.wave32(), &regs) {
+        Ok(f) => {
+            print!("{f}");
+            true
+        }
+        Err(e) => {
+            println!("  IR error: {e}");
+            false
+        }
     }
 }
 
