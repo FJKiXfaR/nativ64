@@ -86,6 +86,27 @@ variant is `s_nop ×4; exp mrt0 v2 done vm` in place of `v_cvt_pkrtz…; exp mrt
 Usage 6 = generic, 7 = clip distance **[VIctory]**. Merged stages (ES/GS, LS/HS, NGG) and mesh
 keep other layouts **[VIctory: not decoded]**; the corpus has none.
 
+**Chunk 1 check** (`shader/`, run on the 10 embedded blobs: all parse, 1 VS and 9 PS; VS and PS
+fields above reproduced, `nativ64-shader` prints them). Precisions and corrections **[seen]**:
+
+- The `u32 0x24` after the XDAT entry count is the offset of the entry table in the `DXIL` part
+  (entries at part +0x24); the bitcode offset at `DXIL +0x10` counts from the `DXIL` magic (+8).
+  The program version dword is `kind << 16 | major << 4 | minor` (0x66 = 6.6).
+- `XBCH` packed size = bytes after the 24-byte header; `FSSM` payload size = unpacked − 16.
+- Payload slot table: the first u64 (6) is read as a slot count; the pointers LS..PS sit at
+  +0x08..+0x30, and +0x68 holds 2 on all blobs (meaning unknown, ignored).
+- PS patch table: 8 entries of 404 bytes (`i32` code dword offset or -1, then 10 variants of
+  10 dwords of which `patch size` are used). Only target 0 is patched on the corpus; the patch
+  sits at dword 9, 10 or 12 depending on the program (not always 9), with size 6 everywhere.
+  The 32_ABGR variant is four `s_nop` plus an `exp mrt0 … done vm` whose enable mask is the
+  target's channel mask (0x1 or 0xf): `v2` only on 3 programs, 4 channels on the others.
+- Used-resource kind 0 (`SRV`) names the VS's root descriptor (type 1) read as `s8:s9`, so
+  `kind` does not separate buffers from views; tracing (Resources) decides.
+- `ISG1`/`OSG1` elements are 32 bytes (stream, name offset, index, system value, component
+  type, register, mask, read-write mask, min precision); names follow the table.
+- VS inputs (stage data) are empty on the corpus: that layout is still unverified. Merged
+  stages and compute records are not decoded (present slots are listed only).
+
 **Code.** Starts with two 12-byte VOP3 words of opcode 0x180 (`v_nop` in VOP3 form with junk
 operand fields and a literal: a marker or hash) and `s_inst_prefetch 3`; `llvm-mc` rejects the
 two (bad operands for `v_nop`) **[seen, llvm]**. The program ends at `s_endpgm`, padded with
@@ -343,7 +364,7 @@ order below makes the programs that screen draws with work first: chunk 1's dump
 One Sonnet agent per chunk, each with its tests (filtered output: failures and summary only);
 Opus review after each. Module paths are in `crates/nativ64-gpu/src/shader/`.
 
-1. **Container and dump** (`container.rs`, `native.rs`, `bin/nativ64-shader.rs`,
+1. **Container and dump** (done; `container.rs`, `native.rs`, `bin/nativ64-shader.rs`,
    `pipeline.rs` hook). DXBC parts, DXIL header, XDAT, XBCH inflate, FSSM records, layout/used
    tables, VS/PS stage data, signature parts (`ISG1`/`OSG1`: rows, names, indices, masks), PS
    patch. `NATIV64_DUMP_SHADERS`. Tests: synthetic containers (every refusal path). Then run
