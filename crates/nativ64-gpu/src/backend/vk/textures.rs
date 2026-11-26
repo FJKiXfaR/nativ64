@@ -230,7 +230,10 @@ fn texture_view(gpu: &Gpu, t: &mut TitleImage, desc: Option<[u32; 10]>) -> Optio
             }
         }
     };
-    let swizzle = components(mapping);
+    let mut swizzle = components(mapping);
+    if dxgi == 65 || (dxgi == 0 && t.desc.format == 65) {
+        swizzle = super::format::a8_swizzle(swizzle);
+    }
     let key: TexKey = [
         ty.as_raw() as u32,
         format.as_raw() as u32,

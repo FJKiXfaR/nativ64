@@ -72,7 +72,8 @@ pub fn lookup(dxgi: u32, flags: u32) -> Option<FormatInfo> {
         53 | 56 => info(F::R16_UNORM, COLOR, 2),
         54 => info(F::R16_SFLOAT, COLOR, 2),
         55 => info(F::D16_UNORM, DEPTH, 2),
-        60 | 61 => info(F::R8_UNORM, COLOR, 1),
+        // A8_UNORM: an R8 image; sampled views move the red channel to alpha (`a8_swizzle`)
+        60 | 61 | 65 => info(F::R8_UNORM, COLOR, 1),
         87 | 90 => info(F::B8G8R8A8_UNORM, COLOR, 4),
         91 => info(F::B8G8R8A8_SRGB, COLOR, 4),
         70 | 71 => block(F::BC1_RGBA_UNORM_BLOCK, 8),
@@ -90,6 +91,29 @@ pub fn lookup(dxgi: u32, flags: u32) -> Option<FormatInfo> {
         97 | 98 => block(F::BC7_UNORM_BLOCK, 16),
         99 => block(F::BC7_SRGB_BLOCK, 16),
         _ => None,
+    }
+}
+
+/// The swizzle of a view of an A8_UNORM image (stored as R8) that makes it read as (0, 0, 0, a)
+/// through `requested`: every source channel but alpha reads zero, alpha reads the red channel.
+pub fn a8_swizzle(requested: vk::ComponentMapping) -> vk::ComponentMapping {
+    use vk::ComponentSwizzle as S;
+    let one = |s: S| match s {
+        S::A | S::IDENTITY => S::R,
+        S::R | S::G | S::B | S::ZERO => S::ZERO,
+        other => other,
+    };
+    // IDENTITY on r, g, b means the channel itself: zero for an A8 image
+    let zero_or = |s: S| if s == S::IDENTITY { S::ZERO } else { one(s) };
+    vk::ComponentMapping {
+        r: zero_or(requested.r),
+        g: zero_or(requested.g),
+        b: zero_or(requested.b),
+        a: if requested.a == S::IDENTITY {
+            S::R
+        } else {
+            one(requested.a)
+        },
     }
 }
 
@@ -149,6 +173,24 @@ pub fn vertex(dxgi: u32) -> Option<(vk::Format, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a8_is_an_r8_image_read_as_alpha() {
+        use vk::ComponentSwizzle as S;
+        assert_eq!(lookup(65, 0).unwrap().format, vk::Format::R8_UNORM);
+        let m = |r, g, b, a| vk::ComponentMapping { r, g, b, a };
+        let t = |m: vk::ComponentMapping| [m.r, m.g, m.b, m.a];
+        // the default mapping: (0, 0, 0, a)
+        assert_eq!(
+            t(a8_swizzle(m(S::R, S::G, S::B, S::A))),
+            [S::ZERO, S::ZERO, S::ZERO, S::R]
+        );
+        // alpha broadcast to every channel, and forced constants kept
+        assert_eq!(
+            t(a8_swizzle(m(S::A, S::A, S::ZERO, S::ONE))),
+            [S::R, S::R, S::ZERO, S::ONE]
+        );
+    }
 
     #[test]
     fn common_formats() {
