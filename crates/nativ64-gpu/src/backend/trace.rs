@@ -80,7 +80,10 @@ impl FrameTrace {
             .iter()
             .map(|p| p.map_or("?".to_string(), |p| p.to_string()))
             .collect();
-        let replay = self.replay.as_deref().map_or(String::new(), |r| format!(" {r}"));
+        let replay = self
+            .replay
+            .as_deref()
+            .map_or(String::new(), |r| format!(" {r}"));
         format!(
             "frame {n}: draw={} idx={} mesh={} disp={} ind={} clear={} copy={} pipes=[{}]{replay}",
             self.draw,

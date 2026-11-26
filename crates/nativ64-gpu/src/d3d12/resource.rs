@@ -89,7 +89,10 @@ impl Drop for ResourceData {
         // The console fields sit at `+8` of the object, whose vtable word is at `+0`. The
         // allocation is still ours while the data drops: clearing the word makes `desc_of` and
         // `info_of` refuse a released object (and its freed memory, once reused, as well).
-        let obj = (self as *mut Self).cast::<u8>().wrapping_sub(8).cast::<usize>();
+        let obj = (self as *mut Self)
+            .cast::<u8>()
+            .wrapping_sub(8)
+            .cast::<usize>();
         // SAFETY: `ResourceData` only lives at `+8` of an `XObject` block, inside which `obj`
         // lies (the drop runs from `XObject::release`).
         unsafe {

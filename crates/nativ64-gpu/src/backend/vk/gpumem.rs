@@ -22,7 +22,7 @@
 //! a pointer stored in memory is not translated (the stage is skipped instead, see
 //! `Translated::memory_addresses`).
 
-use super::{Gpu, HostBuffer, log_once};
+use super::{log_once, Gpu, HostBuffer};
 use ash::vk;
 use nativ64::api_ms_win_core_memory as table;
 use std::collections::BTreeMap;
@@ -329,7 +329,10 @@ mod tests {
         let mut pages = vec![0usize; n];
         let base = unsafe {
             let base = XMemVirtualAlloc(std::ptr::null_mut(), n << 16, 0x2000, 3, RW);
-            assert_eq!(XMemAllocatePhysicalPages(0, &mut count, pages.as_mut_ptr()), 1);
+            assert_eq!(
+                XMemAllocatePhysicalPages(0, &mut count, pages.as_mut_ptr()),
+                1
+            );
             assert_eq!(XMemMapPhysicalPages(base, n, pages.as_ptr()), base);
             base as usize
         };
@@ -339,6 +342,10 @@ mod tests {
         m.translate(base as u64 + 0x100, 16).unwrap();
         let after = rss_shmem_kb();
         eprintln!("RssShmem import: before {before} kB after {after} kB");
-        assert!(after - before < 512, "import populated {} kB", after - before);
+        assert!(
+            after - before < 512,
+            "import populated {} kB",
+            after - before
+        );
     }
 }

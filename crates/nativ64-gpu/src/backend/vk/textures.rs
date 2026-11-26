@@ -30,13 +30,13 @@
 
 use super::format::FormatInfo;
 use super::profile::{self, Count, Phase};
-use super::replay::{Staging, TitleImage, VkBackend, global_barrier, mip_count, stage_bytes};
+use super::replay::{global_barrier, mip_count, stage_bytes, Staging, TitleImage, VkBackend};
 use super::sampler::Spec;
-use super::{Gpu, log_once};
-use crate::d3d12::descriptor::{View, view_at, views_from};
-use crate::d3d12::resource::{ResourceDesc, info_of_checked, take_released};
+use super::{log_once, Gpu};
+use crate::d3d12::descriptor::{view_at, views_from, View};
+use crate::d3d12::resource::{info_of_checked, take_released, ResourceDesc};
 use crate::texture::detile;
-use ash::{Device, vk};
+use ash::{vk, Device};
 use nativ64::api_ms_win_core_memory as table;
 use std::collections::{HashMap, HashSet};
 
@@ -881,7 +881,7 @@ impl<'g> VkBackend<'g> {
 #[cfg(test)]
 mod tests {
     use super::super::draw::tests::{
-        TRIANGLE, clear, draw, floats, pipeline, pixel, state, title_memory,
+        clear, draw, floats, pipeline, pixel, state, title_memory, TRIANGLE,
     };
     use super::super::replay::tests::{resource_at, rtv, texture};
     use super::super::tests::gpu_or_skip;
@@ -891,7 +891,7 @@ mod tests {
         create_placed_shader_resource_view, create_sampler, create_shader_resource_view,
     };
     use crate::shader::spirv::tests::stage;
-    use crate::texture::{Layout, tile};
+    use crate::texture::{tile, Layout};
 
     #[test]
     fn the_hash_sees_every_byte() {
@@ -1333,12 +1333,18 @@ mod tests {
         let mut list = clear(handle, [0.0, 0.0, 1.0, 1.0]);
         list.extend(textured_draw(pipe, handle, t1));
         b.execute(&[list.clone()]);
-        assert!(all_pixels(&b.read_back(target).unwrap(), [200, 100, 50, 10]));
+        assert!(all_pixels(
+            &b.read_back(target).unwrap(),
+            [200, 100, 50, 10]
+        ));
         assert!(b.images.contains_key(&tex));
         release(tex);
         b.execute(&[list]);
         assert_eq!(b.stats.released, 1);
-        assert!(!b.images.contains_key(&tex), "the image went with the resource");
+        assert!(
+            !b.images.contains_key(&tex),
+            "the image went with the resource"
+        );
         assert!(!b.tex.sources.contains(&tex) && !b.tex.by_res.contains_key(&tex));
         assert!(
             all_pixels(&b.read_back(target).unwrap(), [0, 0, 0, 0]),
@@ -1403,7 +1409,11 @@ mod tests {
         b.execute(&lists(3));
         assert_eq!(b.draw.arena_bytes(), 4 * stride, "doubled");
         b.execute(&lists(9));
-        assert_eq!(b.draw.arena_bytes(), 9 * stride, "the need when larger than double");
+        assert_eq!(
+            b.draw.arena_bytes(),
+            9 * stride,
+            "the need when larger than double"
+        );
         assert_eq!(b.stats.drawn, 15);
     }
 }
