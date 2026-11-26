@@ -20,6 +20,7 @@
 //! into its first; the viewport and scissor default to the first target's whole area.
 
 use super::bindless::{Bindless, HostBuf, ViewTable};
+use super::format::{self, FLAG_RENDER_TARGET};
 use super::gpumem::GpuMemory;
 use super::pipeline::{dynamic_topology, is_strip, Outcome, Pipelines};
 use super::replay::{global_barrier, mip_size, view_range, Img, VkBackend};
@@ -400,7 +401,7 @@ impl<'g> VkBackend<'g> {
 
     /// Records a `Draw` or `DrawIndexed`.
     pub(super) fn draw_command(&mut self, d: &Device, cb: vk::CommandBuffer, c: &Command) {
-        match self.try_draw(d, cb, c) {
+        match self.try_draw(d, cb, c, &[]) {
             Ok(()) => self.stats.drawn += 1,
             Err(s) => {
                 let (n, why) = match s {
@@ -415,7 +416,16 @@ impl<'g> VkBackend<'g> {
         }
     }
 
-    fn try_draw(&mut self, d: &Device, cb: vk::CommandBuffer, c: &Command) -> Result<(), Skip> {
+    /// `over`: the render target formats (DXGI, per slot, 0: keep) to build the pipeline for
+    /// instead of its description's, when a target is the sRGB or UNORM twin of the format
+    /// the description names.
+    fn try_draw(
+        &mut self,
+        d: &Device,
+        cb: vk::CommandBuffer,
+        c: &Command,
+        over: &[u32],
+    ) -> Result<(), Skip> {
         let ptr = self.draw.list.pipeline;
         if ptr == 0 {
             return skip(Skip::Pipeline("no pipeline bound".into()));
@@ -433,7 +443,7 @@ impl<'g> VkBackend<'g> {
             return skip(Skip::State("no bindless descriptor set".into()));
         };
         let set = bl.set;
-        let built = match draw.pipelines.get(bl, &mut draw.samplers, pd, rects) {
+        let built = match draw.pipelines.get(bl, &mut draw.samplers, pd, rects, over) {
             Outcome::Built(b) => b.clone(),
             Outcome::Failed(w) => return skip(Skip::Pipeline(w.clone())),
         };
@@ -482,6 +492,15 @@ impl<'g> VkBackend<'g> {
             };
             self.own(v.resource);
             if img.info.format != built.color[i].1 {
+                let twin = super::pipeline::srgb_twin(built.color[i].0).filter(|&t| {
+                    format::lookup(t, FLAG_RENDER_TARGET).map(|f| f.format) == Some(img.info.format)
+                });
+                if let (Some(t), true) = (twin, over.get(i).copied().unwrap_or(0) == 0) {
+                    let mut v = over.to_vec();
+                    v.resize(built.color.len(), 0);
+                    v[i] = t;
+                    return self.try_draw(d, cb, c, &v);
+                }
                 return skip(Skip::Target(format!(
                     "render target {i} is {:?}, the pipeline was made for {:?}",
                     img.info.format, built.color[i].1

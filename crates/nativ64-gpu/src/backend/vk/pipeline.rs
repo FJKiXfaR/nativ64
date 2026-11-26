@@ -66,7 +66,7 @@ pub enum Outcome {
 pub struct Pipelines<'g> {
     gpu: &'g Gpu,
     /// By serial and whether the pipeline is the rectangle-list variant (it has a geometry stage).
-    map: HashMap<(u64, bool), Outcome>,
+    map: HashMap<(u64, bool, Vec<u32>), Outcome>,
 }
 
 impl<'g> Pipelines<'g> {
@@ -78,17 +78,22 @@ impl<'g> Pipelines<'g> {
     }
 
     /// The outcome for `pd`, building it the first time. `rect` asks for the variant that
-    /// completes rectangle lists with a geometry stage (`spirv::rect`).
+    /// completes rectangle lists with a geometry stage (`spirv::rect`). `formats` replaces the
+    /// description's render target formats (DXGI, per slot, 0: keep) for a pipeline that is
+    /// bound to a target of another format of the same family (sRGB against UNORM); empty keeps
+    /// the description's.
     pub fn get(
         &mut self,
         bindless: &mut Bindless<'_>,
         samplers: &mut SamplerCache<'_>,
         pd: &PipelineData,
         rect: bool,
+        formats: &[u32],
     ) -> &Outcome {
         let gpu = self.gpu;
-        self.map.entry((pd.serial, rect)).or_insert_with(|| {
-            match build(gpu, bindless, samplers, pd, rect) {
+        let key = (pd.serial, rect, formats.to_vec());
+        self.map.entry(key).or_insert_with(|| {
+            match build(gpu, bindless, samplers, pd, rect, formats) {
                 Ok(b) => Outcome::Built(b),
                 Err(why) => {
                     let kind = if rect { " as a rectangle list" } else { "" };
@@ -371,11 +376,25 @@ fn build(
     samplers: &mut SamplerCache<'_>,
     pd: &PipelineData,
     rect: bool,
+    formats: &[u32],
 ) -> Result<Built, String> {
     let g = pd
         .graphics
         .as_ref()
         .ok_or("a compute pipeline (chunk 10c)")?;
+    let varied;
+    let g = if formats.is_empty() {
+        g
+    } else {
+        let mut v = g.clone();
+        for (t, &f) in v.target_formats.iter_mut().zip(formats) {
+            if f != 0 {
+                *t = f;
+            }
+        }
+        varied = v;
+        &varied
+    };
     if let Some(s) = pd
         .stages
         .iter()
@@ -623,4 +642,15 @@ fn check_fixed(f: &FixedState, g: &GraphicsState) -> Result<(), String> {
         return Err(format!("{} samples per pixel", g.sample_count));
     }
     Ok(())
+}
+
+/// The DXGI format of the other member of an sRGB / UNORM pair of 8-bit formats.
+pub fn srgb_twin(dxgi: u32) -> Option<u32> {
+    match dxgi {
+        28 => Some(29),
+        29 => Some(28),
+        87 => Some(91),
+        91 => Some(87),
+        _ => None,
+    }
 }
