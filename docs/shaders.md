@@ -708,6 +708,64 @@ it says otherwise.
    invocation per lane, `exp pos/param` per vertex, `exp prim` → `PrimitiveTriangleIndicesEXT`
    and cull, per-primitive params, `s_sendmsg GS_ALLOC_REQ` → `SetMeshOutputsEXT`).
    Milestone: one program of each stage translates and validates.
+   **As built (chunk 8, VS/PS)** (`io.rs` stage I/O and linking, `spirv/emit/stage.rs` the entry
+   points; compute and mesh I/O are still to do). `io::translate_stage(&ParsedShader, targets,
+   link)` builds the IR from the stage's code, structures it and emits a `Vertex` or `Fragment`
+   module (`OriginUpperLeft`, `DepthReplacing` / `StencilRefReplacingEXT` on use); the probe
+   entry stays for the ALU tests. `io::translate_pair` links first (`io::link`), then translates
+   both.
+   * Entry: every `Func.args` register gets a value. `s[n]` in the stage's user range is
+     `user_data[n]` of the root block (push constant = its device address as `u64`,
+     `OpConvertUToPtr` to a `PhysicalStorageBuffer` struct of 32 dwords, `Aligned 4` loads);
+     VS `s4:s5` (fetch address) and PS `s[end]`, `s[end+1]` (primitive mask, ordered-section id,
+     only read for `m0`) are 0; any other SGPR is `Unsupported { chunk: 8, "entry sN" }`. VS v0 =
+     `VertexIndex - BaseVertex`, v3 = `InstanceIndex - BaseInstance` (capability `DrawParameters`),
+     v2 (primitive id) = 0. PS VGPR groups follow `SPI_PS_INPUT_ADDR`: position → `FragCoord`,
+     front face → `FrontFacing` as 0xffffffff / 0, ancillary → `SampleId << 8`, coverage →
+     `SampleMask[0]`; the pull model, line stipple and fixed position are `Unsupported`.
+   * Vertex input: the fetch call defines `first_vgpr + c` for each channel `c` of each stage
+     input's mask from an `Input` vec4 at `location = input index`, typed by the `ISG1`
+     component type (float, uint, sint). The channel placement (sparse, `first + c`, as
+     `EntryRegs::from_stage` already had it) is **[unverified]**: the stage data's `last_channel`
+     is not read.
+   * Pixel input: a stage-data input is an `Input` vec4 at its location, read by channel.
+     `v_interp_p1` (VINTRP and VOP3 forms) computes the whole value and `v_interp_p2` passes its
+     old destination through; the decoration comes from the barycentric group of p1's VGPR
+     (centroid, sample, linear = `NoPerspective`; the input's flat flag gives `Flat`);
+     `v_interp_mov p0` is `Flat`. One mode per attribute (two is `Unsupported`), f16 forms,
+     `mov p10/p20` and fp16 inputs are `Unsupported { chunk: 8 }`. A barycentric VGPR read other
+     than by `v_interp` is refused; phis that only merge the entry value count as the entry value.
+     An input with no vertex output of its semantic reads its default (`default & 3`: 0,0,0,0 /
+     0,0,0,1 / 1,1,1,0 / 1,1,1,1, **[unverified]**, from the usual `SPI_PS_INPUT_CNTL` encoding).
+   * Outputs: `exp pos0` → `Position`; `pos1/pos2` → `ClipDistance[8]` only when the stage data
+     lists usage-7 outputs (other `pos1..3` uses are `Unsupported`); `exp param n` → `Output` at
+     its linked location, dropped when no PS input reads it; `exp mrt n` → `Output` vec4 at
+     location n, float / uint / sint from `dxgi_class(target_formats[n])` (float when unknown);
+     `exp mrtz` channels 0, 1, 2 → `FragDepth`, `FragStencilRefEXT`, `SampleMask[0]` (channel 3
+     is `Unsupported`); `exp null` nothing; compressed exports are `Unsupported`; an export under
+     a lane guard is wrapped in the lane's condition.
+   * Patches: the PS code is `io::stage_code`, with every export patch replaced by its `32_ABGR`
+     variant, so every target exports four 32-bit channels (no `compr`).
+   * Discard: the `s_andn2 live, live, exec` of a `Demote` becomes `if (exec bit) OpDemoteToHelperInvocation`
+     (`SPV_EXT_demote_to_helper_invocation`); the branch to the exit is forced not taken, so the
+     lane runs on as a helper.
+   * Linking: `io::link` matches each VS parameter (`OSG1` row = register) with the PS input of
+     the same upper-cased name and index (`ISG1` row = register); the shared location is the PS
+     input's attribute number. A stage translated alone numbers its own (`param n`, `attr n`).
+   * Memory and resource instructions (`s_load*`, `s_buffer_load*`, buffer / image ops) stay
+     `Unsupported { chunk: 9 }`. `nativ64-shader --spirv --stats` uses the entries for the blob's
+     own vs/ps record; `--spirv --pair <vs> <ps> -o out` writes `out.vert.spv` and `out.frag.spv`.
+   * Tests (9, `spirv/tests.rs`, `mod stage`): synthetic VS / PS blobs from `fixtures.txt` and
+     the container test helpers, each validated with `spirv-val`: fetch + `exp pos0` + `exp
+     param`, `v_interp` pairs + `v_interp_mov` + `exp mrt0 done`, one decoration per barycentric
+     group, barycentrics read elsewhere, linking by semantic, unmatched input, patch variant,
+     chunk 9 still refused, discard.
+   * Corpus (`--spirv --stats`): programs that translate and validate 365 of 3060 structured
+     (was 5): vs 97 of 760, ps 263 of 1607, cs 5. Every other structured vs/ps stops on a
+     chunk-9 op first (ps: `s_load_dwordx4` 707, `s_load_dwordx8` 636; vs: `s_load_dwordx4` 646,
+     `s_load_dwordx8` 11, `s_buffer_load_dword` 6) except one ps (barycentrics read outside
+     `v_interp`). The first-screen programs stop on `s_load_dwordx4` / `s_load_dwordx8` /
+     `s_buffer_load_dword`, or translate (vs d2a2, ps 7ba0 and b40d).
 9. **Resources and memory** (`resource.rs`): tracing table, BDA buffer loads with bounds
    (MUBUF, MTBUF typed formats, `global_load`), view table format, MIMG sample/load/resinfo/
    store, static samplers, DS → `Workgroup` LDS (compute, mesh). Tests: synthetic programs for
