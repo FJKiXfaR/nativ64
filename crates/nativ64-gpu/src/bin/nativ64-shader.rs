@@ -318,7 +318,8 @@ fn structure_stats(files: &[String]) -> ExitCode {
     let mut errs_free: BTreeMap<(String, String), u32> = BTreeMap::new();
     let mut names: BTreeMap<(String, String), u32> = BTreeMap::new();
     let mut samples: BTreeMap<(String, String), (u64, String)> = BTreeMap::new();
-    let (mut no_ir, mut demotes, mut lane_br, mut uni_br) = (0u32, 0u32, 0usize, 0usize);
+    let (mut no_ir, mut demotes, mut lane_br, mut uni_br, mut wave_br) =
+        (0u32, 0u32, 0usize, 0usize, 0usize);
     let (mut proved, mut active) = (0usize, 0usize);
     for f in files {
         let Ok(bytes) = std::fs::read(f) else {
@@ -349,6 +350,7 @@ fn structure_stats(files: &[String]) -> ExitCode {
                     for b in s.branches.iter().flatten() {
                         match b {
                             structure::BranchKind::Lane(_) => lane_br += 1,
+                            structure::BranchKind::Wave(_) => wave_br += 1,
                             structure::BranchKind::Uniform => uni_br += 1,
                         }
                     }
@@ -387,7 +389,9 @@ fn structure_stats(files: &[String]) -> ExitCode {
     for (s, (n, ok, free)) in &stage {
         println!("  {s}: {ok}/{n} structure ({free} ignoring cross-lane uses)");
     }
-    println!("branches in structured programs: {lane_br} per-lane, {uni_br} uniform");
+    println!(
+        "branches in structured programs: {lane_br} per-lane, {wave_br} speculated, {uni_br} uniform"
+    );
     println!("vector instructions in structured programs: {proved} guards proved, {active} kept");
     println!("programs with a pixel discard (demote): {demotes}");
     let sorted = |m: BTreeMap<(String, String), u32>| {

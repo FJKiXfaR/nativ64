@@ -160,7 +160,7 @@ fn interp(f: &Func, s: &Structured, ins: &[(Reg, u32)]) -> Result<Out, SpirvErro
                 fall,
             } => {
                 let go = match &s.branches[cb] {
-                    Some(BranchKind::Lane(t)) => {
+                    Some(BranchKind::Lane(t) | BranchKind::Wave(t)) => {
                         let bit = nonzero(env[&t.vals[0]]);
                         bit == t.taken_when_set
                     }
@@ -1848,6 +1848,36 @@ fn if_patterns_translate_and_run() {
     assert_eq!((get(&o, V2), get(&o, V3)), (0, 0));
     let o = run_words(&NESTED, &[(V0, f1), (V1, f2)]);
     assert_eq!((get(&o, V2), get(&o, V3)), (f1, f2));
+}
+
+// v_cmp_lt_f32 ; s_and_saveexec ; s_cbranch_execz LJ ; s_add_u32 s9, s9, 1 ; LJ: restore EXEC ;
+// s_add_u32 s10, s9, 1 ; v_mov_b32 v2, s10: a scalar defined in a region lanes skip (wave64)
+const SPECULATED: [u32; 8] = [
+    0x7c020300, 0xbe82246a, 0xbf880001, 0x80098109, 0x88fe027e, 0x800a8109, 0x7e04020a, 0xbf810000,
+];
+
+#[test]
+fn speculated_scalar_region_runs_when_any_lane_enters() {
+    let (f1, f2) = (f(1.0), f(2.0));
+    let fun = words(&SPECULATED);
+    let s = structure(&fun).unwrap();
+    assert!(s
+        .branches
+        .iter()
+        .flatten()
+        .any(|b| matches!(b, BranchKind::Wave(_))));
+    let p = translate(&fun, &s).unwrap();
+    // the vote needs its capability
+    assert!(p
+        .words
+        .windows(2)
+        .any(|w| w[0] & 0xffff == 17 && w[1] == 62));
+    // the lane enters: s9 + 1 is read after the join
+    let o = run_words(&SPECULATED, &[(V0, f1), (V1, f2), (Reg::S(9), 10)]);
+    assert_eq!(get(&o, V2), 12);
+    // no lane enters: the old s9
+    let o = run_words(&SPECULATED, &[(V0, f2), (V1, f1), (Reg::S(9), 10)]);
+    assert_eq!(get(&o, V2), 11);
 }
 
 #[test]

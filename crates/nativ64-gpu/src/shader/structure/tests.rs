@@ -303,11 +303,22 @@ fn loop_carried_masks_type_optimistically() {
 }
 
 #[test]
-fn scalar_defined_in_a_lane_skipped_region_is_an_error() {
+fn scalar_defined_in_a_lane_skipped_region_is_speculated() {
     // v_cmp ; s_and_saveexec ; s_cbranch_execz LJ ; s_add_u32 s9, s9, 1 ; LJ: ... s_add s10, s9, 1
     let words = [
         0x7c020300, 0xbe82246a, 0xbf880001, 0x80098109, 0x88fe027e, 0x800a8109, 0x7e04020a,
         0xbf810000,
+    ];
+    let s = st(&words).unwrap();
+    assert!(matches!(s.branches[0], Some(BranchKind::Wave(_))));
+}
+
+#[test]
+fn scalar_message_in_a_lane_skipped_region_is_an_error() {
+    // the same with an s_sendmsg in the region
+    let words = [
+        0xbefc0380, 0x7c020300, 0xbe82246a, 0xbf880002, 0x80098109, 0xbf900001, 0x88fe027e,
+        0x800a8109, 0x7e04020a, 0xbf810000,
     ];
     assert!(matches!(
         st(&words),

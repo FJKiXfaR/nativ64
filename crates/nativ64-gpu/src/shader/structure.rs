@@ -7,7 +7,9 @@
 //! 1. `type_masks`: which values are masks, and every use that crosses lanes.
 //! 2. `Structured::branches`: a wave-wide test of a mask is a test of the lane's own bit;
 //!    any other branch is uniform. A scalar a lane-skipped region leaves different on the two
-//!    paths is a `DivergentScalar` error.
+//!    paths makes that branch a wave-wide one (`BranchKind::Wave`: the region runs when any lane
+//!    enters it), unless the region stores, does an atomic or sends a message: then it is a
+//!    `DivergentScalar` error.
 //! 3. `Structured::guards`: every vector instruction is guarded by `active`; the guards a
 //!    path-sensitive pass proves true (after `s_and_saveexec` + `s_cbranch_execz`) are
 //!    `Guard::Proved`.
@@ -470,6 +472,11 @@ pub enum BranchKind {
     /// Same in every invocation.
     Uniform,
     Lane(LaneTest),
+    /// A lane-wise test whose region defines scalars read after its join (a speculated scalar
+    /// region): the wave runs the region when any lane enters it, so every invocation takes
+    /// the branch on `any(bit)` and the region's scalar instructions run in all of them. Vector
+    /// instructions inside stay guarded by `active`.
+    Wave(LaneTest),
 }
 
 fn classify_branch(m: &Masks, op: &str, cond: &[(Reg, Src)]) -> BranchKind {
@@ -528,16 +535,20 @@ fn post_idoms(f: &Func) -> Vec<Option<BlockId>> {
 }
 
 /// The error for a scalar that the paths of a lane-wise branch leave different at their join.
+///
+/// A lane-wise branch whose region only has scalar instructions without side effects is
+/// speculated instead (`BranchKind::Wave`).
 fn divergent_scalar(
     f: &Func,
     m: &Masks,
-    branches: &[Option<BranchKind>],
+    branches: &mut [Option<BranchKind>],
 ) -> Result<(), StructError> {
     let pdom = post_idoms(f);
-    for (d, k) in branches.iter().enumerate() {
-        let Some(BranchKind::Lane(t)) = k else {
+    for d in 0..branches.len() {
+        let Some(BranchKind::Lane(t)) = &branches[d] else {
             continue;
         };
+        let t = t.clone();
         let exec_vals = |v: &Val| matches!(f.vals[v.0 as usize].reg, Reg::ExecLo | Reg::ExecHi);
         if t.vals
             .iter()
@@ -561,15 +572,43 @@ fn divergent_scalar(
                     _ => false,
                 });
             if differs && !scc_bit {
-                return Err(StructError::DivergentScalar {
-                    at: f.blocks[j].at,
-                    reg: p.reg,
-                    branch: f.blocks[d].at,
-                });
+                if !region_is_speculable(f, d, j) {
+                    return Err(StructError::DivergentScalar {
+                        at: f.blocks[j].at,
+                        reg: p.reg,
+                        branch: f.blocks[d].at,
+                    });
+                }
+                branches[d] = Some(BranchKind::Wave(t));
+                break;
             }
         }
     }
     Ok(())
+}
+
+/// True when the scalar instructions between the branch of block `d` and its join `j` can run
+/// in invocations that did not enter the region: no scalar store, atomic or message.
+fn region_is_speculable(f: &Func, d: BlockId, j: BlockId) -> bool {
+    let mut seen = HashSet::new();
+    let mut stack = f.blocks[d].succs();
+    while let Some(b) = stack.pop() {
+        if b == j || b == d || !seen.insert(b) {
+            continue;
+        }
+        let effect = f.blocks[b].insts.iter().any(|i| {
+            let n = i.instr.name();
+            ["s_store", "s_buffer_store", "s_atomic", "s_buffer_atomic"]
+                .iter()
+                .any(|p| n.starts_with(p))
+                || matches!(n, "s_sendmsg" | "s_sendmsghalt" | "s_trap" | "s_dcache_wb")
+        });
+        if effect {
+            return false;
+        }
+        stack.extend(f.blocks[b].succs());
+    }
+    true
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1182,7 +1221,7 @@ pub fn structure_with(f: &Func, allow_cross_lane: bool) -> Result<Structured, St
             return Err(StructError::CrossLane(c.clone()));
         }
     }
-    let branches: Vec<Option<BranchKind>> = f
+    let mut branches: Vec<Option<BranchKind>> = f
         .blocks
         .iter()
         .map(|b| match &b.term {
@@ -1190,7 +1229,7 @@ pub fn structure_with(f: &Func, allow_cross_lane: bool) -> Result<Structured, St
             _ => None,
         })
         .collect();
-    divergent_scalar(f, &masks, &branches)?;
+    divergent_scalar(f, &masks, &mut branches)?;
     let guards = guards(f, &masks, &branches);
     let demotes = demotes(f);
     let tree = build_tree(f)?;

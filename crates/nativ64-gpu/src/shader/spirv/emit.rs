@@ -119,6 +119,14 @@ impl Gen {
         self.m.global(Op::TypePointer, None, &[class as u32, t])
     }
 
+    /// `OpGroupNonUniformAny` over the subgroup: true when any invocation has `a` set.
+    pub(super) fn any(&mut self, a: u32) -> u32 {
+        self.m.capability(Capability::GroupNonUniformVote);
+        let t = self.t_bool();
+        let scope = self.k(3); // Subgroup
+        self.op(Op::GroupNonUniformAny, t, &[scope, a])
+    }
+
     /// Starts a new (unreachable) block when the current one already ended.
     fn open(&mut self) {
         if self.terminated {
@@ -716,15 +724,20 @@ impl Tr<'_> {
     /// True when the branch of block `b` is taken.
     fn branch_cond(&mut self, b: usize, op: &str, cond: &[(Reg, Src)]) -> R<u32> {
         let tb = self.g.t_bool();
-        if let Some(Some(BranchKind::Lane(t))) = self.s.branches.get(b) {
+        if let Some(Some(k @ (BranchKind::Lane(t) | BranchKind::Wave(t)))) = self.s.branches.get(b)
+        {
             let o = self.read(Src::Val(t.vals[0]))?;
-            let bit = match o {
+            let mut bit = match o {
                 Opd::B(c) => c,
                 Opd::V(v) => {
                     let z = self.g.k(0);
                     self.g.op(Op::INotEqual, tb, &[v, z])
                 }
             };
+            if matches!(k, BranchKind::Wave(_)) {
+                // the wave goes in when any lane does
+                bit = self.g.any(bit);
+            }
             return Ok(if t.taken_when_set {
                 bit
             } else {
