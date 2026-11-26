@@ -1804,7 +1804,7 @@ impl Builder<'_> {
 
 /// Reverse post-order and immediate dominators (Cooper, Harvey, Kennedy). The entry's own
 /// `idom` entry is `None`.
-fn dominators(
+pub(super) fn dominators(
     n: usize,
     entry: usize,
     succs: &[Vec<usize>],
