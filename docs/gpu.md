@@ -298,9 +298,9 @@ images, clears, copies, barriers, `PresentX` to the window, `NATIV64_DUMP_FRAMES
 counted and skipped. Done when the title's cleared frames reach the window.
 
 **G4 — shaders.** Spec first (`docs/shaders.md`), then decoder, IR, structuring, SPIR-V,
-descriptor tracing, pipelines; draws start replaying. First target: the title's first
-splash/loading screen.
+descriptor tracing, pipelines; draws, mesh draws and dispatches start replaying (compute and
+mesh are half the title's programs). First target: the title's first splash/loading screen.
 Design and chunk plan: [`docs/shaders.md`](shaders.md).
 
-Later: compute, indirect execution, queries, tiled resources (page pools), compressed
+Later: indirect execution, queries, tiled resources (page pools), compressed
 DirectStorage, the BVH builder, async overlap of CPU and GPU.

@@ -129,22 +129,22 @@ variant (exports carry raw 32-bit values) and the render-target format is handle
 
 Encodings, by the top bits of the first dword **[spec, llvm]**:
 
-| Bits | Encoding | Size | First chunk |
-|---|---|---|---|
-| `0` | VOP2 | 4 (+4 literal, +DPP/SDWA 4/8) | 2 |
-| `0111111` / `0111110` | VOP1 / VOPC | 4 (+…) | 2 |
-| `10` (not below) | SOP2 | 4 (+4) | 2 |
-| `1011` | SOPK | 4 | 2 |
-| `101111101` / `…110` / `…111` | SOP1 / SOPC / SOPP | 4 (+4) | 2 |
-| `110010` | VINTRP | 4 | 2 |
-| `110011` | VOP3P | 8 (+4) | 9 |
-| `110101` | VOP3 (VOP3a/b; VOP1/2/C opcodes at fixed bases) | 8 (+4) | 2 |
-| `110110` | DS | 8 | 9 |
-| `110111` | FLAT / GLOBAL / SCRATCH | 8 | 9 |
-| `111000` / `111010` | MUBUF / MTBUF | 8 | 2 (MUBUF), 9 (MTBUF) |
-| `111100` | MIMG (NSA adds dwords) | 8+ | 7 |
-| `111101` | SMEM | 8 | 2 |
-| `111110` | EXP | 8 | 2 |
+| Bits | Encoding | Size |
+|---|---|---|
+| `0` | VOP2 | 4 (+4 literal, +DPP/SDWA 4/8) |
+| `0111111` / `0111110` | VOP1 / VOPC | 4 (+…) |
+| `10` (not below) | SOP2 | 4 (+4) |
+| `1011` | SOPK | 4 |
+| `101111101` / `…110` / `…111` | SOP1 / SOPC / SOPP | 4 (+4) |
+| `110010` | VINTRP | 4 |
+| `110011` | VOP3P | 8 (+4) |
+| `110101` | VOP3 (VOP3a/b; VOP1/2/C opcodes at fixed bases) | 8 (+4) |
+| `110110` | DS | 8 |
+| `110111` | FLAT / GLOBAL / SCRATCH | 8 |
+| `111000` / `111010` | MUBUF / MTBUF | 8 |
+| `111100` | MIMG (NSA adds dwords) | 8+ |
+| `111101` | SMEM | 8 |
+| `111110` | EXP | 8 |
 
 Operand fields: SGPR 0-105, VCC 106-107, TTMP 108-123, M0 124, NULL 125, EXEC 126-127, inline
 integers 128-208 (0..64, -1..-16), inline floats 240-248 (0.5, -0.5, 1, -1, 2, -2, 4, -4,
@@ -158,8 +158,13 @@ mem fields (offset, glc/slc/dlc, idxen/offen, dmask, dim, a16/d16) }`. Unknown o
 `unknown GFX10 VOP3 opcode 0x1a3 at +0x40` (the "unknown slot = stop" rule). `disasm()`
 prints LLVM syntax so tests diff it against `llvm-mc` output **[llvm]**. Flow following: from
 offset 0, branches (`s_branch`, `s_cbranch_*`: target = next + 4·simm16) and fall-through;
-`s_endpgm` stops a path; `s_setpc`/`s_swappc`/`s_getpc` + jump tables stop translation
-(`s_getpc` alone is allowed: it addresses constant data).
+`s_endpgm` stops a path; `s_setpc`/`s_swappc` are recorded as indirect jumps (`s_getpc`
+alone is allowed: it addresses constant data). **[seen]** The whole corpus (8634 blobs, 20.25M
+instructions) decodes with every encoding above, 0 diff against `llvm-mc` on the instructions
+compared. Its indirect jumps are of two kinds only: 13 compute programs use the far jump
+(`s_getpc_b64 s[n:n+1]`, `s_add_u32 sn, sn, literal`, carry, `s_setpc_b64 s[n:n+1]`), and 332
+vertex programs open with `s_swappc_b64 s[4:5], s[4:5]`, the call to the fetch routine (Inputs
+and outputs). No jump table.
 
 ## IR
 
@@ -187,10 +192,14 @@ SSA over 32-bit register dwords, one function per program:
   the low add never carries, SCC from it folds to 0) or `Undef` (phi input of a path that never
   defined the register). Folded instructions leave no `Inst`; their SCC folds too. Phis go on
   the iterated dominance frontier of the registers that are read somewhere, then trivial and
-  dead phis are removed. `Func` carries `idom` and `rpo` for chunk 4. Encodings the decoder
+  dead phis are removed. `Func` carries `idom` and `rpo` for chunks 4-5. Encodings the decoder
   does not read, and `s_setpc/swappc/rfe/call`, `s_movrel*`, `v_movrel*`, scalar atomics,
-  MUBUF-to-LDS are typed `IrError`s. `EntryRegs` names the entry SGPR/VGPR ranges (EXEC is
-  always one); `from_record` is a first guess from the root layout. `nativ64-shader --ir`
+  MUBUF-to-LDS are typed `IrError`s. To add (start of chunk 4): `s_setpc_b64` of a `CodeLo` /
+  `CodeHi` pair is a direct jump (the far jump folds through `s_getpc` already); the entry
+  `s_swappc_b64` of a VS becomes an `Inst` marking the fetch point, with the attribute VGPRs as
+  its results; any other register jump stays an error. `EntryRegs` names the entry SGPR/VGPR
+  ranges (EXEC is always one); `from_record` is a first guess from the root layout, replaced in
+  chunk 4 by the per-stage table of Inputs and outputs. `nativ64-shader --ir`
   prints the IR.
 - **Analyses on SSA**: constant folding of scalar values (literals, `s_getpc` + offset, loads
   from appended constant data), lane-mask typing, resource tracing, uniform/lane classification.
@@ -239,8 +248,25 @@ boolean per invocation.
 **User SGPRs.** A VS/PS/CS receives user-data dword i in `s[i]`; merged stages and mesh have 8
 system SGPRs first (`s[i+8]`) **[VIctory]**. Seen: the VS's root descriptor (layout `user
 data 8, 2 SGPRs`) is read as `s8:s9`; the PS gets the primitive mask in `s10`, right after
-its user SGPRs (`s_mov_b32 m0, s10` before `v_interp`) **[seen]**. What `s0..s7` hold is
-**[unverified]** (no program of the corpus reads them; a read is an error naming the SGPR).
+its user SGPRs (`s_mov_b32 m0, s10` before `v_interp`) **[seen]**.
+
+**Entry SGPRs below s8, per stage** (first reads before any write, whole corpus **[seen]**;
+meanings **[VIctory]** unless said):
+
+| Stage | Reads in s0..s7 | Meaning |
+|---|---|---|
+| VS | `s[4:5]`, 332 of 1034, only as `s_swappc_b64 s[4:5], s[4:5]` at the entry | fetch routine address: the call is replaced by the attribute values (Vertex input) |
+| PS | none | — |
+| Mesh | `s3`, all 1569, by `s_bfe_u32` | merged wave info: wave index in the group, bits 24-27 |
+| CS | `s4..s7` in most of the 2734 (`s[4:5]` as an SMEM base, `s6`/`s7` multiplied by group sizes), a few `s0..s3` | user SGPRs then group id x/y/z and group info, as `COMPUTE_PGM_RSRC2` (stage data E+0x24) enables them; scratch offset last |
+
+So `EntryRegs` comes from the stage data, not from a guess: CS from `RSRC2` (user SGPR count
+bits 5:1, group id x/y/z bits 7-9, group info bit 10, scratch bit 0) and the thread-group size
+(E+0x28, 3 × u32); mesh from its record (E+0x448: group size in lanes, maximum vertices and
+primitives, user SGPRs, topology; code at E+0x45c) plus `s3` and `v5` (group id × group size,
+read through `v_readfirstlane`). A live-in still unexplained is an error naming the register.
+That 332 VS read the fetch address while 702 pull their vertices themselves is seen; that the
+call appears exactly when the stage data lists attributes is **[unverified]**.
 
 **Root block.** Per draw the backend builds, from the recorded root arguments (`RootTable`,
 `RootConstants`, `RootView` in `command.rs`) and the program's layout table, a *root block*:
@@ -318,7 +344,7 @@ into `samplers[]`. One descriptor set, three `UPDATE_AFTER_BIND | PARTIALLY_BOUN
 from device limits, bound once; slot = registry index (one namespace, holes allowed).
 Buffers (CBV, raw/structured SRV/UAV) never need a descriptor: they are title memory, read by
 `PhysicalStorageBuffer` pointers. Typed buffers (`buffer_load_format`, MTBUF) use the format
-in the record and convert in the shader (chunk 9).
+in the record and convert in the shader (chunk 8).
 
 **Instructions.** SMEM `s_load*`/`s_buffer_load*` → BDA loads (bounds-checked against the
 record size: out of range reads 0, as RDNA2 robust buffers do **[spec]**); MUBUF
@@ -383,66 +409,74 @@ order below makes the programs that screen draws with work first: chunk 1's dump
 ## Chunk plan
 
 One Sonnet agent per chunk, each with its tests (filtered output: failures and summary only);
-Opus review after each. Module paths are in `crates/nativ64-gpu/src/shader/`.
+Opus review after each. Module paths are in `crates/nativ64-gpu/src/shader/`. The corpus is
+41% pixel, 32% compute, 18% mesh, 12% vertex: compute and mesh are part of the main path, not
+later work. The order serves the first screen: each chunk lands for all four stages unless
+it says otherwise.
 
 1. **Container and dump** (done; `container.rs`, `native.rs`, `bin/nativ64-shader.rs`,
-   `pipeline.rs` hook). DXBC parts, DXIL header, XDAT, XBCH inflate, FSSM records, layout/used
-   tables, VS/PS stage data, signature parts (`ISG1`/`OSG1`: rows, names, indices, masks), PS
-   patch. `NATIV64_DUMP_SHADERS`. Tests: synthetic containers (every refusal path). Then run
-   the title with the dump and record which pipelines the first frames draw with: that list
-   sets the instruction order of chunks 2-7.
-2. **Decoder** (`gfx10/`). SOP1/2/C/K/P, SMEM, VOP1/2/C/3 (incl. literal, inline constants,
-   modifiers; DPP/SDWA fields decoded), VINTRP, EXP, MUBUF; flow following; `disasm()` in LLVM
-   syntax. Tests: per encoding from `llvm-mc` fixtures; the corpus diff (skipping the 24-byte
-   marker) when `NATIV64_SHADER_CORPUS` is set.
+   `pipeline.rs` hook). `NATIV64_DUMP_SHADERS`.
+2. **Decoder** (done; `gfx10/`). Every encoding of the table, flow following, `disasm()` in
+   LLVM syntax, `llvm-mc` fixtures per encoding (`tools/gen_gfx10_ext.py` for the vector-memory
+   and packed ones). The whole corpus decodes.
 3. **IR** (done; `ir.rs`): blocks, SSA dwords, implicit operands, phis, entry `Arg`s, constant
-   folding, `s_getpc` data. Tests: small programs, SSA shape asserted textually.
-4. **Structuring** (`structure.rs`): mask typing, per-lane branches, guards and their
+   folding, `s_getpc` data.
+4. **Entry and flow cleanup** (`ir.rs`, `native.rs`): CS and mesh stage data (`RSRC2`,
+   group size, mesh record), `EntryRegs` from stage data for the four stages (table in Inputs
+   and outputs), far jump → direct jump, VS fetch call → fetch point, then **constant-branch
+   pruning**: an `s_cbranch_scc*/vcc*/exec*` whose condition folded to a constant becomes a
+   jump, unreachable blocks go, phis are recomputed (dominators change). Pruning sits here,
+   before structuring, so chunk 5 never sees dead edges (fewer `If`s, fewer irreducible false
+   alarms). Acceptance: `--ir` on the corpus, every program builds or stops on a named
+   unsupported opcode, none on an unexplained live-in or a register jump; the report gives the
+   count per error.
+5. **Structuring** (`structure.rs`): mask typing, per-lane branches, guards and their
    removal, discard → demote, Ramsey tree, multi-level break lowering plan. Tests: if, if/else,
    nested ifs, loop with break and continue, a 2-level break, an irreducible graph (error), a
-   cross-lane use (error).
-5. **SPIR-V builder + ALU** (`spirv/`): module builder, types/constants, registers as
-   variables, structured flow from chunk 4, scalar and VOP1/2/3/C ALU for f32/i32/u32 and the
-   exact-semantics list, `v_cvt_pkrtz`. Tests: `spirv-val` on each test program; opcode
-   vectors through a small CPU evaluator of our IR (same table semantics) where a GPU is absent.
-6. **I/O** (`io.rs`): user SGPRs and root block, VS system VGPRs and vertex attributes, PS
-   input VGPRs and `v_interp` raising, exports, linking by semantic. Milestone: the corpus VS
-   and the 9 PS translate and validate.
-7. **Resources** (`resource.rs`): tracing table, BDA buffer loads with bounds, view table
-   format, MIMG sample/load/resinfo, static samplers. Tests: synthetic programs for each
-   `Source`; one error test per refusal.
-8. **Vulkan pipelines and draws** (`backend/vk/pipeline.rs`): bindless set and view table
-   upkeep at submit, root block per draw, `VkPipeline` from translated stages + `GraphicsState`
-   (blend/raster/depth decoded from `raw`), cache, `vkCmdDraw*` replay. Real validation: the
-   splash screen against the expected frame.
-9. **Widening, driven by the corpus report**: VOP3P and f16, DS, FLAT/GLOBAL, MTBUF and typed
-   buffers, remaining VOP3, MIMG gather/compare/derivatives.
-10. **Wave ops**: DPP quad permutes → `OpGroupNonUniformQuad*` (fragment) or derivatives,
-    `v_readfirstlane` of uniform values = identity, ballot-style mask uses through subgroup ops
-    with wave64 emulated in 32-lane hosts as XCL describes; until then they are errors.
-
-Later: compute (`GLCompute`, thread ids, LDS, `USER_DATA` spill of root params past 16 user
-SGPRs **[VIctory]**), merged stages and NGG (decode their layouts first), mesh, ray queries.
+   cross-lane use (error); corpus count of programs that structure.
+6. **SPIR-V builder + ALU** (`spirv/`): module builder, types/constants, registers as
+   variables, structured flow from chunk 5, scalar and VOP1/2/3/C ALU for f32/i32/u32 and the
+   exact-semantics list, `v_cvt_pkrtz`, `v_fma_mix*` (2179 + 135 uses in the corpus: the only
+   VOP3P seen). Tests: `spirv-val` on each test program; opcode vectors through a small CPU
+   evaluator of our IR where a GPU is absent.
+7. **I/O** (`io.rs`): user SGPRs and root block; VS system VGPRs and vertex attributes; PS
+   input VGPRs and `v_interp` raising; exports and linking by semantic; CS (`GLCompute`,
+   `LocalSize` from the group size, thread id VGPRs, group id SGPRs); mesh (`MeshEXT`, one
+   invocation per lane, `exp pos/param` per vertex, `exp prim` → `PrimitiveTriangleIndicesEXT`
+   and cull, per-primitive params, `s_sendmsg GS_ALLOC_REQ` → `SetMeshOutputsEXT`).
+   Milestone: one program of each stage translates and validates.
+8. **Resources and memory** (`resource.rs`): tracing table, BDA buffer loads with bounds
+   (MUBUF, MTBUF typed formats, `global_load`), view table format, MIMG sample/load/resinfo/
+   store, static samplers, DS → `Workgroup` LDS (compute, mesh). Tests: synthetic programs for
+   each `Source`; one error test per refusal.
+9. **Vulkan pipelines, draws and dispatches** (`backend/vk/pipeline.rs`): bindless set and view
+   table upkeep at submit, root block per draw, graphics (VS+PS) and mesh (MS+PS,
+   `VK_EXT_mesh_shader`) pipelines from translated stages + `GraphicsState`, compute pipelines,
+   cache, `vkCmdDraw*` / `vkCmdDrawMeshTasks*` / `vkCmdDispatch*` replay. Real validation: the
+   first screen against the expected frame.
+10. **Wave ops**: `v_mbcnt` with a full mask = lane index, `v_readfirstlane` of uniform values =
+    identity, DPP quad permutes → `OpGroupNonUniformQuad*` or derivatives, ballot-style mask uses
+    through subgroup ops with wave64 emulated on 32-lane hosts as XCL describes. Mesh needs the
+    first two from chunk 7 on; the rest are errors until here, and the chunk 4-5 corpus counts
+    say how early this must move.
+11. **Widening, driven by the corpus report**: f16 and `v_pk_*`, remaining VOP3, MIMG
+    gather/compare/derivatives, FLAT/SCRATCH stores and atomics, ray queries, merged stages if a
+    title uses them (none in this corpus: its stages are VS, PS, CS, mesh only).
 
 ## Open questions
 
-- Which hardware stages the archive's programs use: if the splash VS is NGG (GS slot) the
-  first chunks need merged-stage stage data, not decoded yet. Chunk 1's dump answers it.
 - Wave32 bit (record +0x14 bit 5) and the VS system VGPR layout are VIctory's readings, not
   confirmed by the corpus (all wave64, VS reads only v0).
-- Stages seen in a title run (8634 distinct blobs): 3297 pixel, 2734 compute, 1569 mesh, 1034
-  vertex. Mesh shaders are common, so mesh (and compute) stage data and merged layouts are not
-  optional later work: the plan's "Later" list needs reordering. Of these, 1705 programs
-  (233315 instructions) decode fully with chunk 2; the rest stop at MIMG (4250 programs), MTBUF
-  (1567), DS (640), VOP3P (427), FLAT (45): chunks 7 and 9 come first. 332 programs contain
-  `s_setpc`/`s_swappc`/`s_call` (indirect jumps).
 - Root-layout and used-resource tables have up to a few hundred entries (the chunk 1 cap of 64
   refused 2486 vertex/pixel blobs; now 512, bounds-checked against the payload).
 - VOP3 interpolation (`v_interp_*_e64`) decodes; the f16 forms print `high`, not decoded.
-- `s0..s7` of the hardware VS/PS: content unknown; a read stops translation. With entry SGPRs
-  from s8 only, 941 of the 1705 fully decoded programs fail on an `s0..s7` read (compute and
-  mesh programs read them: 1363 build when s0 is allowed); 332 stop at an indirect jump.
+- The VS fetch routine: its address arrives in `s[4:5]`, its code is not in the blob. That it
+  only loads attributes into the stage data's VGPRs (and keeps every other register) is
+  VIctory's reading; chunk 4 checks that the stage data of each of the 332 lists attributes.
+- Compute programs reading `s0..s3` (about 50 `s_mov` / `s_and`): user data, or system SGPRs
+  before it when `RSRC2` says few user SGPRs? Chunk 4 answers it by decoding `RSRC2`.
 - Kind 0x12 XDAT entry, `PRIV` part (12 bytes), program-record bytes not listed: meaning unknown,
   ignored.
-- Bindless limits and `VK_EXT_shader_demote_to_helper_invocation` on lavapipe and the Intel
-  driver: to check with `nativ64-vkcheck` before chunk 8.
+- Bindless limits, `VK_EXT_shader_demote_to_helper_invocation` and `VK_EXT_mesh_shader` on
+  lavapipe and the Intel driver: to check with `nativ64-vkcheck` before chunk 9 (mesh is 18%
+  of the programs: without the extension those pipelines cannot be built at all).
