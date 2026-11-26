@@ -58,8 +58,12 @@ is `slot_trap::<AREA, SLOT>` which logs the area and slot once and answers `E_NO
 other API is refused and logged.
 
 `GameInput.dll` is imported by ordinal: `src/gameinput.rs` has an `ORDINALS` table like
-`ws2_32`, wired in `lookup_ordinal`. It exposes an `IGameInput` with no devices (readings are
-`GAMEINPUT_E_READING_NOT_FOUND`); callbacks are stored and never fire (TODO: evdev input).
+`ws2_32`, wired in `lookup_ordinal`. It exposes an `IGameInput` with one virtual gamepad (always
+connected; device callbacks enumerate it, readings answer `GetGamepadState`). Buttons come from
+`NATIV64_INPUT_SCRIPT` (`<mask hex>@<seconds>[+<duration>]`, comma separated, seconds from the
+first reading query, default hold 0.3 s: `4@25,4@35` presses A twice) and from
+`gameinput::set_keyboard_buttons`, which a window backend can call (none does yet: the Wayland
+backend has no seat). Reading callbacks are stored and never fire.
 
 ## Windowing (`src/windowing.rs`)
 

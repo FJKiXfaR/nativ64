@@ -1,4 +1,4 @@
-//! `GameInput.dll`: the console input API (`IGameInput`, v0), with no devices yet.
+//! `GameInput.dll`: the console input API (`IGameInput`, v0), with one virtual gamepad.
 //!
 //! The DLL's single export is ordinal 1, `GameInputCreate(IGameInput **)`. The object has the 22
 //! vtable slots of the v0 interface in published order (`IUnknown`, then GetCurrentTimestamp,
@@ -6,19 +6,35 @@
 //! RegisterReadingCallback, RegisterDeviceCallback, RegisterGuideButtonCallback,
 //! RegisterKeyboardLayoutCallback, StopCallback, UnregisterCallback, CreateDispatcher,
 //! CreateAggregateDevice, FindDeviceFromId, FindDeviceFromObject, FindDeviceFromPlatformHandle,
-//! FindDeviceFromPlatformString, EnableOemDeviceSupport, SetFocusPolicy). The slot order and
-//! IID come from the public GDK header as read through another loader's table; no code is shared.
+//! FindDeviceFromPlatformString, EnableOemDeviceSupport, SetFocusPolicy). The slot order, IID,
+//! device and reading interfaces, and button bits come from the public GDK header as read through
+//! another loader's table; no code is shared.
 //!
-//! Behaviour: no device exists, so every reading query is `GAMEINPUT_E_READING_NOT_FOUND` and
-//! lookups of a device report `GAMEINPUT_E_DEVICE_NOT_FOUND`. Registrations are stored and
-//! return a token but never fire. TODO: feed devices and readings from evdev, then deliver the
-//! device callbacks (with `GameInputAsyncEnumeration` semantics) and reading callbacks.
-//! `GetCurrentTimestamp` is microseconds on `CLOCK_MONOTONIC`.
+//! The one device is a gamepad, always connected (status `0x3`: connected, input enabled), so a
+//! title that registers a device callback with an enumeration is told about it once: inline for a
+//! blocking enumeration, on a thread of ours for an asynchronous one. Its readings (an
+//! `IGameInputReading` of kind gamepad, with `GetGamepadState`) have no sticks or triggers; the
+//! buttons come from two sources, OR-ed:
+//! - `NATIV64_INPUT_SCRIPT`, comma-separated `<mask hex>@<seconds>[+<duration>]` presses, the
+//!   seconds counted from the first reading query, the duration 0.3 s by default
+//!   (`4@25,20@30+1`: A at 25 s for 0.3 s, X at 30 s for one second). Bits: Menu 0x1, View 0x2,
+//!   A 0x4, B 0x8, X 0x10, Y 0x20, dpad up/down/left/right 0x40/0x80/0x100/0x200. Bad entries are
+//!   logged and skipped.
+//! - [`set_keyboard_buttons`], for a window backend that turns key events into buttons (no
+//!   backend does yet: the Wayland one has no seat).
+//!
+//! A new reading is made at every change of the buttons (the history keeps the last 128), so
+//! next/previous/temporal lookups work. Reading callbacks are stored and never fire; other
+//! lookups of a device report `GAMEINPUT_E_DEVICE_NOT_FOUND`. Device methods and reading kinds
+//! other than the gamepad are logged once and answer 0 / `E_NOTIMPL`. `GetCurrentTimestamp` is
+//! microseconds on `CLOCK_MONOTONIC`.
 
-use crate::com::{ComObject, Guid, IUnknownVtbl, E_INVALIDARG, E_NOTIMPL, HRESULT, S_OK};
+use crate::com::{add_ref, ComObject, Guid, IUnknownVtbl, E_INVALIDARG, E_NOTIMPL, HRESULT, S_OK};
+use crate::xgameruntime::{table, Table};
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 pub const GAMEINPUT_E_DEVICE_DISCONNECTED: HRESULT = 0x838A_0001u32 as i32;
 pub const GAMEINPUT_E_DEVICE_NOT_FOUND: HRESULT = 0x838A_0002u32 as i32;
@@ -43,7 +59,7 @@ pub enum Kind {
     KeyboardLayout,
 }
 
-/// A stored (never fired) callback registration.
+/// A stored callback registration (only device callbacks ever fire).
 #[derive(Clone, Copy, Debug)]
 pub struct Registration {
     pub token: u64,
@@ -52,14 +68,170 @@ pub struct Registration {
     pub callback: usize,
 }
 
-#[derive(Default)]
+/// Input kind of a gamepad, and the status of a connected device with input enabled.
+pub const KIND_GAMEPAD: u32 = 0x4_0000;
+pub const STATUS_CONNECTED: u32 = 0x3;
+/// `GameInputAsyncEnumeration`; 2 is the blocking one.
+const ASYNC_ENUMERATION: u32 = 1;
+
+/// Gamepad button bits.
+pub const MENU: u32 = 0x1;
+pub const VIEW: u32 = 0x2;
+pub const A: u32 = 0x4;
+pub const B: u32 = 0x8;
+pub const X: u32 = 0x10;
+pub const Y: u32 = 0x20;
+pub const UP: u32 = 0x40;
+pub const DOWN: u32 = 0x80;
+pub const LEFT: u32 = 0x100;
+pub const RIGHT: u32 = 0x200;
+
+/// Buttons held down on the host keyboard, set by the window backend.
+static KEYBOARD_BUTTONS: AtomicU32 = AtomicU32::new(0);
+
+/// Sets the gamepad buttons held on the host keyboard (a window backend calls this on key events).
+pub fn set_keyboard_buttons(mask: u32) {
+    KEYBOARD_BUTTONS.store(mask, Ordering::Relaxed);
+}
+
+/// Scripted presses: (button mask, start seconds, duration seconds).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Script(Vec<(u32, f64, f64)>);
+
+impl Script {
+    /// Parses `<mask hex>@<seconds>[+<duration>]` entries separated by commas; bad entries are
+    /// logged and skipped.
+    pub fn parse(text: &str) -> Script {
+        let mut presses = Vec::new();
+        for entry in text.split(',').map(str::trim).filter(|e| !e.is_empty()) {
+            match Script::entry(entry) {
+                Some(press) => presses.push(press),
+                None => eprintln!("nativ64: NATIV64_INPUT_SCRIPT: bad entry {entry:?} skipped"),
+            }
+        }
+        Script(presses)
+    }
+
+    fn entry(entry: &str) -> Option<(u32, f64, f64)> {
+        let (mask, when) = entry.split_once('@')?;
+        let mask = mask.trim_start_matches("0x");
+        let (start, hold) = match when.split_once('+') {
+            Some((start, hold)) => (start, hold.parse::<f64>().ok()?),
+            None => (when, 0.3),
+        };
+        let (mask, start) = (
+            u32::from_str_radix(mask, 16).ok()?,
+            start.parse::<f64>().ok()?,
+        );
+        (start >= 0.0 && hold > 0.0 && start.is_finite() && hold.is_finite())
+            .then_some((mask, start, hold))
+    }
+
+    /// The buttons held `seconds` after the first reading query.
+    pub fn buttons_at(&self, seconds: f64) -> u32 {
+        self.0
+            .iter()
+            .filter(|(_, start, hold)| seconds >= *start && seconds < start + hold)
+            .fold(0, |all, (mask, _, _)| all | mask)
+    }
+}
+
+/// One reading of the gamepad: a new one is made at every change of the buttons.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Entry {
+    pub sequence: u64,
+    pub timestamp: u64,
+    pub buttons: u32,
+}
+
+/// Readings kept for next / previous / temporal lookups.
+const HISTORY: usize = 128;
+
+/// Time since `CLOCK_MONOTONIC` zero in microseconds.
+fn now_micros() -> u64 {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: a valid out pointer.
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+    ts.tv_sec as u64 * 1_000_000 + ts.tv_nsec as u64 / 1000
+}
+
 pub struct State {
     next_token: AtomicU64,
-    regs: Mutex<Vec<Registration>>,
+    regs: Arc<Mutex<Vec<Registration>>>,
+    script: Script,
+    /// The first reading query: the script's time zero.
+    start: OnceLock<Instant>,
+    history: Mutex<Vec<Entry>>,
+    next_sequence: AtomicU64,
+}
+
+impl Default for State {
+    /// No script and no clock yet; only the keyboard can press anything.
+    fn default() -> State {
+        State::new(Script::default())
+    }
 }
 
 impl State {
-    fn register(&self, kind: Kind, context: *mut c_void, callback: *const c_void, out: *mut u64) {
+    pub fn new(script: Script) -> State {
+        State {
+            next_token: AtomicU64::new(0),
+            regs: Arc::default(),
+            script,
+            start: OnceLock::new(),
+            history: Mutex::default(),
+            next_sequence: AtomicU64::new(1),
+        }
+    }
+
+    /// The buttons held at `seconds` after the clock started.
+    fn buttons_at(&self, seconds: f64) -> u32 {
+        self.script.buttons_at(seconds) | KEYBOARD_BUTTONS.load(Ordering::Relaxed)
+    }
+
+    /// The newest reading: polls the buttons now, making a reading if they changed.
+    fn poll(&self) -> Entry {
+        let start = *self.start.get_or_init(Instant::now);
+        self.poll_at(start.elapsed(), now_micros())
+    }
+
+    fn poll_at(&self, elapsed: Duration, timestamp: u64) -> Entry {
+        let buttons = self.buttons_at(elapsed.as_secs_f64());
+        let mut history = self.history.lock().unwrap_or_else(|e| e.into_inner());
+        match history.last() {
+            Some(last) if last.buttons == buttons => *last,
+            _ => {
+                let entry = Entry {
+                    sequence: self.next_sequence.fetch_add(1, Ordering::Relaxed),
+                    timestamp,
+                    buttons,
+                };
+                history.push(entry);
+                if history.len() > HISTORY {
+                    history.remove(0);
+                }
+                entry
+            }
+        }
+    }
+
+    fn history(&self) -> Vec<Entry> {
+        self.history
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    fn register(
+        &self,
+        kind: Kind,
+        context: *mut c_void,
+        callback: *const c_void,
+        out: *mut u64,
+    ) -> u64 {
         let token = self.next_token.fetch_add(1, Ordering::Relaxed) + 1;
         self.regs
             .lock()
@@ -74,6 +246,7 @@ impl State {
             // SAFETY: non-null; the title passes room for a token.
             unsafe { out.write(token) };
         }
+        token
     }
     fn forget(&self, token: u64) -> bool {
         let mut regs = self.regs.lock().unwrap_or_else(|e| e.into_inner());
@@ -102,6 +275,195 @@ pub unsafe fn registrations(this: *mut Object) -> Vec<Registration> {
             .clone()
     }
 }
+
+/// `GameInputDeviceInfo`: what a title reads from `GetDeviceInfo`.
+#[repr(C)]
+#[derive(Default)]
+pub struct DeviceInfo {
+    size: u32,
+    vendor: u16,
+    product: u16,
+    revision: u16,
+    interface: u8,
+    collection: u8,
+    usage: [u16; 2],
+    versions: [u16; 8],
+    id: [u8; 32],
+    root_id: [u8; 32],
+    family: i32,
+    capabilities: u32,
+    supported_input: u32,
+    rumble_motors: u32,
+    /// Counts and optional detail pointers: none.
+    rest: [u64; 26],
+}
+const _: () = assert!(std::mem::offset_of!(DeviceInfo, id) == 0x20);
+
+const DEVICE_SLOTS: usize = 21;
+type DeviceObject = ComObject<Table<DEVICE_SLOTS>, DeviceInfo>;
+
+/// The virtual gamepad: made once, with a reference of its own so a title's last release of the
+/// reference it was handed does not free it.
+static DEVICE: LazyLock<usize> = LazyLock::new(|| {
+    let mut id = [0u8; 32];
+    id[..7].copy_from_slice(b"nativ64");
+    id[31] = 1;
+    let info = DeviceInfo {
+        size: size_of::<DeviceInfo>() as u32,
+        id,
+        root_id: id,
+        supported_input: KIND_GAMEPAD,
+        // Low and high frequency.
+        rumble_motors: 0x3,
+        ..DeviceInfo::default()
+    };
+    let device = DeviceObject::create(&DEVICE_VTBL, &[], info);
+    // SAFETY: just made.
+    unsafe { add_ref(device) };
+    device as usize
+});
+
+/// The virtual gamepad, as the pointer titles get.
+pub fn device() -> *mut c_void {
+    *DEVICE as *mut c_void
+}
+
+type Device = *mut DeviceObject;
+
+static LOGGED: Mutex<Vec<(u8, usize)>> = Mutex::new(Vec::new());
+
+/// A device or reading method not implemented: logged once, answers 0 (or `E_NOTIMPL`).
+extern "win64" fn unsupported<const WHICH: u8, const SLOT: usize>(_: *mut c_void) -> HRESULT {
+    let mut logged = LOGGED.lock().unwrap_or_else(|e| e.into_inner());
+    if !logged.contains(&(WHICH, SLOT)) {
+        logged.push((WHICH, SLOT));
+        let what = if WHICH == 0 { "device" } else { "reading" };
+        eprintln!(
+            "nativ64: unimplemented gameinput {what} method, slot {SLOT} (offset {:#x})",
+            SLOT * 8
+        );
+    }
+    E_NOTIMPL
+}
+
+extern "win64" fn device_info(this: Device) -> *const DeviceInfo {
+    // SAFETY: the device object.
+    unsafe { &(*this).data }
+}
+extern "win64" fn device_status(_: Device) -> u32 {
+    STATUS_CONNECTED
+}
+/// Rumble: there is no motor to drive.
+extern "win64" fn set_rumble(_: Device, _: *const f32) {}
+
+static DEVICE_VTBL: Table<DEVICE_SLOTS> = table!(DEVICE_SLOTS, DeviceInfo;
+    device_info,                // 3
+    device_status,              // 4
+    unsupported::<0, 5>,        // battery
+    unsupported::<0, 6>,        // force feedback
+    unsupported::<0, 7>,
+    unsupported::<0, 8>,
+    unsupported::<0, 9>,        // haptics
+    set_rumble,                 // 10
+    unsupported::<0, 11>,       // input synchronization
+    unsupported::<0, 12>,
+    unsupported::<0, 13>,       // power off
+    unsupported::<0, 14>,       // raw device access
+    unsupported::<0, 15>,
+    unsupported::<0, 16>,
+    unsupported::<0, 17>,
+    unsupported::<0, 18>,
+    unsupported::<0, 19>,
+    unsupported::<0, 20>,
+);
+
+/// A gamepad reading as `GetGamepadState` gives it (sticks and triggers stay at rest).
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct PadState {
+    buttons: u32,
+    left_trigger: f32,
+    right_trigger: f32,
+    left_x: f32,
+    left_y: f32,
+    right_x: f32,
+    right_y: f32,
+}
+const _: () = assert!(size_of::<PadState>() == 28);
+
+const READING_SLOTS: usize = 25;
+type ReadingObject = ComObject<Table<READING_SLOTS>, Entry>;
+type Reading = *mut ReadingObject;
+
+/// A new reading object (one reference) for `entry`.
+fn new_reading(entry: Entry) -> *mut c_void {
+    ReadingObject::create(&READING_VTBL, &[], entry) as *mut c_void
+}
+
+extern "win64" fn reading_kind(_: Reading) -> u32 {
+    KIND_GAMEPAD
+}
+extern "win64" fn reading_sequence(this: Reading, kind: u32) -> u64 {
+    if kind & KIND_GAMEPAD != 0 {
+        // SAFETY: a reading we handed out.
+        unsafe { (*this).data.sequence }
+    } else {
+        0
+    }
+}
+extern "win64" fn reading_timestamp(this: Reading) -> u64 {
+    // SAFETY: a reading we handed out.
+    unsafe { (*this).data.timestamp }
+}
+extern "win64" fn reading_device(_: Reading, out: *mut *mut c_void) {
+    if !out.is_null() {
+        // SAFETY: non-null; devices need no reference.
+        unsafe { out.write(device()) };
+    }
+}
+extern "win64" fn gamepad_state(this: Reading, out: *mut PadState) -> bool {
+    if out.is_null() {
+        return false;
+    }
+    // SAFETY: a reading we handed out; `out` has room for the state.
+    unsafe {
+        out.write(PadState {
+            // SAFETY: as above.
+            buttons: (*this).data.buttons,
+            ..PadState::default()
+        })
+    };
+    true
+}
+/// Kinds our device does not have: nothing to count or read.
+extern "win64" fn no_input(_: Reading) -> usize {
+    0
+}
+
+static READING_VTBL: Table<READING_SLOTS> = table!(READING_SLOTS, Entry;
+    reading_kind,      // 3
+    reading_sequence,  // 4
+    reading_timestamp, // 5
+    reading_device,    // 6
+    no_input,          // 7 raw report
+    no_input,          // 8 controller axes, buttons, switches
+    no_input,          // 9
+    no_input,          // 10
+    no_input,          // 11
+    no_input,          // 12
+    no_input,          // 13
+    no_input,          // 14 key count
+    no_input,          // 15 key state
+    no_input,          // 16 mouse
+    no_input,          // 17 touch
+    no_input,          // 18
+    no_input,          // 19 motion
+    no_input,          // 20 arcade stick
+    no_input,          // 21 flight stick
+    gamepad_state,     // 22
+    no_input,          // 23 racing wheel
+    no_input,          // 24 UI navigation
+);
 
 #[repr(C)]
 pub struct Vtbl {
@@ -168,40 +530,99 @@ fn fail(out: Out, hr: HRESULT) -> HRESULT {
 }
 
 unsafe extern "win64" fn get_current_timestamp(_: This) -> u64 {
-    let mut ts = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts);
-    ts.tv_sec as u64 * 1_000_000 + ts.tv_nsec as u64 / 1000
+    now_micros()
 }
+/// Hands `entry` to the title as a new reading, or reports there is none.
+fn hand(out: Out, entry: Option<Entry>) -> HRESULT {
+    match entry {
+        Some(entry) => {
+            if out.is_null() {
+                return S_OK;
+            }
+            // SAFETY: non-null; the title passes room for a pointer.
+            unsafe { out.write(new_reading(entry)) };
+            S_OK
+        }
+        None => fail(out, GAMEINPUT_E_READING_NOT_FOUND),
+    }
+}
+
+/// Whether a query for `kinds` on `device` (NULL: any) reaches the gamepad.
+fn selects_pad(kinds: u32, device: *mut c_void) -> bool {
+    kinds & KIND_GAMEPAD != 0 && (device.is_null() || device == self::device())
+}
+
 unsafe extern "win64" fn get_current_reading(
-    _: This,
-    _kinds: u32,
-    _dev: *mut c_void,
+    this: This,
+    kinds: u32,
+    dev: *mut c_void,
     out: Out,
 ) -> HRESULT {
-    fail(out, GAMEINPUT_E_READING_NOT_FOUND)
-}
-unsafe extern "win64" fn get_relative_reading(
-    _: This,
-    reference: *mut c_void,
-    _kinds: u32,
-    _dev: *mut c_void,
-    out: Out,
-) -> HRESULT {
-    if reference.is_null() {
+    if !dev.is_null() && dev != device() {
         return fail(out, E_INVALIDARG);
     }
-    fail(out, GAMEINPUT_E_READING_NOT_FOUND)
+    let entry = (*this).data.poll();
+    hand(out, selects_pad(kinds, dev).then_some(entry))
 }
-unsafe extern "win64" fn get_temporal_reading(
-    _: This,
-    _time: u64,
-    _dev: *mut c_void,
+/// The reading after (`forward`) or before `reference`, in the history.
+unsafe fn relative(
+    this: This,
+    reference: *mut c_void,
+    kinds: u32,
+    dev: *mut c_void,
+    out: Out,
+    forward: bool,
+) -> HRESULT {
+    if reference.is_null() || (!dev.is_null() && dev != device()) {
+        return fail(out, E_INVALIDARG);
+    }
+    let state = &(*this).data;
+    state.poll();
+    let sequence = (*(reference as Reading)).data.sequence;
+    let history = state.history();
+    let found = if forward {
+        history.iter().find(|e| e.sequence > sequence)
+    } else {
+        history.iter().rev().find(|e| e.sequence < sequence)
+    };
+    hand(out, found.copied().filter(|_| selects_pad(kinds, dev)))
+}
+unsafe extern "win64" fn get_next_reading(
+    this: This,
+    reference: *mut c_void,
+    kinds: u32,
+    dev: *mut c_void,
     out: Out,
 ) -> HRESULT {
-    fail(out, GAMEINPUT_E_READING_NOT_FOUND)
+    relative(this, reference, kinds, dev, out, true)
+}
+unsafe extern "win64" fn get_previous_reading(
+    this: This,
+    reference: *mut c_void,
+    kinds: u32,
+    dev: *mut c_void,
+    out: Out,
+) -> HRESULT {
+    relative(this, reference, kinds, dev, out, false)
+}
+/// The last reading made at or before `time` (microseconds on the timestamp clock).
+unsafe extern "win64" fn get_temporal_reading(
+    this: This,
+    time: u64,
+    dev: *mut c_void,
+    out: Out,
+) -> HRESULT {
+    if !dev.is_null() && dev != device() {
+        return fail(out, E_INVALIDARG);
+    }
+    let state = &(*this).data;
+    state.poll();
+    let found = state
+        .history()
+        .into_iter()
+        .rev()
+        .find(|e| e.timestamp <= time);
+    hand(out, found)
 }
 unsafe extern "win64" fn register_reading_callback(
     this: This,
@@ -215,17 +636,62 @@ unsafe extern "win64" fn register_reading_callback(
     (*this).data.register(Kind::Reading, context, callback, out);
     S_OK
 }
+/// (token, context, device, timestamp, current status, previous status)
+type DeviceCallback = unsafe extern "win64" fn(u64, *mut c_void, *mut c_void, u64, u32, u32);
+
+/// Reports the connected gamepad to the new registration when it asked for an enumeration: before
+/// returning (blocking), or from a thread of ours (asynchronous).
 unsafe extern "win64" fn register_device_callback(
     this: This,
-    _dev: *mut c_void,
-    _kinds: u32,
-    _status: u32,
-    _enumeration: u32,
+    dev: *mut c_void,
+    kinds: u32,
+    status: u32,
+    enumeration: u32,
     context: *mut c_void,
     callback: *const c_void,
     out: *mut u64,
 ) -> HRESULT {
-    (*this).data.register(Kind::Device, context, callback, out);
+    if callback.is_null() {
+        return E_INVALIDARG;
+    }
+    let state = &(*this).data;
+    let token = state.register(Kind::Device, context, callback, out);
+    let wanted = enumeration != 0 && selects_pad(kinds, dev) && status & STATUS_CONNECTED != 0;
+    eprintln!(
+        "nativ64: gameinput device callback (kinds {kinds:#x}, status {status:#x}, enumeration {enumeration}): {}",
+        if wanted { "the virtual gamepad" } else { "no device" }
+    );
+    if wanted {
+        let regs = state.regs.clone();
+        let (context, callback, device) = (context as usize, callback as usize, device() as usize);
+        let deliver = move || {
+            let live = regs
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .any(|r| r.token == token);
+            if live {
+                // SAFETY: the callback the title registered with its context.
+                let callback: DeviceCallback = unsafe { std::mem::transmute(callback) };
+                unsafe {
+                    callback(
+                        token,
+                        context as *mut c_void,
+                        device as *mut c_void,
+                        now_micros(),
+                        STATUS_CONNECTED,
+                        0,
+                    )
+                };
+            }
+        };
+        match enumeration {
+            ASYNC_ENUMERATION => {
+                std::thread::spawn(deliver);
+            }
+            _ => deliver(),
+        }
+    }
     S_OK
 }
 unsafe extern "win64" fn register_guide_button_callback(
@@ -287,8 +753,8 @@ static VTBL: Vtbl = Vtbl {
     unknown: IUnknownVtbl::new(),
     get_current_timestamp,
     get_current_reading,
-    get_next_reading: get_relative_reading,
-    get_previous_reading: get_relative_reading,
+    get_next_reading,
+    get_previous_reading,
     get_temporal_reading,
     register_reading_callback,
     register_device_callback,
@@ -311,12 +777,16 @@ pub static ORDINALS: &[(u16, &str)] = &[(1, "GameInputCreate")];
 
 win32! {
     module "gameinput";
-    // Creates an input object with one reference (no devices).
+    // Creates an input object with one reference (one virtual gamepad).
     Native fn GameInputCreate(out: *mut *mut Object) -> HRESULT {
         if out.is_null() {
             return E_INVALIDARG;
         }
-        *out = Object::create(&VTBL, &IIDS, State::default());
+        let script = match std::env::var("NATIV64_INPUT_SCRIPT") {
+            Ok(text) => Script::parse(&text),
+            Err(_) => Script::default(),
+        };
+        *out = Object::create(&VTBL, &IIDS, State::new(script));
         S_OK
     }
 }
@@ -373,34 +843,313 @@ mod tests {
         }
     }
 
+    /// The state of a reading object through its vtable.
+    unsafe fn pad_buttons(reading: *mut c_void) -> u32 {
+        let get: unsafe extern "win64" fn(*mut c_void, *mut PadState) -> bool =
+            crate::xgameruntime::method(reading, 22);
+        let mut st = PadState {
+            buttons: 0xdead,
+            ..PadState::default()
+        };
+        assert!(get(reading, &mut st));
+        assert_eq!(st.left_trigger, 0.0);
+        st.buttons
+    }
+
+    unsafe fn release_reading(reading: *mut c_void) -> u32 {
+        let rel: unsafe extern "win64" fn(*mut c_void) -> u32 =
+            crate::xgameruntime::method(reading, 2);
+        rel(reading)
+    }
+
     #[test]
-    fn readings_not_found() {
+    fn script_parsing_and_timing() {
+        let s = Script::parse("4@25,0x20@30+1, 3@1.5+0.5 ,bad,4@,@3,zz@1,4@-1,4@1+0");
+        assert_eq!(s.0, vec![(4, 25.0, 0.3), (0x20, 30.0, 1.0), (3, 1.5, 0.5)]);
+        assert_eq!(s.buttons_at(0.0), 0);
+        assert_eq!(s.buttons_at(1.5), 3);
+        assert_eq!(s.buttons_at(1.99), 3);
+        assert_eq!(s.buttons_at(2.0), 0);
+        assert_eq!(s.buttons_at(25.0), A);
+        assert_eq!(s.buttons_at(25.31), 0);
+        assert_eq!(s.buttons_at(30.9), Y);
+        // Overlapping presses are OR-ed.
+        assert_eq!(Script::parse("4@1+2,8@2").buttons_at(2.1), A | B);
+    }
+
+    #[test]
+    fn readings_follow_the_script_and_the_history() {
+        unsafe {
+            let (o, v) = create();
+            (*o).data = State::new(Script::parse("4@1+1,20@3"));
+            let np = std::ptr::null_mut();
+            let st = &(*o).data;
+            // Drive the clock by hand: three polls at 0 s, 1.5 s and 2.5 s, then 3.1 s.
+            let at = |s: f64, t| st.poll_at(Duration::from_secs_f64(s), t);
+            let (e0, e1) = (at(0.0, 100), at(1.5, 200));
+            assert_eq!((e0.buttons, e1.buttons), (0, A));
+            assert_eq!(at(1.7, 250), e1, "no change, same reading");
+            let e2 = at(2.5, 300);
+            let e3 = at(3.1, 400);
+            assert_eq!((e2.buttons, e3.buttons), (0, Y));
+            assert_eq!(
+                [e0.sequence, e1.sequence, e2.sequence, e3.sequence],
+                [1, 2, 3, 4]
+            );
+
+            let mut out: *mut c_void = 8 as *mut c_void;
+            assert_eq!((v.get_current_reading)(o, KIND_GAMEPAD, np, &mut out), S_OK);
+            let cur = out;
+            // The real clock is near 0 s: no press yet.
+            assert_eq!(pad_buttons(cur), 0);
+            // Temporal: the reading at or before time 250 is e1's; before everything is none.
+            assert_eq!((v.get_temporal_reading)(o, 250, np, &mut out), S_OK);
+            assert_eq!(pad_buttons(out), A);
+            assert_eq!(release_reading(out), 0);
+            assert_eq!(
+                (v.get_temporal_reading)(o, 50, np, &mut out),
+                GAMEINPUT_E_READING_NOT_FOUND
+            );
+            assert!(out.is_null());
+            // Previous / next of the oldest reading reached by the history.
+            let r0 = new_reading(e1);
+            assert_eq!(
+                (v.get_next_reading)(o, r0, KIND_GAMEPAD, np, &mut out),
+                S_OK
+            );
+            assert_eq!(pad_buttons(out), 0);
+            assert_eq!(release_reading(out), 0);
+            assert_eq!(
+                (v.get_previous_reading)(o, r0, KIND_GAMEPAD, np, &mut out),
+                S_OK
+            );
+            assert_eq!(pad_buttons(out), 0);
+            release_reading(out);
+            assert_eq!(release_reading(r0), 0);
+            let newest = new_reading(st.poll());
+            assert_eq!(
+                (v.get_next_reading)(o, newest, KIND_GAMEPAD, np, &mut out),
+                GAMEINPUT_E_READING_NOT_FOUND
+            );
+            release_reading(newest);
+            release_reading(cur);
+            (v.unknown.release)(o);
+        }
+    }
+
+    #[test]
+    fn reading_objects_describe_themselves() {
+        unsafe {
+            let r = new_reading(Entry {
+                sequence: 9,
+                timestamp: 77,
+                buttons: B,
+            });
+            let slot = |n| {
+                crate::xgameruntime::method::<unsafe extern "win64" fn(*mut c_void) -> u64>(r, n)
+            };
+            assert_eq!(slot(3)(r), KIND_GAMEPAD as u64);
+            assert_eq!(slot(5)(r), 77);
+            let seq: unsafe extern "win64" fn(*mut c_void, u32) -> u64 =
+                crate::xgameruntime::method(r, 4);
+            assert_eq!(seq(r, KIND_GAMEPAD), 9);
+            assert_eq!(seq(r, 0x10), 0, "not a keyboard reading");
+            let dev: unsafe extern "win64" fn(*mut c_void, *mut *mut c_void) =
+                crate::xgameruntime::method(r, 6);
+            let mut d = std::ptr::null_mut();
+            dev(r, &mut d);
+            assert_eq!(d, device());
+            assert_eq!(pad_buttons(r), B);
+            // Kinds the pad does not have: no keys, no count.
+            assert_eq!(slot(14)(r), 0);
+            let state: unsafe extern "win64" fn(*mut c_void, *mut PadState) -> bool =
+                crate::xgameruntime::method(r, 22);
+            assert!(!state(r, std::ptr::null_mut()));
+            // The object counts references.
+            let add: unsafe extern "win64" fn(*mut c_void) -> u32 =
+                crate::xgameruntime::method(r, 1);
+            assert_eq!(add(r), 2);
+            assert_eq!(release_reading(r), 1);
+            assert_eq!(release_reading(r), 0);
+        }
+    }
+
+    #[test]
+    fn the_device_is_a_connected_gamepad() {
+        unsafe {
+            let d = device();
+            assert_eq!(d, device(), "one device");
+            let info: unsafe extern "win64" fn(*mut c_void) -> *const DeviceInfo =
+                crate::xgameruntime::method(d, 3);
+            let status: unsafe extern "win64" fn(*mut c_void) -> u32 =
+                crate::xgameruntime::method(d, 4);
+            let i = &*info(d);
+            assert_eq!(i.size as usize, size_of::<DeviceInfo>());
+            assert_eq!(i.supported_input, KIND_GAMEPAD);
+            assert_eq!(i.rumble_motors, 3);
+            assert_eq!(status(d), STATUS_CONNECTED);
+            let rumble: unsafe extern "win64" fn(*mut c_void, *const f32) =
+                crate::xgameruntime::method(d, 10);
+            rumble(d, [0.5f32; 4].as_ptr());
+            // A balanced AddRef / Release leaves the device alive.
+            let add: unsafe extern "win64" fn(*mut c_void) -> u32 =
+                crate::xgameruntime::method(d, 1);
+            let rel: unsafe extern "win64" fn(*mut c_void) -> u32 =
+                crate::xgameruntime::method(d, 2);
+            add(d);
+            rel(d);
+            assert_eq!(status(d), STATUS_CONNECTED);
+            let battery: unsafe extern "win64" fn(*mut c_void) -> HRESULT =
+                crate::xgameruntime::method(d, 5);
+            assert_eq!(battery(d), E_NOTIMPL);
+        }
+    }
+
+    #[test]
+    fn keyboard_buttons_press_the_pad() {
+        let st = State::default();
+        set_keyboard_buttons(A | UP);
+        let held = st.poll_at(Duration::ZERO, 1);
+        set_keyboard_buttons(0);
+        assert_eq!(held.buttons, A | UP);
+        assert_eq!(st.poll_at(Duration::ZERO, 2).buttons, 0);
+    }
+
+    type Seen = (u64, usize, usize, u32, u32);
+    static SEEN: Mutex<Vec<Seen>> = Mutex::new(Vec::new());
+    unsafe extern "win64" fn on_device(
+        token: u64,
+        ctx: *mut c_void,
+        dev: *mut c_void,
+        _t: u64,
+        now: u32,
+        before: u32,
+    ) {
+        SEEN.lock()
+            .unwrap()
+            .push((token, ctx as usize, dev as usize, now, before));
+    }
+
+    #[test]
+    fn device_callbacks_enumerate_the_pad() {
+        unsafe {
+            let (o, v) = create();
+            let np = std::ptr::null_mut();
+            let cb = on_device as *const c_void;
+            let seen = |ctx: usize| {
+                SEEN.lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|e| e.1 == ctx)
+                    .copied()
+                    .collect::<Vec<_>>()
+            };
+            // Blocking enumeration: delivered before the call returns.
+            let mut t = 0;
+            assert_eq!(
+                (v.register_device_callback)(
+                    o,
+                    np,
+                    KIND_GAMEPAD,
+                    0x3,
+                    2,
+                    0x111 as *mut c_void,
+                    cb,
+                    &mut t
+                ),
+                S_OK
+            );
+            assert_eq!(
+                seen(0x111),
+                vec![(t, 0x111, device() as usize, STATUS_CONNECTED, 0)]
+            );
+            // No enumeration, a keyboard-only filter, another device, a status filter that excludes
+            // connected devices: nothing is delivered.
+            for (kinds, status, enumeration, ctx) in [
+                (KIND_GAMEPAD, 3, 0, 0x222),
+                (0x10, 3, 2, 0x333),
+                (KIND_GAMEPAD, 0, 2, 0x444),
+            ] {
+                assert_eq!(
+                    (v.register_device_callback)(
+                        o,
+                        np,
+                        kinds,
+                        status,
+                        enumeration,
+                        ctx as *mut c_void,
+                        cb,
+                        std::ptr::null_mut()
+                    ),
+                    S_OK
+                );
+                assert!(seen(ctx).is_empty(), "{ctx:#x}");
+            }
+            assert_eq!(
+                (v.register_device_callback)(
+                    o,
+                    0x99 as *mut c_void,
+                    KIND_GAMEPAD,
+                    3,
+                    2,
+                    0x555 as *mut c_void,
+                    cb,
+                    &mut t
+                ),
+                S_OK
+            );
+            assert!(seen(0x555).is_empty());
+            // A NULL callback is refused.
+            assert_eq!(
+                (v.register_device_callback)(o, np, 1, 3, 2, np, std::ptr::null(), &mut t),
+                E_INVALIDARG
+            );
+            // Asynchronous enumeration: delivered from another thread.
+            assert_eq!(
+                (v.register_device_callback)(
+                    o,
+                    np,
+                    KIND_GAMEPAD,
+                    3,
+                    1,
+                    0x666 as *mut c_void,
+                    cb,
+                    &mut t
+                ),
+                S_OK
+            );
+            for _ in 0..200 {
+                if !seen(0x666).is_empty() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            assert_eq!(seen(0x666).len(), 1);
+            (v.unknown.release)(o);
+        }
+    }
+
+    #[test]
+    fn lookups_and_dispatchers() {
         unsafe {
             let (o, v) = create();
             let np = std::ptr::null_mut();
             let mut out: *mut c_void = 8 as *mut c_void;
+            let r = 16 as *mut c_void;
+            // Not the pad's kind, or a device that is not ours.
             assert_eq!(
-                (v.get_current_reading)(o, 1, np, &mut out),
+                (v.get_current_reading)(o, 0x10, np, &mut out),
                 GAMEINPUT_E_READING_NOT_FOUND
             );
             assert!(out.is_null());
-            let r = 16 as *mut c_void;
             assert_eq!(
-                (v.get_next_reading)(o, r, 1, np, &mut out),
-                GAMEINPUT_E_READING_NOT_FOUND
-            );
-            assert_eq!(
-                (v.get_previous_reading)(o, r, 1, np, &mut out),
-                GAMEINPUT_E_READING_NOT_FOUND
+                (v.get_current_reading)(o, KIND_GAMEPAD, r, &mut out),
+                E_INVALIDARG
             );
             assert_eq!((v.get_next_reading)(o, np, 1, np, &mut out), E_INVALIDARG);
-            assert_eq!(
-                (v.get_temporal_reading)(o, 5, np, &mut out),
-                GAMEINPUT_E_READING_NOT_FOUND
-            );
             // NULL out pointers are tolerated.
             assert_eq!(
-                (v.get_current_reading)(o, 1, np, std::ptr::null_mut()),
+                (v.get_current_reading)(o, 0x10, np, std::ptr::null_mut()),
                 GAMEINPUT_E_READING_NOT_FOUND
             );
             assert_eq!((v.create_dispatcher)(o, &mut out), E_NOTIMPL);

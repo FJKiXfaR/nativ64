@@ -35,13 +35,17 @@ pub fn new_object<const N: usize>(table: &'static Table<N>, iids: &'static [Guid
     Obj::<N>::create(table, iids, ()) as *mut c_void
 }
 
-/// `Table<$n>` with the `IUnknown` slots filled in, then the given methods (slot 3 on).
+/// `Table<$n>` with the `IUnknown` slots filled in (for an object whose payload is `$t`, `()` by
+/// default), then the given methods (slot 3 on).
 macro_rules! table {
     ($n:expr; $($slot:expr),* $(,)?) => {
+        $crate::xgameruntime::table!($n, (); $($slot),*)
+    };
+    ($n:expr, $t:ty; $($slot:expr),* $(,)?) => {
         $crate::xgameruntime::Table::<$n>([
-            $crate::com::query_interface::<$crate::xgameruntime::Table<$n>, ()> as *const (),
-            $crate::com::add_ref::<$crate::xgameruntime::Table<$n>, ()> as *const (),
-            $crate::com::release::<$crate::xgameruntime::Table<$n>, ()> as *const (),
+            $crate::com::query_interface::<$crate::xgameruntime::Table<$n>, $t> as *const (),
+            $crate::com::add_ref::<$crate::xgameruntime::Table<$n>, $t> as *const (),
+            $crate::com::release::<$crate::xgameruntime::Table<$n>, $t> as *const (),
             $($slot as *const ()),*
         ])
     };
