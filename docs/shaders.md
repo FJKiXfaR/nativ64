@@ -1211,6 +1211,38 @@ it says otherwise.
      name, a run that grew and its retired import, the description offsets. The 04913 fix has no
      test (no validation layer in the tests).
 
+   **Chunk 10b, part 3: rectangle lists** (Opus, 2026-11-26, from the first 10b run)
+   **[seen]**: the topology the title draws with is not quads: pipeline serials 50546 / 50547
+   (trace 50545 / 50546) have stream topology *type* 19 and list topology **17, rectangles**
+   (every frame from 3 on, both skipped as `state`). A rectangle is three corners in any order;
+   the hardware adds the fourth opposite the right angle, from the **vertex shader's outputs**.
+   Trace 50546's vs reads its vertices from an SRV and 50545's through a fetch shader, so an
+   expansion of the vertex inputs on the CPU (VIctory's fallback) does not apply: the fourth
+   corner is made on the GPU by a generated geometry shader, as VIctory does when it can
+   (facts: VIctory `crates/victory-shader/src/emit/rect.rs`).
+   * Device: `geometryShader` becomes required when present and optional otherwise; without it
+     rectangle draws are skipped by name (`pipeline`).
+   * Pipeline: a pipeline whose type is 19 (or a list topology of 17 at its first draw: build
+     both variants lazily, cached by (serial, rectangles)) gets a third stage, `rect_gs`, emitted
+     by the shader crate from the VS's output interface (every `Location` output plus
+     `Position`, same types, same decorations, flat ones kept flat): input `triangles`.
+     Corner c = the right angle, opposite the longest side
+     in post-divide x, y (ties or NaN → corner 1); `va` = the corner before c, `vb` the one
+     after; emit `(v0, v1, v2)` then `(va, vb, v3)` as two separate triangles (output
+     `triangle_strip`, two `EndPrimitive`, `max_vertices 6`) so both turn the same way, with v3 = va + vb
+     - vc for every float output and `Position`, and va's value for integer / flat outputs.
+     `PrimitiveId` and clip distances: pass as for any output (clip distances interpolated like
+     floats).
+   * Draws: list topology 17 binds as `TRIANGLE_LIST` (3 vertices per rectangle) and needs the
+     rectangle pipeline variant; a rectangle draw on a pipeline without it is a `pipeline`
+     skip. The quad path of part 2 stays for 19; 18 and 20 stay refused.
+   * Tests: `right_angle` on the corners in all six orders and a degenerate case (CPU twin of
+     the GS rule); a lavapipe draw of one rectangle (three corners, the right angle in the
+     middle of the list) with a colour output, read back: the full axis-aligned rectangle is
+     covered, nothing outside; the same with a flat integer output; the generated GS passes
+     `spirv-val`.
+   * Real validation: frames 4+ show trace 50545's and 50546's rectangles over pipeline 56's
+     result.
 11. **Widening, driven by the corpus report**: f16 and `v_pk_*`, remaining VOP3, MIMG
     gather/compare/derivatives, FLAT/SCRATCH stores and atomics, ray queries, merged stages if a
     title uses them (none in this corpus: its stages are VS, PS, CS, mesh only).
