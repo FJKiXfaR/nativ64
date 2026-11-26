@@ -1298,13 +1298,27 @@ macro_rules! i3 {
 }
 
 impl<K: Backend> X<'_, K> {
+    /// Source `i`, dword `k`, of a mask operation. A scalar that is not a mask gives the
+    /// lane's bit in its dword 0 (the probe's lane is 0): every dword of a wave64 mask holds
+    /// that one bit.
+    fn mask_src(&self, i: usize, k: usize, want_b: bool) -> R<Opd<K>> {
+        match self.src(i, k)? {
+            Opd::V(_) if want_b && k > 0 => self.src(i, 0),
+            o => Ok(o),
+        }
+    }
+
     fn bitop(&mut self, bit: Bit, words: usize) -> R<Res<K>> {
         let unary = matches!(bit, Bit::Not | Bit::Mov);
         let mut data = Vec::new();
         for k in 0..words {
-            let a = self.src(0, k)?;
-            let b = if unary { None } else { Some(self.src(1, k)?) };
             let want_b = self.c.dst_mask.get(k).copied().unwrap_or(false);
+            let a = self.mask_src(0, k, want_b)?;
+            let b = if unary {
+                None
+            } else {
+                Some(self.mask_src(1, k, want_b)?)
+            };
             data.push(self.bit(bit, a, b, want_b));
         }
         let scc = if self.writes_scc() {
@@ -1332,9 +1346,9 @@ impl<K: Backend> X<'_, K> {
         for k in 0..w {
             let reg = if k == 0 { Reg::ExecLo } else { Reg::ExecHi };
             let e = self.imp(reg).ok_or_else(|| self.un())?;
-            let s = self.src(0, k)?;
-            old.push(e);
             let want_b = self.c.dst_mask.get(w + k).copied().unwrap_or(false);
+            let s = self.mask_src(0, k, want_b)?;
+            old.push(e);
             new.push(self.bit(bit, s, Some(e), want_b));
         }
         let scc = self.scc_nz(&new);
@@ -1344,8 +1358,8 @@ impl<K: Backend> X<'_, K> {
             // `exec = sdst = src & ~exec`; SCC = result != 0.
             let mut data = Vec::new();
             for (k, &e) in old.iter().enumerate() {
-                let s = self.src(0, k)?;
                 let want_b = self.c.dst_mask.get(k).copied().unwrap_or(false);
+                let s = self.mask_src(0, k, want_b)?;
                 data.push(self.bit(bit, s, Some(e), want_b));
             }
             data.extend(new);

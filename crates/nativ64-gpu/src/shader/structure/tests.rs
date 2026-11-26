@@ -232,7 +232,7 @@ fn mask_typing_follows_the_allowed_uses() {
         0xbe860804, // s_not_b64 s[6:7], s[4:5]
         0xd5010002, 0x001a0300, // v_cndmask_b32 v2, v0, v1, s[6:7]
         0x50060300, // v_addc_co_u32 v3, vcc, v0, v1, vcc
-        0x8780087e, // s_and_b64 s[0:1], exec, s[8:9]: mixes a mask with a scalar
+        0x8780087e, // s_and_b64 s[0:1], exec, s[8:9]: a scalar beside a mask: its bit n for lane n
         0xbf810000, // s_endpgm
     ];
     let f = func(&words);
@@ -259,14 +259,27 @@ fn mask_typing_follows_the_allowed_uses() {
         );
     }
     assert!(named(Reg::V(2)).iter().all(|v| !m.is_mask(*v)));
-    // only the last instruction crosses lanes: the cndmask and the carry-in are allowed uses
-    assert_eq!(
-        m.cross_lane
-            .iter()
-            .map(|c| c.name.as_str())
-            .collect::<Vec<_>>(),
-        vec!["s_and_b64"]
-    );
+    // the cndmask, the carry-in and the scalar bit are allowed uses
+    assert!(m.cross_lane.is_empty(), "{:?}", m.cross_lane);
+    for r in [Reg::S(0), Reg::S(1)] {
+        assert!(
+            named(r).iter().all(|v| m.is_mask(*v)),
+            "{r} should be a mask"
+        );
+    }
+}
+
+#[test]
+fn scalars_alone_do_not_make_a_mask() {
+    // s_and_b64 s[0:1], s[8:9], s[10:11]: no mask input
+    let f = func(&[0x8780_0a08, 0xbf810000]);
+    let m = type_masks(&f);
+    assert!(m.cross_lane.is_empty());
+    for (k, i) in f.vals.iter().enumerate() {
+        if matches!(i.def, ValDef::Inst { .. }) {
+            assert!(!m.is_mask(Val(k as u32)), "{} should not be a mask", i.reg);
+        }
+    }
 }
 
 #[test]

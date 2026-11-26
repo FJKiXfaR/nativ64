@@ -259,3 +259,5 @@ f902060600062616	v_add_f32_sdwa v3, |v0|, -v1 dst_sel:DWORD dst_unused:UNUSED_PA
 034782be	s_andn2_wrexec_b32 s2, s3
 6a3982be	[w64] s_andn1_wrexec_b64 s[2:3], vcc
 6a3c83be	s_and_saveexec_b32 s3, vcc_lo
+7e007e87	s_and_b32 exec_lo, exec_lo, s0
+7e00fe87	[w64] s_and_b64 exec, exec, s[0:1]

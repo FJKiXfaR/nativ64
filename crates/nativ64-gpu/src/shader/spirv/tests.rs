@@ -1701,6 +1701,22 @@ fn mask_ops_in_wave32_and_wave64() {
             &[(S2, 1), (S3, 1), (EXEC, 1), (Reg::ExecHi, 1), (SCC, 1)][..],
         )],
     );
+    // a scalar beside a mask: the lane's bit is bit 0 (the probe's lane), in every dword
+    let bits = |s0: u32, s1: u32| -> Io { Box::leak(Box::new([(S0, s0), (S1, s1)])) };
+    check(
+        &["s_and_b32 exec_lo, exec_lo, s0"],
+        &[
+            (bits(0b101, 0), &[(EXEC, 1), (SCC, 1)][..]),
+            (bits(0b110, 0), &[(EXEC, 0), (SCC, 0)][..]),
+        ],
+    );
+    check(
+        &["[w64] s_and_b64 exec, exec, s[0:1]"],
+        &[
+            (bits(1, 2), &[(EXEC, 1), (Reg::ExecHi, 1)][..]),
+            (bits(2, 1), &[(EXEC, 0), (Reg::ExecHi, 0)][..]),
+        ],
+    );
     let cmp = "[w64] v_cmp_lt_f32 vcc, v0, v1";
     check(
         &[cmp, "[w64] s_and_b64 s[2:3], exec, vcc"],

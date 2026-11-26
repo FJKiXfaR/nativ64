@@ -215,6 +215,7 @@ impl Masks {
         self.masks.contains(&v)
     }
 
+    /// A mask, or one of the constants 0 / -1.
     fn src_ok(&self, s: &Src) -> bool {
         match s {
             Src::Const(c) => *c == 0 || *c == u32::MAX,
@@ -222,6 +223,12 @@ impl Masks {
             Src::Undef => true,
             _ => false,
         }
+    }
+
+    /// What a mask operation may combine: `src_ok`, or a scalar that is not a mask, whose bit
+    /// n is the bit of lane n (`s_and_b32 exec_lo, exec_lo, s5`).
+    fn bit_src_ok(&self, s: &Src) -> bool {
+        matches!(s, Src::Const(_) | Src::Val(_) | Src::Undef)
     }
 
     fn is_mask_src(&self, s: &Src) -> bool {
@@ -282,7 +289,10 @@ pub fn type_masks(f: &Func) -> Masks {
                 }
                 Cand::Op(b, k, op) => {
                     let inst = &f.blocks[b].insts[k];
-                    let ok = mask_srcs(inst, op).all(|s| m.src_ok(&s));
+                    // a mask operation reads at least one mask; scalar bits are allowed beside it
+                    let ok = mask_srcs(inst, op).all(|s| m.bit_src_ok(&s))
+                        && (mask_srcs(inst, op).any(|s| m.is_mask_src(&s))
+                            || mask_srcs(inst, op).all(|s| m.src_ok(&s)));
                     (ok, mask_dsts(inst).collect())
                 }
             };
@@ -434,9 +444,8 @@ pub fn cross_lane_use(m: &Masks, inst: &Inst) -> Option<String> {
         return None;
     }
     if let Some(op) = mask_op(i) {
-        // fine when it types: every input is a mask or a constant; else it mixes a mask with
-        // a scalar
-        return if mask_srcs(inst, op).all(|s| m.src_ok(&s)) {
+        // fine when it types: every input is a mask, a constant or a scalar bit
+        return if mask_srcs(inst, op).all(|s| m.bit_src_ok(&s)) {
             None
         } else {
             Some(i.name().to_string())
