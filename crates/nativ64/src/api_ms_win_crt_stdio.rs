@@ -3,9 +3,11 @@
 //!
 //! `FILE`: a small struct over a Linux file descriptor, unbuffered (every write is a `write(2)`,
 //! so `fflush` has nothing to do), binary (no `\r\n` translation; `_fmode` is not consulted).
-//! `__acrt_iob_func(0..=2)` returns stdin, stdout, stderr (fd 0, 1, 2). `fopen` accepts the
-//! modes `r w a` with `+`, `b`, `t` (other letters are ignored); `fclose` of a standard stream
-//! only flags it closed. `_get_stream_buffer_pointers` reports an empty buffer.
+//! `__acrt_iob_func(0..=2)` returns stdin, stdout, stderr (fd 0, 1, 2). `fopen`, `_fsopen`,
+//! `_wfopen` and `_wfsopen` accept the modes `r w a` with `+`, `b`, `t` (other letters are
+//! ignored; the sharing parameter of the `_fsopen` pair is advisory here and ignored);
+//! `fclose` of a standard stream only flags it closed. `_get_stream_buffer_pointers` reports an
+//! empty buffer.
 //!
 //! `fopen` / `_wfopen` resolve their path like the Windows file APIs do (`docs/library.md`,
 //! File paths): a path written with `/` is a host path; a title path is written under the
@@ -336,6 +338,46 @@ unsafe fn open_file(path: &[u8], mode: &[u8]) -> *mut File {
     Box::into_raw(Box::new(File::new(fd)))
 }
 
+/// `fopen` / `_fsopen`: an ANSI path and mode.
+///
+/// # Safety
+/// `path` and `mode` are NULL or NUL-terminated.
+unsafe fn open_narrow(path: *const u8, mode: *const u8) -> *mut File {
+    if path.is_null() || mode.is_null() {
+        invalid();
+        return std::ptr::null_mut();
+    }
+    let p: Vec<u8> = read_units(path, usize::MAX)
+        .iter()
+        .map(|&c| c as u8)
+        .collect();
+    let m: Vec<u8> = read_units(mode, usize::MAX)
+        .iter()
+        .map(|&c| c as u8)
+        .collect();
+    open_file(&p, &m)
+}
+
+/// `_wfopen` / `_wfsopen`: a UTF-16 path and an ANSI mode.
+///
+/// # Safety
+/// `path` and `mode` are NULL or NUL-terminated.
+unsafe fn open_wide(path: *const u16, mode: *const u16) -> *mut File {
+    if path.is_null() || mode.is_null() {
+        invalid();
+        return std::ptr::null_mut();
+    }
+    let p: Vec<u8> = printf::convert(&read_units(path, usize::MAX), true, false)
+        .iter()
+        .map(|&c| c as u8)
+        .collect();
+    let m: Vec<u8> = read_units(mode, usize::MAX)
+        .iter()
+        .map(|&c| c as u8)
+        .collect();
+    open_file(&p, &m)
+}
+
 unsafe fn seek(f: *mut File, off: i64, origin: i32) -> i32 {
     if f.is_null() || !(0..=2).contains(&origin) {
         return invalid();
@@ -453,26 +495,18 @@ win32! {
         }
     }
     Native fn fopen(path: *const u8, mode: *const u8) -> *mut File {
-        if path.is_null() || mode.is_null() {
-            invalid();
-            return std::ptr::null_mut();
-        }
-        let p = read_units(path, usize::MAX);
-        let m = read_units(mode, usize::MAX);
-        let p: Vec<u8> = p.iter().map(|&c| c as u8).collect();
-        let m: Vec<u8> = m.iter().map(|&c| c as u8).collect();
-        open_file(&p, &m)
+        unsafe { open_narrow(path, mode) }
+    }
+    // The sharing mode (`_SH_DENYRW` and friends) is advisory here: one process, and no other
+    // opener of a title file can hold a conflicting share.
+    Native fn _fsopen(path: *const u8, mode: *const u8, _sharing: i32) -> *mut File {
+        unsafe { open_narrow(path, mode) }
     }
     Native fn _wfopen(path: *const u16, mode: *const u16) -> *mut File {
-        if path.is_null() || mode.is_null() {
-            invalid();
-            return std::ptr::null_mut();
-        }
-        let p = printf::convert(&read_units(path, usize::MAX), true, false);
-        let m = read_units(mode, usize::MAX);
-        let p: Vec<u8> = p.iter().map(|&c| c as u8).collect();
-        let m: Vec<u8> = m.iter().map(|&c| c as u8).collect();
-        open_file(&p, &m)
+        unsafe { open_wide(path, mode) }
+    }
+    Native fn _wfsopen(path: *const u16, mode: *const u16, _sharing: i32) -> *mut File {
+        unsafe { open_wide(path, mode) }
     }
     Native fn fclose(f: *mut File) -> i32 {
         if f.is_null() {
@@ -695,7 +729,9 @@ mod tests {
             "__stdio_common_vswscanf",
             "__acrt_iob_func",
             "fopen",
+            "_fsopen",
             "_wfopen",
+            "_wfsopen",
             "fclose",
             "fflush",
             "fgetc",
@@ -1195,6 +1231,36 @@ mod tests {
 
     fn f_null() -> *mut File {
         std::ptr::null_mut()
+    }
+
+    #[test]
+    fn fsopen_opens_like_fopen_and_ignores_the_sharing_mode() {
+        let _g = install_counting_handler();
+        unsafe {
+            let path =
+                std::env::temp_dir().join(format!("nativ64-fsopen-{}.tmp", std::process::id()));
+            let mut p = path.to_str().unwrap().as_bytes().to_vec();
+            p.push(0);
+            // _SH_DENYRW is advisory here; a single process opens its own files.
+            let f = _fsopen(p.as_ptr(), c"w+b".as_ptr().cast(), 0x10);
+            assert!(!f.is_null());
+            assert_eq!(fwrite(b"abc".as_ptr(), 1, 3, f), 3);
+            assert_eq!(fclose(f), 0);
+            let wp = w(path.to_str().unwrap());
+            let f = _wfsopen(wp.as_ptr(), w("rb").as_ptr(), 0x10);
+            assert!(!f.is_null());
+            let mut b = [0u8; 4];
+            assert_eq!(fread(b.as_mut_ptr(), 1, 4, f), 3);
+            assert_eq!(&b[..3], b"abc");
+            assert_eq!(fclose(f), 0);
+            std::fs::remove_file(&path).unwrap();
+            // Errors: a NULL argument is the usual invalid-parameter failure.
+            assert!(_fsopen(std::ptr::null(), c"r".as_ptr().cast(), 0).is_null());
+            assert!(_wfsopen(wp.as_ptr(), std::ptr::null(), 0).is_null());
+            assert_eq!(errno(), EINVAL);
+            assert_eq!(calls(), 2);
+            assert!(crate::lookup("api-ms-win-crt-stdio-l1-1-0.dll", "_wfsopen").is_some());
+        }
     }
 
     #[test]
