@@ -3,7 +3,8 @@
 //! from its entry and printed in LLVM syntax; with `--ir` it is printed as the SSA IR. `nativ64-shader --hex <file>` disassembles one
 //! instruction per line of hex bytes (for diffing against `llvm-mc`). `--stats` counts the
 //! programs that decode and why the others do not; `--ir --stats` counts the programs whose IR
-//! builds, per stage, and the errors by kind. Exit status 1 if any blob is refused or any code
+//! builds, per stage, and the errors by kind; `--structure --stats` does the same for the
+//! structuring (cross-lane uses by instruction name included). Exit status 1 if any blob is refused or any code
 //! fails to decode.
 
 use nativ64_gpu::shader::{self, gfx10};
@@ -13,8 +14,17 @@ fn main() -> ExitCode {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let disasm = args.first().is_some_and(|a| a == "--disasm");
     let ir = args.first().is_some_and(|a| a == "--ir");
+    let structure = args.first().is_some_and(|a| a == "--structure");
     if disasm || ir {
         args.remove(0);
+    }
+    if structure {
+        args.remove(0);
+        if args.first().is_some_and(|a| a == "--stats") {
+            return structure_stats(&args[1..]);
+        }
+        eprintln!("usage: nativ64-shader --structure --stats <blob.dxbc>...");
+        return ExitCode::from(2);
     }
     if args.first().is_some_and(|a| a == "--stats") {
         return if ir {
@@ -262,6 +272,119 @@ fn ir_stats(files: &[String]) -> ExitCode {
             if *attrs { "with" } else { "no" },
             if *call { "opens with a" } else { "no" }
         );
+    }
+    ExitCode::SUCCESS
+}
+
+/// Structures the IR of every program that builds and reports, per stage, how many structure
+/// and the errors by kind; then the same ignoring cross-lane uses (what else stops them), and
+/// the cross-lane instructions by name with the number of programs that have each.
+fn structure_stats(files: &[String]) -> ExitCode {
+    use shader::ir;
+    use shader::structure::{self, StructError};
+    use std::collections::{BTreeMap, BTreeSet};
+    let kind = |e: &StructError| match e {
+        StructError::CrossLane(_) => "cross-lane use".to_string(),
+        StructError::DivergentScalar { .. } => "divergent scalar".to_string(),
+        StructError::Irreducible { .. } => "irreducible".to_string(),
+        StructError::Malformed(s) => format!("malformed: {s}"),
+    };
+    let mut stage: BTreeMap<String, (u32, u32, u32)> = BTreeMap::new();
+    let mut errs: BTreeMap<(String, String), u32> = BTreeMap::new();
+    let mut errs_free: BTreeMap<(String, String), u32> = BTreeMap::new();
+    let mut names: BTreeMap<(String, String), u32> = BTreeMap::new();
+    let mut samples: BTreeMap<(String, String), (u64, String)> = BTreeMap::new();
+    let (mut no_ir, mut demotes, mut lane_br, mut uni_br) = (0u32, 0u32, 0usize, 0usize);
+    let (mut proved, mut active) = (0usize, 0usize);
+    for f in files {
+        let Ok(bytes) = std::fs::read(f) else {
+            continue;
+        };
+        let Ok(p) = shader::parse(&bytes) else {
+            continue;
+        };
+        for (name, rec) in p.native.records() {
+            let code = p.native.code(rec);
+            let regs = ir::EntryRegs::from_stage(rec);
+            let Ok(func) = ir::build(code, gfx10::ENTRY, rec.wave32(), &regs) else {
+                no_ir += 1;
+                continue;
+            };
+            let e = stage.entry(name.to_string()).or_default();
+            e.0 += 1;
+            let masks = structure::type_masks(&func);
+            let distinct: BTreeSet<&str> =
+                masks.cross_lane.iter().map(|c| c.name.as_str()).collect();
+            for n in distinct {
+                *names.entry((name.to_string(), n.to_string())).or_default() += 1;
+            }
+            match structure::structure(&func) {
+                Ok(s) => {
+                    e.1 += 1;
+                    demotes += u32::from(!s.demotes.is_empty());
+                    for b in s.branches.iter().flatten() {
+                        match b {
+                            structure::BranchKind::Lane(_) => lane_br += 1,
+                            structure::BranchKind::Uniform => uni_br += 1,
+                        }
+                    }
+                    for g in s.guards.iter().flatten() {
+                        match g {
+                            structure::Guard::Proved => proved += 1,
+                            structure::Guard::Active => active += 1,
+                            structure::Guard::Scalar => {}
+                        }
+                    }
+                }
+                Err(err) => {
+                    *errs.entry((name.to_string(), kind(&err))).or_default() += 1;
+                }
+            }
+            match structure::structure_with(&func, true) {
+                Ok(_) => e.2 += 1,
+                Err(err) => {
+                    let key = (name.to_string(), kind(&err));
+                    samples
+                        .entry(key.clone())
+                        .or_insert((shader::fnv1a64(&bytes), err.to_string()));
+                    *errs_free.entry(key).or_default() += 1;
+                }
+            }
+        }
+    }
+    println!("programs without IR (not counted): {no_ir}");
+    let total = stage
+        .values()
+        .fold((0, 0, 0), |a, v| (a.0 + v.0, a.1 + v.1, a.2 + v.2));
+    println!(
+        "structured: {}/{} programs; ignoring cross-lane uses: {}/{}",
+        total.1, total.0, total.2, total.0
+    );
+    for (s, (n, ok, free)) in &stage {
+        println!("  {s}: {ok}/{n} structure ({free} ignoring cross-lane uses)");
+    }
+    println!("branches in structured programs: {lane_br} per-lane, {uni_br} uniform");
+    println!("vector instructions in structured programs: {proved} guards proved, {active} kept");
+    println!("programs with a pixel discard (demote): {demotes}");
+    let sorted = |m: BTreeMap<(String, String), u32>| {
+        let mut v: Vec<_> = m.into_iter().collect();
+        v.sort_by_key(|a| std::cmp::Reverse(a.1));
+        v
+    };
+    println!("errors:");
+    for ((s, k), n) in sorted(errs) {
+        println!("{n:6}  {s}: {k}");
+    }
+    println!("errors ignoring cross-lane uses:");
+    for ((s, k), n) in sorted(errs_free) {
+        println!("{n:6}  {s}: {k}");
+    }
+    for ((s, k), (hash, text)) in &samples {
+        println!("sample {s}: {k}: {text} (blob hash {hash:016x})");
+    }
+    println!("cross-lane instructions (programs that have one):");
+    for ((s, k), n) in sorted(names) {
+        println!("{n:6}  {s}: {k}");
     }
     ExitCode::SUCCESS
 }

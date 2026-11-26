@@ -263,6 +263,36 @@ boolean per invocation.
    touches, `bool` for masks), loaded and stored around each instruction: no phis to place
    after restructuring, and drivers promote them. SSA stays for analysis.
 
+- **As built** (`structure.rs`, chunk 5). `structure(&Func)` returns `Structured`: `masks`
+  (typing, `scc_of`, the cross-lane uses), `branches` (per block: `Uniform` or `Lane(LaneTest)`),
+  `guards` (per instruction: `Scalar` / `Proved` / `Active`), `demotes` and `tree`. Errors are
+  typed: `CrossLane { at, name }` (first in program order), `DivergentScalar`, `Irreducible`.
+  Deviations from the steps above:
+  1. Typing is per dword and optimistic (loop-carried mask phis type). A mask operation with a
+     non-constant, non-mask input (`s_and_b32 s0, exec_lo, s5`) is reported as a cross-lane use
+     by that instruction. Cross-lane by nature, whatever the operands: `v_readlane`,
+     `v_readfirstlane`, `v_writelane`, `v_mbcnt*`, `v_permlane*`, `ds_swizzle/permute/bpermute`,
+     any DPP instruction. Carry-in and `v_cndmask` take a mask in their last source only.
+  2. A lane-wise branch whose mask is built only from one EXEC value and scalar selects
+     (`vccz` of `exec & ~(scc ? exec : 0)`) and is not an EXEC value is not split-checked: every
+     lane that runs on decides alike. `DivergentScalar` looks at the phis of the immediate
+     post-dominator of each other lane-wise branch (a differing scalar, `undef` included). It
+     is strict: it also stops the usual `v_cmpx` + `s_cbranch_execz` over scalar loads whose
+     result is read after the join (see the corpus numbers in the journal).
+  3. Guards are proved from per-value facts (EXEC of the entry, the bit a branch tests on its
+     edges, copies and and/or/andn2 of known values). The join after an if/else (`exec | saved`
+     where `saved` came out of an xor) is not proved: it needs bit-set reasoning, so those
+     guards stay `Active` (correct, only less sparse).
+  4. The discard is marked at the `s_andn2 live, live, exec` (`Demote`) when its SCC branch
+     reaches a block that only does scalar work and a `done` export to `null`. The final `exp
+     done` with the lane's bit clear is not marked yet.
+  5. The tree is Ramsey's, with exits inlined in the `Loop` when a loop exit has one
+     predecessor. `Br { to, depth }` carries the number of constructs left; each `Block` /
+     `Loop` lists in `forwards` the targets that leave through it (the `target` re-tests).
+     Irreducible means a retreating edge whose target does not dominate its source.
+  `nativ64-shader --structure --stats` reports per stage and per error kind, then the same
+  ignoring cross-lane uses, and the cross-lane instructions by name.
+
 ## Inputs and outputs
 
 **User SGPRs.** A VS/PS/CS receives user-data dword i in `s[i]`; merged stages and mesh have 8
