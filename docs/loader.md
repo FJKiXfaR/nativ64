@@ -82,6 +82,8 @@ The console CPU is an AMD Zen 2; the host may not be. `clzero` (zero the 64-byte
 as SIGILL on other CPUs, so the fault handler in `fault.rs` emulates it and resumes. The two loops
 compilers build around it (`clzero; add rax,0x40; cmp rax,b; jb`, and `mov rax,a; add a,0x40; clzero;
 cmp a,b; jb`) are done whole in one trap, leaving registers and flags as their last pass would.
+The same handler emulates SSE4a `extrq` / `insertq` (register forms, immediate or fields in a register) on the
+saved XMM registers; the title uses them unconditionally. `monitorx` / `mwaitx` are accepted as no-ops.
 Other Zen-only instructions are reported as faults, not emulated, until a title needs them.
 
 ## Not done yet
