@@ -309,6 +309,13 @@ fn host_prot(protect: u32) -> libc::c_int {
     }
 }
 
+/// Whether `address` lies in a 64 KiB page that views the pool file (shared memory: a host
+/// access, or a driver pinning it for a host-pointer import, populates every page it touches).
+pub fn is_pool_backed(address: usize) -> bool {
+    let p = pool().lock().unwrap_or_else(|e| e.into_inner());
+    p.views.contains_key(&(address & !(PHYSICAL_PAGE - 1)))
+}
+
 /// Takes `n` page frame numbers from the pool (all or none); `None` when there is no room or the
 /// file cannot grow.
 fn take_physical_pages(n: usize) -> Option<Vec<usize>> {

@@ -34,6 +34,9 @@ const ADDRESS_LIMIT: u64 = 1 << 48;
 /// driver pins the host pages of an import, and a title can commit a multi-gigabyte run (2.2 GB
 /// in the first title) of which a draw reads a few megabytes.
 const WINDOW: usize = 8 << 20;
+/// Window over pool-backed (shared) memory: the driver pins, and so populates, all of an import,
+/// and the title commits big pools it touches sparsely, so those imports stay small.
+const POOL_WINDOW: usize = 256 << 10;
 
 /// Where a title address lives on the device.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -122,7 +125,12 @@ impl<'g> GpuMemory<'g> {
         }
         // Only a window of the run is imported (see `WINDOW`), aligned to the window and
         // extended to the end of the access when that crosses the window's end.
-        let window = WINDOW.next_multiple_of(align);
+        let window = if crate::xmem::is_pool_backed(at) {
+            POOL_WINDOW
+        } else {
+            WINDOW
+        }
+        .next_multiple_of(align);
         let start = start + (at - start) / window * window;
         let run_end = run_end.min((start + window).max(end.next_multiple_of(align)));
         // Imports overlapping the window (too small, or the run grew): replaced by it.
@@ -300,5 +308,37 @@ mod tests {
         let (a, n) = *heap_ranges().last().unwrap();
         assert!(m.translate(a as u64 + 8, 8).is_some());
         assert!(m.translate((a + n) as u64, 4).is_none());
+    }
+
+    fn rss_shmem_kb() -> u64 {
+        std::fs::read_to_string("/proc/self/status")
+            .unwrap()
+            .lines()
+            .find_map(|l| l.strip_prefix("RssShmem:"))
+            .map(|v| v.trim().trim_end_matches("kB").trim().parse().unwrap())
+            .unwrap()
+    }
+
+    #[test]
+    fn importing_pool_memory_does_not_populate_it() {
+        use crate::xmem::*;
+        let Some(g) = gpu_or_skip() else { return };
+        let mut m = GpuMemory::new(&g);
+        let n = 128; // 8 MiB of pool pages
+        let mut count = n;
+        let mut pages = vec![0usize; n];
+        let base = unsafe {
+            let base = XMemVirtualAlloc(std::ptr::null_mut(), n << 16, 0x2000, 3, RW);
+            assert_eq!(XMemAllocatePhysicalPages(0, &mut count, pages.as_mut_ptr()), 1);
+            assert_eq!(XMemMapPhysicalPages(base, n, pages.as_ptr()), base);
+            base as usize
+        };
+        assert!(is_pool_backed(base + 0x1000));
+        assert!(!is_pool_backed(base + (n << 16)));
+        let before = rss_shmem_kb();
+        m.translate(base as u64 + 0x100, 16).unwrap();
+        let after = rss_shmem_kb();
+        eprintln!("RssShmem import: before {before} kB after {after} kB");
+        assert!(after - before < 512, "import populated {} kB", after - before);
     }
 }
