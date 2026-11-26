@@ -19,7 +19,7 @@
 use super::gpumem::GpuMemory;
 use super::{log_once, vk_try, Gpu, Result, VkError};
 use crate::d3d12::descriptor::View;
-use crate::d3d12::resource::info_of;
+use crate::d3d12::resource::info_of_checked;
 use ash::vk;
 
 /// Descriptors per binding the bindless set is sized for, at most.
@@ -293,8 +293,8 @@ fn buffer_view(view: &View) -> Option<(u32, u64, u64, u32)> {
     Some(match view {
         View::Constant(address, size) => (0, *address, u64::from(*size), 0),
         View::Shader(res, desc) => {
-            // SAFETY: the registry keeps resource pointers the title created views of.
-            let (rd, base) = unsafe { info_of(*res as *mut _) }?;
+            // the registry keeps resource pointers the title created views of, released or not
+            let (rd, base) = info_of_checked(*res as *mut _)?;
             if rd.dimension != 1 {
                 return None;
             }
@@ -321,8 +321,7 @@ fn buffer_view(view: &View) -> Option<(u32, u64, u64, u32)> {
             }
         }
         View::Unordered(res, _, desc) => {
-            // SAFETY: as above.
-            let (rd, base) = unsafe { info_of(*res as *mut _) }?;
+            let (rd, base) = info_of_checked(*res as *mut _)?;
             if rd.dimension != 1 {
                 return None;
             }

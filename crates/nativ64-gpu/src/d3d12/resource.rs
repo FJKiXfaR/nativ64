@@ -95,6 +95,27 @@ pub(crate) unsafe fn info_of(ptr: *mut c_void) -> Option<(ResourceDesc, u64)> {
     Some((d.desc, d.address))
 }
 
+/// Whether the page of `ptr` is mapped (so reading 8 bytes at it cannot fault; 8-byte aligned
+/// pointers do not straddle a page).
+fn mapped(ptr: *mut c_void) -> bool {
+    let page = ptr as usize & !4095;
+    let mut v = 0u8;
+    // SAFETY: `mincore` only reports on the page, whatever its address.
+    unsafe { libc::mincore(page as *mut c_void, 1, &mut v) == 0 }
+}
+
+/// As [`info_of`], for a pointer that may be anything: a view the title made of a resource
+/// it has since released stays in the descriptor registry, and the backend reads its resource
+/// long after. NULL, an unmapped page and an object that is not ours give `None`; released
+/// memory that was reused cannot be told from a live resource (shortcut).
+pub(crate) fn info_of_checked(ptr: *mut c_void) -> Option<(ResourceDesc, u64)> {
+    if ptr.is_null() || !(ptr as usize).is_multiple_of(8) || !mapped(ptr) {
+        return None;
+    }
+    // SAFETY: the page is mapped, so the vtable read is safe; a match makes it our object.
+    unsafe { info_of(ptr) }
+}
+
 /// `ID3D12Device::CreateResourceAtAddressX(address, desc1, layout, clear, riid, out)` (device
 /// slot 133): a resource over memory the title mapped itself. The clear value is not kept.
 /// Shortcut: the address is not checked against the memory tables.
@@ -556,6 +577,11 @@ mod tests {
                 std::mem::transmute(*vtbl.add(11));
             assert_eq!(f(r), 0x10b0_0000);
             assert_eq!(XObject::<ResourceData>::data(r).layout, u32::MAX);
+            // the checked reader answers for ours and for pointers that are not objects
+            assert_eq!(info_of_checked(r), Some((desc, 0x10b0_0000)));
+            assert_eq!(info_of_checked(n), None);
+            assert_eq!(info_of_checked(0x78 as *mut c_void), None);
+            assert_eq!(info_of_checked(0x7000_0000_0000 as *mut c_void), None);
             assert_eq!(XObject::<ResourceData>::release(r), 0);
         }
     }
