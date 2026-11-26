@@ -64,6 +64,18 @@ win32! {
     Native fn GetCurrentThreadId() -> u32 {
         libc::syscall(libc::SYS_gettid) as u32
     }
+    // TEB offsets 0x10 (stack limit) and 0x08 (stack base): the bounds recorded for the calling thread's stack.
+    Native fn GetCurrentThreadStackLimits(low: *mut usize, high: *mut usize) {
+        let teb: usize;
+        core::arch::asm!("mov {}, gs:[0x30]", out(reg) teb, options(nostack, readonly, preserves_flags));
+        let teb = teb as *const usize;
+        if !low.is_null() {
+            *low = *teb.byte_add(0x10);
+        }
+        if !high.is_null() {
+            *high = *teb.byte_add(0x08);
+        }
+    }
     // Security attributes and inheritance are not modelled.
     Native fn CreateThread(_attrs: *const c_void, stack: usize, start: Option<ThreadStart>,
                            param: *mut c_void, flags: u32, id: *mut u32) -> usize {
