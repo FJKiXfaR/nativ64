@@ -19,3 +19,7 @@ wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
 [[bin]]
 name = "nativ64-vkdemo"
 path = "src/bin/nativ64-vkdemo.rs"
+
+[[bin]]
+name = "nativ64-shader"
+path = "src/bin/nativ64-shader.rs"

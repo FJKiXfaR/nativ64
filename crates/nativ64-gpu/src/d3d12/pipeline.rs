@@ -179,7 +179,22 @@ unsafe fn input_layout(ptr: u64, count: u32) -> Vec<InputElement> {
         .collect()
 }
 
+/// Parses each stage blob (a failure is logged once per blob, never fatal) and feeds the shader
+/// dump (`NATIV64_DUMP_SHADERS`).
+fn observe_shaders(data: &PipelineData) {
+    for s in &data.stages {
+        crate::shader::observe(s.name, &s.bytes);
+    }
+    let stages: Vec<(&str, &[u8])> = data.stages.iter().map(|s| (s.name, &s.bytes[..])).collect();
+    let targets = data
+        .graphics
+        .as_ref()
+        .map_or(&[][..], |g| &g.target_formats[..]);
+    crate::shader::note_pipeline(&stages, targets);
+}
+
 fn make(data: PipelineData, iid: *const Guid, out: *mut *mut c_void) -> HRESULT {
+    observe_shaders(&data);
     // SAFETY: `iid` and `out` are the title's, NULL tolerated.
     unsafe {
         hand_out(
