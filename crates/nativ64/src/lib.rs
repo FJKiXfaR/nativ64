@@ -28,6 +28,7 @@ pub mod api_ms_win_core_string;
 pub mod api_ms_win_core_synch;
 pub mod api_ms_win_core_sysinfo;
 pub mod api_ms_win_core_util;
+pub mod api_ms_win_eventing_provider;
 pub mod api_ms_win_crt_convert;
 pub mod api_ms_win_crt_environment;
 pub mod api_ms_win_crt_filesystem;
@@ -105,6 +106,7 @@ pub static TABLES: &[&[Export]] = &[
     api_ms_win_crt_string::EXPORTS,
     api_ms_win_crt_time::EXPORTS,
     api_ms_win_crt_utility::EXPORTS,
+    api_ms_win_eventing_provider::EXPORTS,
     ext_ms_win_rtcore_ntuser_message::EXPORTS,
     ext_ms_win_rtcore_ntuser_message_ansi::EXPORTS,
     ext_ms_win_rtcore_ntuser_window::EXPORTS,
