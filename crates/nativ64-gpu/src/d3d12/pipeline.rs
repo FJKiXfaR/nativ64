@@ -198,7 +198,26 @@ fn observe_shaders(data: &PipelineData) -> usize {
     crate::shader::note_pipeline(&stages, targets)
 }
 
+/// Logs the raw topology type of a pipeline when it is one of the console's values (17 and up:
+/// rectangle list, line loop, quad list, quad strip), the first few times, to tell where such a
+/// value comes from.
+fn note_console_topology(data: &PipelineData) {
+    static LOGGED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let Some(g) = data.graphics.as_ref().filter(|g| g.topology_type >= 17) else {
+        return;
+    };
+    if LOGGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 8 {
+        eprintln!(
+            "nativ64: pipeline {}: {} topology type {} (a console value)",
+            data.serial,
+            if g.stream { "stream" } else { "description" },
+            g.topology_type
+        );
+    }
+}
+
 fn make(data: PipelineData, iid: *const Guid, out: *mut *mut c_void) -> HRESULT {
+    note_console_topology(&data);
     let id = observe_shaders(&data);
     // SAFETY: `iid` and `out` are the title's, NULL tolerated.
     let hr = unsafe {

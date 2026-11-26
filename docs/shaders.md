@@ -1182,6 +1182,35 @@ it says otherwise.
      view; the pair's samplers deduplicated and renumbered (shader level); layouts of static
      samplers cached by list; BC formats; sampler specs. Run: all pass (a real GPU and
      `NATIV64_GPU=llvmpipe`). The real validation of 10b is not done.
+   **As built (chunk 10b, part 2)** (`backend/vk/{draw,pipeline,gpumem}.rs`,
+   `d3d12/{pipeline,pipeline_state}.rs`; the design above stands, with what is said here).
+   * Console topologies: a pipeline topology type of 17 to 20 builds as a triangle list
+     (`pipeline.rs::topology`), `Built` keeps the raw type. `d3d12/pipeline.rs` logs the first 8
+     pipelines created with a type of 17 or more (stream or description, serial); a draw logs once
+     the pipeline's raw type and the list topology when either is 17 or more. List topology 19
+     draws as a triangle list through an index buffer: `Draw(n)` uses a buffer of `n / 4` quads
+     `(0 1 2, 0 2 3)` as u32 (cached by quad count, `first` as vertex offset); `DrawIndexed` reads
+     its indices from title memory on the CPU (u16 or u32, bounds-checked against the view) into a
+     per-submission buffer. A leftover of fewer than 4 vertices is dropped; a draw with no whole
+     quad does nothing. 17, 18 and 20 are skipped by name (`state` skip). Strip cut does not
+     apply to quads. Index and vertex buffer usages were missing from the imported and host
+     buffers and are added. Where 19 comes from stays **[unverified]**: read the log of the next
+     run.
+   * VUID-vkCmdDraw-pStrides-04913: the dynamic stride state is declared only when the vertex
+     input has a binding (no binding: no vertex buffer bound either, as before).
+   * GPU memory miss: a translate running past an import re-reads the committed run; if it grew
+     (commits are not recorded as changes) the run is imported again whole, the old import goes
+     to `retired` and is dropped at the next `sync`. The 10a miss (`0x10b00000 (+0xae00000)` in a
+     run ending at `0x12600000`) asks for more than 174 MB where 27 MB were committed: if the
+     next run still logs it, the range is past the allocation, not growth.
+   * Description form: the graphics description is 0x290 bytes and its input layout, topology,
+     formats, depth format and samples are read at 552, 572, 580, 612 and 616 (they were 8 bytes
+     higher); the test uses the header's offsets as literals.
+   * Tests (lavapipe too): a quad `Draw` (leftover vertex, cache reused), an indexed quad draw
+     with u16 and u32 indices read from `first_index`, the three console topologies refused by
+     name, a run that grew and its retired import, the description offsets. The 04913 fix has no
+     test (no validation layer in the tests).
+
 11. **Widening, driven by the corpus report**: f16 and `v_pk_*`, remaining VOP3, MIMG
     gather/compare/derivatives, FLAT/SCRATCH stores and atomics, ray queries, merged stages if a
     title uses them (none in this corpus: its stages are VS, PS, CS, mesh only).

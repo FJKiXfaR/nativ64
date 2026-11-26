@@ -161,6 +161,10 @@ pub(super) struct DrawState<'g> {
     arena_size: usize,
     /// The samplers of heap views and of static sampler sets (dropped after the layouts).
     pub(super) samplers: SamplerCache<'g>,
+    /// Index buffers of quads expanded to triangles, by number of quads (for `Draw`).
+    quad_indices: HashMap<u32, HostBuf<'g>>,
+    /// Index buffers made for one submission (indexed quads), dropped by `end`.
+    scratch: Vec<HostBuf<'g>>,
 }
 
 impl<'g> DrawState<'g> {
@@ -178,6 +182,8 @@ impl<'g> DrawState<'g> {
             arena: None,
             arena_size: 0,
             samplers: SamplerCache::new(gpu),
+            quad_indices: HashMap::new(),
+            scratch: Vec::new(),
         }
     }
 
@@ -198,6 +204,7 @@ impl<'g> DrawState<'g> {
     pub(super) fn end(&mut self) {
         self.arena = None;
         self.open = None;
+        self.scratch.clear();
     }
 
     /// The state commands of a list.
@@ -257,6 +264,24 @@ impl<'g> DrawState<'g> {
         Some(v.address())
     }
 
+    /// The indices of `quads` quads as triangle lists, `(0 1 2) (0 2 3)` each: one buffer per
+    /// count, kept.
+    fn quad_buffer(&mut self, quads: u32) -> Result<vk::Buffer, Skip> {
+        if !self.quad_indices.contains_key(&quads) {
+            let mut bytes = Vec::with_capacity(24 * quads as usize);
+            for q in 0..quads {
+                for k in [0, 1, 2, 0, 2, 3] {
+                    bytes.extend((4 * q + k).to_le_bytes());
+                }
+            }
+            let mut buf = HostBuf::new(self.gpu, bytes.len())
+                .map_err(|e| Skip::State(format!("no quad index buffer: {e}")))?;
+            buf.write(0, &bytes);
+            self.quad_indices.insert(quads, buf);
+        }
+        Ok(self.quad_indices[&quads].buffer)
+    }
+
     /// Room for a root block in the arena: its offset.
     fn arena_slot(&mut self) -> Option<(&mut HostBuf<'g>, usize)> {
         if self.arena.is_none() {
@@ -300,6 +325,11 @@ unsafe fn pipeline_data<'a>(ptr: usize) -> Option<&'a PipelineData> {
 fn skip<T>(s: Skip) -> Result<T, Skip> {
     Err(s)
 }
+
+/// The console's `D3D_PRIMITIVE_TOPOLOGY` values from here on (17 rectangle list, 18 line loop,
+/// 19 quad list, 20 quad strip), and the quad list.
+const CONSOLE_TOPOLOGY: u32 = 17;
+const QUADS: u32 = 19;
 
 /// 0 points, 1 lines, 2 triangles.
 fn class_of(t: vk::PrimitiveTopology) -> u8 {
@@ -525,8 +555,27 @@ impl<'g> VkBackend<'g> {
             }
             _ => None,
         };
+        if built.topology_type >= CONSOLE_TOPOLOGY || list.topology >= CONSOLE_TOPOLOGY {
+            log_once(format!(
+                "pipeline {}: topology type {}, list topology {}",
+                pd.serial, built.topology_type, list.topology
+            ));
+        }
+        let quads = list.topology == QUADS;
         let topo = match dynamic_topology(list.topology) {
             Some(t) if class_of(t) == class_of(built.topology) => t,
+            None if quads && class_of(built.topology) == 2 => vk::PrimitiveTopology::TRIANGLE_LIST,
+            None if (CONSOLE_TOPOLOGY..=CONSOLE_TOPOLOGY + 3).contains(&list.topology) => {
+                let name = match list.topology {
+                    17 => "rectangle list",
+                    18 => "line loop",
+                    _ => "quad strip",
+                };
+                return skip(Skip::State(format!(
+                    "the {name} topology ({}) is not replayed",
+                    list.topology
+                )));
+            }
             _ => {
                 return skip(Skip::State(format!(
                     "topology {} for this pipeline",
@@ -537,6 +586,69 @@ impl<'g> VkBackend<'g> {
         let (stencil_ref, blend, viewport, scissor) =
             (list.stencil_ref, list.blend, list.viewport, list.scissor);
         let vbufs: Vec<_> = vbufs.into_iter().map(|(s, m, v)| (s, m, *v)).collect();
+        // Quads draw as triangle lists through an index buffer: (buffer, indices).
+        let quad_index = if quads {
+            match (c, index) {
+                (Command::Draw { vertices, .. }, _) => match vertices / 4 {
+                    0 => return Ok(()),
+                    q => Some((self.draw.quad_buffer(q)?, 6 * q)),
+                },
+                (
+                    Command::DrawIndexed {
+                        indices,
+                        first_index,
+                        ..
+                    },
+                    Some((_, ty)),
+                ) => {
+                    let Some(iv) = self.draw.list.index else {
+                        return skip(Skip::State("no index buffer".into()));
+                    };
+                    let size = if ty == vk::IndexType::UINT16 { 2 } else { 4 };
+                    let (first, n) = (u64::from(*first_index), u64::from(*indices));
+                    if (first + n) * size > u64::from(iv.size) {
+                        return skip(Skip::State(
+                            "an indexed quad draw runs past its indices".into(),
+                        ));
+                    }
+                    let q = *indices / 4;
+                    if q == 0 {
+                        return Ok(());
+                    }
+                    // SAFETY: the whole index view translated above, so its pages are
+                    // committed and readable; the range is inside it.
+                    let raw = unsafe {
+                        std::slice::from_raw_parts(
+                            (iv.address + first * size) as *const u8,
+                            (n * size) as usize,
+                        )
+                    };
+                    let read = |i: usize| -> u32 {
+                        if size == 2 {
+                            u32::from(u16::from_le_bytes([raw[2 * i], raw[2 * i + 1]]))
+                        } else {
+                            u32::from_le_bytes(raw[4 * i..4 * i + 4].try_into().expect("4 bytes"))
+                        }
+                    };
+                    let mut bytes = Vec::with_capacity(24 * q as usize);
+                    for quad in 0..q as usize {
+                        let v: [u32; 4] = std::array::from_fn(|k| read(4 * quad + k));
+                        for k in [0, 1, 2, 0, 2, 3] {
+                            bytes.extend(v[k].to_le_bytes());
+                        }
+                    }
+                    let mut buf = HostBuf::new(self.draw.gpu, bytes.len())
+                        .map_err(|e| Skip::State(format!("no quad index buffer: {e}")))?;
+                    buf.write(0, &bytes);
+                    let handle = buf.buffer;
+                    self.draw.scratch.push(buf);
+                    Some((handle, 6 * q))
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
         let Some((arena, at)) = self.draw.arena_slot() else {
             return skip(Skip::State("no room for the root block".into()));
         };
@@ -661,6 +773,29 @@ impl<'g> VkBackend<'g> {
                 );
             }
             match (c, index) {
+                (c, _) if quad_index.is_some() => {
+                    let (buffer, count) = quad_index.expect("checked");
+                    d.cmd_bind_index_buffer(cb, buffer, 0, vk::IndexType::UINT32);
+                    let (instances, first_instance, base) = match c {
+                        Command::Draw {
+                            instances,
+                            first_instance,
+                            first_vertex,
+                            ..
+                        } => (instances, first_instance, *first_vertex as i32),
+                        Command::DrawIndexed {
+                            instances,
+                            first_instance,
+                            base_vertex,
+                            ..
+                        } => (instances, first_instance, *base_vertex),
+                        _ => unreachable!("draw_command is called for draws"),
+                    };
+                    if base != 0 {
+                        log_once("a quad draw with a non-zero base vertex".into());
+                    }
+                    d.cmd_draw_indexed(cb, count, *instances, 0, base, *first_instance);
+                }
                 (
                     Command::Draw {
                         vertices,
@@ -1115,5 +1250,117 @@ pub(super) mod tests {
             [255, 0, 0, 255],
             "the far draw failed the depth test"
         );
+    }
+
+    const QUAD: [f32; 16] = [
+        -1.0, -1.0, 0.0, 1.0, 1.0, -1.0, 0.0, 1.0, 1.0, 1.0, 0.0, 1.0, -1.0, 1.0, 0.0, 1.0,
+    ];
+
+    fn quad_list(pipe: usize, handle: u64, verts: u64, topology: u32) -> Vec<Command> {
+        let mut list = clear(handle, [0.0, 0.0, 1.0, 1.0]);
+        list.extend(state(pipe, handle));
+        list.extend([
+            Command::Topology(topology),
+            Command::RootView {
+                compute: false,
+                slot: 0,
+                view: RootView::Srv,
+                address: verts,
+            },
+            constants(1, [1.0, 0.0, 0.0, 1.0]),
+        ]);
+        list
+    }
+
+    fn quad_pipeline() -> usize {
+        pipeline(
+            stage::draw_vs_pulling_from_a_root_buffer(),
+            stage::draw_ps_writing_root_constants(),
+            None,
+        )
+    }
+
+    #[test]
+    fn a_quad_draw_covers_the_target_as_two_triangles() {
+        let Some(g) = gpu_or_skip() else { return };
+        let mut b = VkBackend::new(&g);
+        let target = texture(16, 8, 28, 1);
+        let handle = rtv(target);
+        let verts = title_memory(&floats(&QUAD));
+        let mut list = quad_list(quad_pipeline(), handle, verts, 19);
+        // five vertices: one quad and a leftover; the same count again reuses the index buffer
+        list.extend([draw(5), draw(5)]);
+        b.execute(&[list]);
+        assert_eq!(b.stats.drawn, 2, "{:?}", b.stats);
+        assert_eq!(b.draw.quad_indices.len(), 1);
+        let r = b.read_back(target).unwrap();
+        for (x, y) in [(0, 0), (15, 0), (0, 7), (15, 7), (8, 4), (3, 6), (12, 1)] {
+            assert_eq!(pixel(&r, x, y), [255, 0, 0, 255], "({x}, {y})");
+        }
+    }
+
+    #[test]
+    fn an_indexed_quad_draw_rewrites_the_indices_it_reads() {
+        let Some(g) = gpu_or_skip() else { return };
+        for wide in [false, true] {
+            let mut b = VkBackend::new(&g);
+            let target = texture(16, 8, 28, 1);
+            let handle = rtv(target);
+            let verts = title_memory(&floats(&QUAD));
+            // two decoy indices, then the quad's corners; read from the third
+            let idx: Vec<u8> = if wide {
+                [9u32, 9, 0, 1, 2, 3]
+                    .iter()
+                    .flat_map(|i| i.to_le_bytes())
+                    .collect()
+            } else {
+                [9u16, 9, 0, 1, 2, 3]
+                    .iter()
+                    .flat_map(|i| i.to_le_bytes())
+                    .collect()
+            };
+            let indices = title_memory(&idx);
+            let mut list = quad_list(quad_pipeline(), handle, verts, 19);
+            list.extend([
+                Command::IndexBuffer(Some(IndexView {
+                    address: indices,
+                    size: idx.len() as u32,
+                    format: if wide { 42 } else { 57 },
+                })),
+                Command::DrawIndexed {
+                    indices: 4,
+                    instances: 1,
+                    first_index: 2,
+                    base_vertex: 0,
+                    first_instance: 0,
+                },
+            ]);
+            b.execute(&[list]);
+            assert_eq!(b.stats.drawn, 1, "{:?}", b.stats);
+            let r = b.read_back(target).unwrap();
+            for (x, y) in [(0, 0), (15, 0), (0, 7), (15, 7), (8, 4)] {
+                assert_eq!(pixel(&r, x, y), [255, 0, 0, 255], "wide {wide} ({x}, {y})");
+            }
+        }
+    }
+
+    #[test]
+    fn rectangles_line_loops_and_quad_strips_are_refused_by_name() {
+        let Some(g) = gpu_or_skip() else { return };
+        let mut b = VkBackend::new(&g);
+        let target = texture(16, 8, 28, 1);
+        let handle = rtv(target);
+        let verts = title_memory(&floats(&QUAD));
+        let pipe = quad_pipeline();
+        let mut list = quad_list(pipe, handle, verts, 17);
+        list.push(draw(4));
+        for t in [18, 20] {
+            list.extend([Command::Topology(t), draw(4)]);
+        }
+        b.execute(&[list]);
+        assert_eq!((b.stats.draws, b.stats.drawn), (3, 0), "{:?}", b.stats);
+        assert_eq!(b.stats.draw_skips.state, 3);
+        let r = b.read_back(target).unwrap();
+        assert!(r.bytes.chunks(4).all(|p| p == BLUE), "nothing was drawn");
     }
 }

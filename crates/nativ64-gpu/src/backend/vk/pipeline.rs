@@ -50,6 +50,8 @@ pub struct Built {
     pub vertex_slots: Vec<u32>,
     /// The index buffer's strip cut is on.
     pub strip_cut: bool,
+    /// The raw topology type the pipeline's description or stream held.
+    pub topology_type: u32,
     /// The list topology of the pipeline's class (dynamic topologies must stay in it).
     pub topology: vk::PrimitiveTopology,
 }
@@ -194,6 +196,9 @@ fn topology(kind: u32) -> Result<vk::PrimitiveTopology, String> {
         1 => Ok(vk::PrimitiveTopology::POINT_LIST),
         2 => Ok(vk::PrimitiveTopology::LINE_LIST),
         3 | 0 => Ok(vk::PrimitiveTopology::TRIANGLE_LIST),
+        // The console's rectangle, line loop, quad and quad strip values reach this field in
+        // some streams (19 seen): triangle class, the draw decides what its list topology means.
+        17..=20 => Ok(vk::PrimitiveTopology::TRIANGLE_LIST),
         _ => Err(format!("topology type {kind} (patches)")),
     }
 }
@@ -503,15 +508,19 @@ fn build(
                 ds_state.write_mask,
             ));
         let cb = vk::PipelineColorBlendStateCreateInfo::default().attachments(&blends);
-        let dynamic = [
+        let mut dynamic = vec![
             vk::DynamicState::VIEWPORT,
             vk::DynamicState::SCISSOR,
             vk::DynamicState::BLEND_CONSTANTS,
             vk::DynamicState::STENCIL_REFERENCE,
             vk::DynamicState::PRIMITIVE_TOPOLOGY,
-            vk::DynamicState::VERTEX_INPUT_BINDING_STRIDE,
             vk::DynamicState::PRIMITIVE_RESTART_ENABLE,
         ];
+        // Strides are bound with the vertex buffers: without a binding there is nothing to bind
+        // them to (VUID-vkCmdDraw-pStrides-04913).
+        if !input.bindings.is_empty() {
+            dynamic.push(vk::DynamicState::VERTEX_INPUT_BINDING_STRIDE);
+        }
         let dy = vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic);
         let formats: Vec<vk::Format> = color.iter().map(|c| c.1).collect();
         let mut rendering =
@@ -552,6 +561,7 @@ fn build(
             vertex_slots: input.bindings.iter().map(|b| b.binding).collect(),
             strip_cut: fixed.strip_cut != 0,
             topology: topo,
+            topology_type: g.topology_type,
         })
     }
 }
