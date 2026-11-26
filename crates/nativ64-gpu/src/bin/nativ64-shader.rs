@@ -11,7 +11,9 @@
 //! structured programs to the probe module (chunk 6) and validates them with `spirv-val` when it
 //! is in PATH, listing the others by first unsupported op; `--spirv --alu-stats` counts the
 //! programs whose every ALU instruction translates; `--spirv <blob> -o out.spv` writes one
-//! probe module. Exit status 1 if any blob is refused or any code fails to decode.
+//! module (the real entry point of a vertex or pixel blob, the probe of the others);
+//! `--spirv --pair <vs> <ps> -o out` writes both stages with their locations linked by
+//! semantic. Exit status 1 if any blob is refused or any code fails to decode.
 
 use nativ64_gpu::shader::{self, gfx10};
 use std::process::ExitCode;
@@ -26,11 +28,17 @@ fn main() -> ExitCode {
         return match args.first().map(String::as_str) {
             Some("--stats") => spirv_stats(&args[1..], false),
             Some("--alu-stats") => spirv_stats(&args[1..], true),
+            Some("--pair") if args.len() == 5 && args[3] == "-o" => {
+                spirv_pair(&args[1], &args[2], &args[4])
+            }
             Some(_) if args.len() == 3 && args[1] == "-o" => spirv_write(&args[0], &args[2]),
             _ => {
                 eprintln!(
                     "usage: nativ64-shader --spirv (--stats | --alu-stats) <blob.dxbc>...\n       \
-                     nativ64-shader --spirv <blob.dxbc> -o <out.spv>"
+                     nativ64-shader --spirv <blob.dxbc> -o <out.spv>\n       \
+                     nativ64-shader --spirv --pair <vs.dxbc> <ps.dxbc> -o <out>\n       \
+                     (a vertex or pixel blob is written as its stage's entry point; --pair \
+                     writes <out>.vert.spv and <out>.frag.spv with shared locations)"
                 );
                 ExitCode::from(2)
             }
@@ -778,6 +786,15 @@ fn spirv_write(blob: &str, out: &str) -> ExitCode {
         eprintln!("{blob}: no stage record to translate");
         return ExitCode::FAILURE;
     };
+    if let Some(io) = shader::io::stage_io(&p, &[], None) {
+        return match shader::io::translate_stage(&p, &[], None) {
+            Ok(words) => write_words(&words, out, &io),
+            Err(e) => {
+                eprintln!("{blob}: {e}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     let regs = ir::EntryRegs::from_stage(rec);
     let func = match ir::build(p.native.code(rec), gfx10::ENTRY, rec.wave32(), &regs) {
         Ok(f) => f,
@@ -810,6 +827,58 @@ fn spirv_write(blob: &str, out: &str) -> ExitCode {
         }
         Err(e) => {
             eprintln!("{blob}: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn write_words(words: &[u32], out: &str, io: &shader::io::StageIo) -> ExitCode {
+    let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+    if let Err(e) = std::fs::write(out, bytes) {
+        eprintln!("{out}: {e}");
+        return ExitCode::FAILURE;
+    }
+    let stage = match io {
+        shader::io::StageIo::Vertex(_) => "Vertex",
+        shader::io::StageIo::Pixel(_) => "Fragment",
+    };
+    println!("{out}: {stage} entry, {} words", words.len());
+    ExitCode::SUCCESS
+}
+
+/// `--spirv --pair`: both stages, with the locations linked by semantic.
+fn spirv_pair(vs: &str, ps: &str, out: &str) -> ExitCode {
+    let parse = |f: &str| match std::fs::read(f) {
+        Ok(b) => shader::parse(&b).map_err(|e| format!("{f}: refused: {e}")),
+        Err(e) => Err(format!("{f}: {e}")),
+    };
+    let (vs, ps) = match (parse(vs), parse(ps)) {
+        (Ok(v), Ok(p)) => (v, p),
+        (v, p) => {
+            for e in [v.err(), p.err()].into_iter().flatten() {
+                eprintln!("{e}");
+            }
+            return ExitCode::FAILURE;
+        }
+    };
+    match shader::io::translate_pair(&vs, &ps, &[]) {
+        Ok((v, p)) => {
+            let l = shader::io::link(&vs, &ps);
+            println!("link: {:?} / {:?}", l.params, l.attrs);
+            let (Some(a), Some(b)) = (
+                shader::io::stage_io(&vs, &[], Some(&l)),
+                shader::io::stage_io(&ps, &[], Some(&l)),
+            ) else {
+                return ExitCode::FAILURE;
+            };
+            let r = write_words(&v, &format!("{out}.vert.spv"), &a);
+            if r != ExitCode::SUCCESS {
+                return r;
+            }
+            write_words(&p, &format!("{out}.frag.spv"), &b)
+        }
+        Err(e) => {
+            eprintln!("{e}");
             ExitCode::FAILURE
         }
     }
@@ -858,9 +927,19 @@ fn spirv_stats(files: &[String], alu_only: bool) -> ExitCode {
             continue;
         };
         for (name, rec) in p.native.records() {
-            let code = p.native.code(rec);
+            // a vertex or pixel program of the blob's own stage gets its real entry point
+            let own = p.record().is_some_and(|r| std::ptr::eq(r, rec));
+            let io = if own && !alu_only {
+                shader::io::stage_io(&p, &[], None)
+            } else {
+                None
+            };
+            let code = match io {
+                Some(_) => shader::io::stage_code(&p, rec),
+                None => p.native.code(rec).to_vec(),
+            };
             let regs = ir::EntryRegs::from_stage(rec);
-            let Ok(func) = ir::build(code, gfx10::ENTRY, rec.wave32(), &regs) else {
+            let Ok(func) = ir::build(&code, gfx10::ENTRY, rec.wave32(), &regs) else {
                 continue;
             };
             let st = structure::structure(&func);
@@ -894,10 +973,14 @@ fn spirv_stats(files: &[String], alu_only: bool) -> ExitCode {
                 continue;
             };
             e[1] += 1;
-            match spirv::translate(&func, &st) {
-                Ok(probe) => {
+            let built = match &io {
+                Some(io) => spirv::translate_io(&func, &st, io),
+                None => spirv::translate(&func, &st).map(|p| p.words),
+            };
+            match built {
+                Ok(words) => {
                     e[2] += 1;
-                    match spirv_val(&probe.words, &scratch) {
+                    match spirv_val(&words, &scratch) {
                         Some(Ok(())) => e[3] += 1,
                         Some(Err(msg)) => invalid.push((
                             shader::fnv1a64(&bytes),
