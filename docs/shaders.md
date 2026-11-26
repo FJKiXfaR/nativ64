@@ -770,6 +770,106 @@ it says otherwise.
    (MUBUF, MTBUF typed formats, `global_load`), view table format, MIMG sample/load/resinfo/
    store, static samplers, DS → `Workgroup` LDS (compute, mesh). Tests: synthetic programs for
    each `Source`; one error test per refusal.
+   **Chunk 9 design** (Opus, from the five first-screen blobs vs e5fcb71c, ps e2bcc91e, vs
+   7fda1be8, ps c1d5a4b8, vs 28d887aa) **[seen]**:
+   * A table user SGPR holds only the low 32 bits: the code sets the high SGPR to 0
+     (`s_mov_b32 s9, 0`, then `s_load_dwordx4 s[4:7], s[8:9], off`). The layout rows of one
+     user SGPR list several tables at `table dword` 0, 8, 16: the SGPR points at one block of
+     32-byte slots and the SMEM offset (bytes) = `table dword × 4` picks the row; the used row
+     with the same register says what it is (srv/cbv/sampler, 4 or 8 dwords).
+   * Scope: **9a** (first screen) = SMEM `s_load*` / `s_buffer_load*`, MUBUF
+     `buffer_load/store_dword*`, MIMG `image_sample` (+ `_l`, `_lz`); **9b** = MTBUF and `buffer_load_format` (typed),
+     `global_*`, MIMG load/store/resinfo, DS/LDS, heap samplers from type-6 tables if unseen
+     in 9a; each stays `Unsupported { chunk: 9 }` by name.
+   * Root block grows: `u32 user_data[32]` (as chunk 8), then `u64 table_base[32]` (per user
+     SGPR that the layout marks as a table: the full address its low 32 bits stand for, 0
+     otherwise; filled by the backend, chunk 10), then `u64 view_table`. This replaces the
+     per-root-slot `param_base` of Resources: the shader never needs root parameter numbers.
+   * Sources, decided by tracing the descriptor operand's first dword through SSA: **Loaded**
+     = SMEM load whose base low dword is a table user SGPR `n` (high dword folded to 0):
+     slot address = `table_base[n] + offset (+ one dynamic value)`; registry index = u32 at
+     slot + 4. **Built** = anything else (words computed by the program from user data or
+     constants, e.g. a root SRV address ORed into a V#): decoded at run time as an RDNA2 V#
+     (base = w0 | (w1 & 0xffff) << 32, stride = w1 bits 16-29, num_records = w2). S# that
+     fold to constants (static samplers written by the code: `s_movk_i32 s0, 0x400`...) are
+     **Code**: decoded at translation into a sampler description. A T# that is not Loaded, or
+     a non-constant non-loaded S#, is `Unsupported`. A raw `s_load*` whose base is a 64-bit
+     user SGPR pair (root descriptor) or computed is a BDA load at that address.
+   * View table: 32-byte records indexed by registry index `{u32 kind (0 none, 1 buffer, 2
+     image, 3 sampler), u32 dxgi format, u64 address, u32 size bytes (0xffffffff unbounded),
+     u32 stride, u32 0, u32 0}`; only buffers read it. Images and samplers need no record:
+     `textures[index]`, `samplers[index]` (set 0: binding 0 sampled images, binding 1 storage
+     images, binding 2 samplers; one variable per (dim, sampled type) aliasing the binding).
+     Static (Code) samplers: set 1, binding k = k-th distinct description, listed in the
+     translation output for the backend to create as immutable samplers.
+   * Bounds: `s_buffer_load*` and MUBUF reads past `size` (Loaded) or `num_records` (Built,
+     stride 0 → bytes) give 0 per dword; stores past it are dropped.
+   **As built (chunk 9a)** (`resource.rs` the data the backend gets, `spirv/emit/resource.rs`
+   the tracing and the instructions; the design above stands, with what is said here).
+   `io::translate_stage` returns `Translated { words, samplers }` (`translate_pair` two of
+   them): `samplers[k]` is the static sampler at set 1, binding k.
+   * Root block: `RootBlock { u32 user_data[32]; u64 table_base[32]; u64 view_table }`, offsets
+     0, 128, 384, read in the entry block (the pointer dominates every later use).
+     `StageIo::tables()` lists the user SGPRs the layout marks as tables or heaps (root types
+     3, 5, 6, `first dword`); the layout's `used` rows are **not** cross-checked against the
+     loads yet (a row's descriptor size and kind are not compared with what the code does).
+   * Tracing (`analyze`, before emission): a `Loaded` descriptor is the result of an
+     `s_load_dword*` whose base low dword is a table SGPR plus anything (arg, `s_mov`,
+     `s_add_u32` of that and any value, phis that agree) and whose high dword folds to 0
+     (constant, or `s_addc_u32` of zeros; another high dword is `Unsupported`). The load writes
+     `index = u32 at table_base[n] + (low - user_data[n]) + imm + soffset + 4` to dword 0 of
+     its result and 0 to the rest, so a dynamic offset is whatever the program added to the
+     low dword; copies and phis of those dwords stay loaded. A loaded dword read other than as
+     the resource operand of `s_buffer_load*`, MUBUF or MIMG (or copied) is `Unsupported {
+     chunk: 9, "the words of a loaded descriptor used as numbers" }`.
+   * Buffers: a `Loaded` buffer is `view_table + index * 32` (kind must be 1, else empty;
+     size 0xffffffff is unbounded; stride from the record); anything else is `Built`: the four
+     words read at run time as a V# (base = w0 | (w1 & 0xffff) << 32, stride = w1 bits 16-29,
+     size = `num_records` bytes, times the stride when it is not 0; -1 unbounded). Every dword
+     read is `OpConvertUToPtr` + `Aligned 4` load under `if (offset + 4k + 4 <= size)`, else 0
+     (a `Function` temporary holds the result); a store under the same condition (and the
+     lane's EXEC bit) is skipped. Offset = `soffset + inst offset + voffset (offen) + index *
+     stride (idxen)`; SMEM: immediate + optional SGPR. A raw `s_load*` (base not a table)
+     reads at `lo | hi << 32 + offset`, unbounded; so do root descriptors.
+   * Images: `image_sample`, `_l`, `_lz`, dmask any, dims 1D, 2D, 3D, cube, 2D array. The T#
+     must be `Loaded`: `textures[index]` (`OpTypeImage` f32 per dimension, `UniformConstant`
+     runtime array, set 0 binding 0, one variable per dimension aliasing the binding, `NonUniform`
+     on the index and the loaded objects; capabilities `RuntimeDescriptorArray`,
+     `SampledImageArrayNonUniformIndexing`, `ShaderNonUniform`). The S# is four constants
+     (decoded to a `SamplerDesc`, deduplicated, set 1 binding k) or `Loaded` (`samplers[index]`,
+     set 0 binding 2). `OpImageSampleImplicitLod` for `image_sample` (refused in a vertex
+     stage), `ExplicitLod` for `_l` (last address dword) and `_lz` (0.0). Refused: a16, d16,
+     tfe, lwe, unorm, MSAA, 1D array, the other sample variants (`_b`, `_c`, `_d`, `_o`) by name.
+     Cube: the hardware address `(s, t, face)` is turned back into a direction (`2 * (x - 1.5)`
+     per face plane, the usual face order and signs) **[unverified]**: the `1.5` and the face
+     numbering are from the ISA text, not from a captured cube sample.
+   * Still `Unsupported { chunk: 9 }` by name: MTBUF, `buffer_load_format*`, `buffer_atomic*`,
+     tfe / lds on MUBUF, `global_*` / `flat_*`, DS, `image_load/store/resinfo/atomic`,
+     `s_store`, `s_dcache*`. A loaded S# is read from `slot + 4` like a view (**[unverified]**:
+     no type-6 sampler table has been seen in a blob).
+   * Guesses **[unverified]**: the S# field layout (words 0-3, as `SQ_IMG_SAMP_WORD0..3`;
+     checked against another decoder in the reference mirror for filters, address modes,
+     anisotropy, compare, LOD range and bias, border type) and the V# layout come from the
+     public tables; a structured V# (stride > 0) is bounded by `num_records * stride` bytes
+     instead of the hardware's index and offset checks; the out-of-range rule is applied per
+     dword (a dword that straddles the end reads 0); helper invocations are not excluded from
+     stores.
+   * Tests (synthetic VS/PS from `fixtures.txt`, each validated with `spirv-val`): loaded
+     CBV + `s_buffer_load`, dynamic table and buffer offsets, Built V# from a root descriptor
+     with offen / idxen loads and a store, raw `s_load`, loaded T# + constant S# (and
+     `SamplerDesc` equality), loaded S#, every sample form and dimension; one refusal each for
+     a T# not loaded, a non-constant S#, descriptor words used as numbers, implicit LOD in a
+     VS and four 9b operations by name; `SamplerDesc` decoding. The out-of-range rule has no
+     execution test: the probe harness runs `GLCompute` with no root block, and no stage
+     can be run on the CPU evaluator yet (chunk 10's llvmpipe run covers it).
+   * First screen (`--spirv --stats`): the five blobs (vs e5fcb71c, ps e2bcc91e, vs 7fda1be8, ps
+     c1d5a4b8, vs 28d887aa) all translate and validate; `--pair` on (7fda1be8, c1d5a4b8) and
+     (e5fcb71c, 7ba0e3e2) writes valid modules. Corpus: programs that translate and validate
+     1368 of 3060 structured (was 365): vs 436 of 760, ps 927 of 1607, cs 5. First unsupported
+     op of the rest: cs `s_load_dwordx4` 548 (compute I/O is not built), vs `buffer_load_format_x`
+     221, ps a sampler neither constant nor loaded 174, ps `image_gather4_lz` 148, cs
+     `s_load_dwordx8` 126, ps `image_load` 112, ps and vs loaded descriptor words used as
+     numbers 109 and 84, ps `image_get_lod` 64, ps `image_store` 50.
 10. **Vulkan pipelines, draws and dispatches** (`backend/vk/pipeline.rs`): bindless set and view
    table upkeep at submit, root block per draw, graphics (VS+PS) and mesh (MS+PS,
    `VK_EXT_mesh_shader`) pipelines from translated stages + `GraphicsState`, compute pipelines,
