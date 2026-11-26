@@ -823,8 +823,32 @@ unsafe fn unhandled(rec: *mut ExceptionRecord, ctx: *mut u8) {
         context: ctx,
     };
     if filter_verdict(&ptrs) != -1 {
+        #[cfg(not(test))]
+        eprintln!("{}", backtrace_line(ctx, 16));
         stop((*rec).code, (*rec).address);
     }
+}
+
+/// The return addresses above the faulting frame of `ctx`, up to `max`, as
+/// `nativ64: backtrace image+0x… image+0x…` (addresses outside every image print bare). Stops
+/// at the first frame no unwind info describes.
+unsafe fn backtrace_line(ctx: *mut u8, max: usize) -> String {
+    let mut line = String::from("nativ64: backtrace");
+    if ctx.is_null() {
+        return line;
+    }
+    let mut buf = CtxBuf::from(ctx);
+    for _ in 0..max {
+        if step(buf.ptr(), 0).is_none() {
+            break;
+        }
+        let ret = Ctx(buf.ptr()).get(CONTEXT_RIP_OFF) as usize;
+        match crate::process::image_base_of(ret) {
+            Some(b) => line.push_str(&format!(" image+{:#x}", ret - b)),
+            None => line.push_str(&format!(" {ret:#x}")),
+        }
+    }
+    line
 }
 
 /// What the title's top-level filter says: `-1` continue, `1` execute handler (terminate), `0`
@@ -2242,6 +2266,19 @@ mod tests {
                 ]
             );
             assert_eq!(take_stopped()[0].0, STATUS_INVALID_DISPOSITION);
+        }
+
+        #[test]
+        fn backtrace_without_a_context_is_empty() {
+            unsafe {
+                assert_eq!(
+                    backtrace_line(std::ptr::null_mut(), 16),
+                    "nativ64: backtrace"
+                );
+                // a context in no image unwinds nowhere
+                let mut ctx = Context([0; CONTEXT_SIZE]);
+                assert_eq!(backtrace_line(ctx.0.as_mut_ptr(), 16), "nativ64: backtrace");
+            }
         }
 
         #[test]
