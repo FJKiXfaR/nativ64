@@ -9,7 +9,7 @@
 //! call. The root signature is kept as a clone of its parsed model, not a reference to its
 //! object: the title may release the object at once, and the model is plain data.
 //!
-//! The descriptions are the PC ones (graphics 0x298 bytes, compute 0x38); the stream's subobject
+//! The descriptions are the PC ones (graphics 0x290 bytes, compute 0x38); the stream's subobject
 //! types are PC's too except that the console numbers amplification and mesh shaders 23 and 24
 //! (PC 24 and 25). The extensions of the X variant (console shader settings) are ignored. A
 //! stream subobject of a type we do not size is `E_INVALIDARG`, logged, so a new one shows up.
@@ -35,19 +35,19 @@ pub static PIPELINE_IIDS: [Guid; 4] = [
 ];
 
 /// Size of `D3D12_GRAPHICS_PIPELINE_STATE_DESC`.
-const GRAPHICS_DESC_SIZE: usize = 0x298;
+const GRAPHICS_DESC_SIZE: usize = 0x290;
 /// Bytes of `D3D12_COMPUTE_PIPELINE_STATE_DESC` we read (root signature and shader; the node
 /// mask, cached blob and flags follow).
 const COMPUTE_DESC_READ: usize = 24;
 /// Offsets in the graphics description.
 mod gfx {
     pub const STAGES: usize = 8; // five `D3D12_SHADER_BYTECODE`s
-    pub const INPUT_LAYOUT: usize = 560; // elements pointer, count
-    pub const TOPOLOGY: usize = 580;
-    pub const NUM_TARGETS: usize = 584;
-    pub const TARGET_FORMATS: usize = 588;
-    pub const DEPTH_FORMAT: usize = 620;
-    pub const SAMPLES: usize = 624; // count, quality
+    pub const INPUT_LAYOUT: usize = 552; // elements pointer, count
+    pub const TOPOLOGY: usize = 572;
+    pub const NUM_TARGETS: usize = 576;
+    pub const TARGET_FORMATS: usize = 580;
+    pub const DEPTH_FORMAT: usize = 612;
+    pub const SAMPLES: usize = 616; // count, quality
 }
 /// Stage names, in graphics description order.
 const GRAPHICS_STAGES: [&str; 5] = ["vertex", "pixel", "domain", "hull", "geometry"];
@@ -639,20 +639,21 @@ mod tests {
             put32(&mut el, 8 + 4 * i, *w);
         }
         let (r, _blob) = root();
-        let mut desc = vec![0u8; GRAPHICS_DESC_SIZE];
+        // Offsets of the standard header (stream output 32 bytes), not our constants.
+        let mut desc = vec![0u8; 0x290];
         put(&mut desc, 0, r as u64);
         put(&mut desc, 8, vs.as_ptr() as u64);
         put(&mut desc, 16, 3);
         put(&mut desc, 24, ps.as_ptr() as u64);
         put(&mut desc, 32, 5);
-        put(&mut desc, gfx::INPUT_LAYOUT, el.as_ptr() as u64);
-        put32(&mut desc, gfx::INPUT_LAYOUT + 8, 1);
-        put32(&mut desc, gfx::TOPOLOGY, 3);
-        put32(&mut desc, gfx::NUM_TARGETS, 2);
-        put32(&mut desc, gfx::TARGET_FORMATS, 28);
-        put32(&mut desc, gfx::TARGET_FORMATS + 4, 87);
-        put32(&mut desc, gfx::DEPTH_FORMAT, 40);
-        put32(&mut desc, gfx::SAMPLES, 4);
+        put(&mut desc, 552, el.as_ptr() as u64);
+        put32(&mut desc, 560, 1);
+        put32(&mut desc, 572, 3);
+        put32(&mut desc, 576, 2);
+        put32(&mut desc, 580, 28);
+        put32(&mut desc, 584, 87);
+        put32(&mut desc, 612, 40);
+        put32(&mut desc, 616, 4);
         unsafe {
             let mut p = N;
             assert_eq!(

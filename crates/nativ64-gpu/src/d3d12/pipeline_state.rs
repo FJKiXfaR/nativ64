@@ -7,11 +7,9 @@
 //! (blend at 120, sample mask 448, rasterizer 452, depth-stencil 496, strip cut 568); the
 //! stream form by walking its subobjects, each state at +4 of its type word (the console's
 //! `DEPTH_STENCIL1` adds the bounds test flag). An absent subobject has D3D12's default.
-//!
-//! shortcut: **[unverified]** `pipeline.rs` reads the input layout and formats of the same
-//! description at offsets 8 bytes above these (it counts the stream output as 40 bytes, the
-//! header's is 32); no title has been seen creating a pipeline from the description form, only
-//! from streams, so the difference was never exercised.
+//! `pipeline.rs` reads the input layout (552), topology (572), formats (580),
+//! depth format (612) and samples (616) of the same description (the stream output is 32 bytes);
+//! no title has been seen creating a pipeline from the description form, only from streams.
 
 use super::pipeline::{subobject, GraphicsState};
 
