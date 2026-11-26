@@ -189,7 +189,9 @@ impl<'g> DrawState<'g> {
     }
 
     /// Before a submission: drops the imports of memory that changed (and the view records
-    /// that held their addresses) and sizes the arena for `draws` draws.
+    /// that held their addresses) and makes room in the arena for `draws` draws. The arena is
+    /// kept from one submission to the next and grows by doubling when a submission needs more;
+    /// it is made here, before the submission's images take the memory.
     pub(super) fn begin(&mut self, draws: usize) {
         if self.mem.sync() {
             if let Some(v) = &mut self.views {
@@ -197,13 +199,33 @@ impl<'g> DrawState<'g> {
             }
         }
         self.views_ready = false;
-        self.arena = None;
         self.arena_size = draws * rootblock::STRIDE;
+        if let Some((_, used)) = &mut self.arena {
+            *used = 0;
+        }
+        let have = self.arena_bytes();
+        if self.arena_size > have && self.arena_size > 0 {
+            let size = self.arena_size.max(have * 2);
+            // the GPU is idle between submissions: the old one goes first
+            self.arena = None;
+            self.make_arena(size);
+        }
     }
 
-    /// After a submission: the arena goes.
+    fn make_arena(&mut self, size: usize) {
+        match HostBuf::new(self.gpu, size.max(rootblock::STRIDE)) {
+            Ok(b) => self.arena = Some((b, 0)),
+            Err(e) => log_once(format!("no root block arena: {e}")),
+        }
+    }
+
+    /// The arena's size in bytes (0 when there is none).
+    pub(super) fn arena_bytes(&self) -> usize {
+        self.arena.as_ref().map_or(0, |(b, _)| b.size)
+    }
+
+    /// After a submission: the scratch buffers go; the arena stays.
     pub(super) fn end(&mut self) {
-        self.arena = None;
         self.open = None;
         self.scratch.clear();
     }
@@ -286,13 +308,7 @@ impl<'g> DrawState<'g> {
     /// Room for a root block in the arena: its offset.
     fn arena_slot(&mut self) -> Option<(&mut HostBuf<'g>, usize)> {
         if self.arena.is_none() {
-            match HostBuf::new(self.gpu, self.arena_size.max(rootblock::STRIDE)) {
-                Ok(b) => self.arena = Some((b, 0)),
-                Err(e) => {
-                    log_once(format!("no root block arena: {e}"));
-                    return None;
-                }
-            }
+            self.make_arena(self.arena_size);
         }
         let (buf, used) = self.arena.as_mut()?;
         if *used + rootblock::STRIDE > buf.size {

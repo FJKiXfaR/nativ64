@@ -52,6 +52,10 @@ pub(super) struct TitleImage {
     pub(super) uploads: u32,
     /// The submission whose host memory was last looked at (hashed).
     pub(super) seen: u64,
+    /// The submission that last used the image (eviction spares the current one's).
+    pub(super) touched: u64,
+    /// Bytes of device memory (`vkGetImageMemoryRequirements`).
+    pub(super) size: u64,
     /// What the write watch told this image's pages last.
     pub(super) watched: super::watch::Cursor,
     /// The sampled views made of the image, by description.
@@ -138,6 +142,14 @@ pub struct ReplayStats {
     /// Textures not hashed because the write watch saw none of their pages written.
     pub watch_skips: u64,
     pub uploads: u64,
+    /// Images and bytes of device memory alive for resources, and for placed views.
+    pub images: u64,
+    pub image_bytes: u64,
+    pub placed: u64,
+    pub placed_bytes: u64,
+    /// Released resources drained, and host-owned images freed to make room.
+    pub released: u64,
+    pub evictions: u64,
 }
 
 /// A read-back image: `bytes` are rows of `width * bytes_per_texel`, top row first.
@@ -162,6 +174,9 @@ pub struct VkBackend<'g> {
     pub(super) swapchains: HashMap<usize, Option<super::Swapchain<'g>>>,
     pub(super) dump: Option<std::path::PathBuf>,
     pub(super) frames: u64,
+    /// Tests: the most device memory the images may hold (a failing allocation beyond it).
+    #[cfg(test)]
+    pub(super) budget: Option<u64>,
 }
 
 fn range(
@@ -293,6 +308,8 @@ impl<'g> VkBackend<'g> {
             swapchains: HashMap::new(),
             dump: None,
             frames: 0,
+            #[cfg(test)]
+            budget: None,
         }
     }
 
@@ -300,6 +317,7 @@ impl<'g> VkBackend<'g> {
     pub fn execute(&mut self, lists: &[Vec<Command>]) {
         let gpu = self.gpu;
         let mut staging = Vec::new();
+        self.reap();
         let draws = lists
             .iter()
             .flatten()
@@ -363,6 +381,7 @@ impl<'g> VkBackend<'g> {
         }
         self.draw.end();
         free_staging(gpu, staging);
+        self.refresh_stats();
         super::profile::stop(super::profile::Phase::Record, tr);
     }
 
@@ -381,8 +400,10 @@ impl<'g> VkBackend<'g> {
     pub(super) fn image(&mut self, d: &Device, cb: vk::CommandBuffer, res: usize) -> Option<Img> {
         // SAFETY: `res` was recorded by a list method from a live resource of ours.
         let (desc, address) = unsafe { info_of(res as *mut _) }?;
-        if let Some(Some(t)) = self.images.get(&res) {
+        let submission = self.tex.submission;
+        if let Some(Some(t)) = self.images.get_mut(&res) {
             if t.desc == desc {
+                t.touched = submission;
                 return Some(t.img());
             }
         }
@@ -412,7 +433,7 @@ impl<'g> VkBackend<'g> {
     }
 
     pub(super) fn make_image(
-        &self,
+        &mut self,
         d: &Device,
         cb: vk::CommandBuffer,
         desc: ResourceDesc,
@@ -485,7 +506,6 @@ impl<'g> VkBackend<'g> {
             .tiling(vk::ImageTiling::OPTIMAL)
             .usage(usage)
             .initial_layout(vk::ImageLayout::UNDEFINED);
-        let g = self.gpu;
         // SAFETY: objects are destroyed on each failure path.
         unsafe {
             let image = match d.create_image(&ci, None) {
@@ -496,17 +516,18 @@ impl<'g> VkBackend<'g> {
                 }
             };
             let req = d.get_image_memory_requirements(image);
-            let mem = g
-                .memory_type(req.memory_type_bits, vk::MemoryPropertyFlags::DEVICE_LOCAL)
-                .and_then(|ty| {
-                    d.allocate_memory(
-                        &vk::MemoryAllocateInfo::default()
-                            .allocation_size(req.size)
-                            .memory_type_index(ty),
-                        None,
-                    )
-                    .ok()
-                });
+            let mut mem = self.allocate_image_memory(d, &req);
+            if mem.is_none() {
+                // out of device memory: host-owned images not used by this submission are
+                // freed (they upload again when next made), oldest first
+                for victim in self.eviction_order() {
+                    self.evict(victim);
+                    mem = self.allocate_image_memory(d, &req);
+                    if mem.is_some() {
+                        break;
+                    }
+                }
+            }
             let Some(memory) = mem else {
                 log_once(format!("no memory for an image of {desc:?}"));
                 d.destroy_image(image, None);
@@ -558,10 +579,83 @@ impl<'g> VkBackend<'g> {
                 uploaded: None,
                 uploads: 0,
                 seen: 0,
+                touched: self.tex.submission,
+                size: req.size,
                 watched: Default::default(),
                 views: HashMap::new(),
             })
         }
+    }
+
+    /// Device-local memory for an image, None when the device has none (or, in tests, when the
+    /// budget is spent).
+    fn allocate_image_memory(
+        &self,
+        d: &Device,
+        req: &vk::MemoryRequirements,
+    ) -> Option<vk::DeviceMemory> {
+        #[cfg(test)]
+        if let Some(budget) = self.budget {
+            let live: u64 = self
+                .images
+                .values()
+                .chain(self.placed.values())
+                .flatten()
+                .map(|t| t.size)
+                .sum();
+            if live + req.size > budget {
+                return None;
+            }
+        }
+        let ty = self
+            .gpu
+            .memory_type(req.memory_type_bits, vk::MemoryPropertyFlags::DEVICE_LOCAL)?;
+        // SAFETY: a plain allocation; the caller binds or frees it.
+        unsafe {
+            d.allocate_memory(
+                &vk::MemoryAllocateInfo::default()
+                    .allocation_size(req.size)
+                    .memory_type_index(ty),
+                None,
+            )
+        }
+        .ok()
+    }
+
+    /// The counters of the images alive, from the maps.
+    pub(super) fn refresh_stats(&mut self) {
+        let (n, bytes) = self
+            .images
+            .values()
+            .flatten()
+            .fold((0, 0), |(n, b), t| (n + 1, b + t.size));
+        self.stats.images = n;
+        self.stats.image_bytes = bytes;
+        let (n, bytes) = self
+            .placed
+            .values()
+            .flatten()
+            .fold((0, 0), |(n, b), t| (n + 1, b + t.size));
+        self.stats.placed = n;
+        self.stats.placed_bytes = bytes;
+    }
+
+    /// A line of memory counters (every 600 frames, and with `NATIV64_PROFILE`).
+    pub(super) fn memory_line(&mut self) -> String {
+        self.refresh_stats();
+        let s = &self.stats;
+        format!(
+            "nativ64-gpu: frame {}: images {} ({} MiB), placed {} ({} MiB), arena {} KiB, \
+             released {}, evictions {}",
+            self.frames,
+            s.images,
+            s.image_bytes >> 20,
+            s.placed,
+            s.placed_bytes >> 20,
+            self.draw.arena_bytes() >> 10,
+            s.released,
+            s.evictions
+        )
     }
 
     /// # Safety

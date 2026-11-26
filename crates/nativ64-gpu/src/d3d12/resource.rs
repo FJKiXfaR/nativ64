@@ -58,8 +58,46 @@ pub struct ResourceData {
     owned: u64,
 }
 
+/// The objects released since the last [`take_released`] (their addresses): the backend frees
+/// what it made for them. Drained every submission, so it stays short. (Tests run in parallel
+/// threads, each with its own backend: the list is per thread there.)
+#[cfg(not(test))]
+static RELEASED: std::sync::Mutex<Vec<usize>> = std::sync::Mutex::new(Vec::new());
+#[cfg(test)]
+thread_local! {
+    static RELEASED: std::cell::RefCell<Vec<usize>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn push_released(obj: usize) {
+    #[cfg(not(test))]
+    RELEASED.lock().unwrap_or_else(|e| e.into_inner()).push(obj);
+    #[cfg(test)]
+    RELEASED.with(|r| r.borrow_mut().push(obj));
+}
+
+/// The resource objects released since the last call, by address. The address may already
+/// name a new resource.
+pub(crate) fn take_released() -> Vec<usize> {
+    #[cfg(not(test))]
+    return std::mem::take(&mut *RELEASED.lock().unwrap_or_else(|e| e.into_inner()));
+    #[cfg(test)]
+    return RELEASED.with(|r| std::mem::take(&mut *r.borrow_mut()));
+}
+
 impl Drop for ResourceData {
     fn drop(&mut self) {
+        // The console fields sit at `+8` of the object, whose vtable word is at `+0`. The
+        // allocation is still ours while the data drops: clearing the word makes `desc_of` and
+        // `info_of` refuse a released object (and its freed memory, once reused, as well).
+        let obj = (self as *mut Self).cast::<u8>().wrapping_sub(8).cast::<usize>();
+        // SAFETY: `ResourceData` only lives at `+8` of an `XObject` block, inside which `obj`
+        // lies (the drop runs from `XObject::release`).
+        unsafe {
+            if obj.read() == std::ptr::addr_of!(TABLE) as usize {
+                obj.write(0);
+                push_released(obj as usize);
+            }
+        }
         if self.owned != 0 {
             crate::xmem::free(self.address as *mut c_void, self.owned);
         }

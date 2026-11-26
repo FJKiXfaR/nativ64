@@ -84,6 +84,19 @@ APIs only (libc as its only dependency).
   objects). Uncompressed memory/file to memory requests, run synchronously at `Submit`; errors
   in the queue's error record and event. TODO: zlib/BCPack, page and GPU destinations, fence
   signalling (recorded only). Details in the module header.
+- Lifetime of images (`d3d12/resource.rs`, `backend/vk/textures.rs`, `draw.rs`): releasing a
+  resource clears its vtable word (`desc_of` / `info_of` refuse it) and queues its address
+  (`take_released`). Each `execute` drains the queue first: the image and its cached views go,
+  the registry entries that named it are classified again (a hole, or a texture when a new
+  resource sits at the same address; `TexState::by_res` gives the indices) and their descriptors
+  are written again. When `vkAllocateMemory` fails for an image, host-owned images (not GPU
+  written) not used by the current submission are destroyed, least recently used first (placed
+  images included), until it succeeds; they are made and uploaded again at next use. The sync
+  visits every registered texture in each submission, so a working set above device memory
+  evicts in a cycle. The root block arena is kept across submissions, made in `DrawState::begin`
+  before any image, and doubled (or sized to the need if larger) when a submission has more draws.
+  `ReplayStats` counts images and placed images alive with their bytes, released and evictions,
+  printed every 600 frames and with `NATIV64_PROFILE`.
 
 ## What the title expects (facts from reading VIctory, to confirm on our run)
 

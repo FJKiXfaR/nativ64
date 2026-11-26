@@ -244,6 +244,15 @@ pub fn views_from(first: usize) -> Vec<View> {
     v.get(first..).map(<[View]>::to_vec).unwrap_or_default()
 }
 
+/// The view recorded at registry index `index`.
+pub fn view_at(index: usize) -> Option<View> {
+    VIEWS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(index)
+        .cloned()
+}
+
 /// The view recorded at `handle`, if one is.
 pub fn view(handle: u64) -> Option<View> {
     if handle == 0 {

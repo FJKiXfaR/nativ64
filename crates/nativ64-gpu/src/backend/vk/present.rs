@@ -78,6 +78,12 @@ impl<'g> VkBackend<'g> {
         if self.frames.is_multiple_of(60) {
             super::profile::report(self.frames, 60);
         }
+        if self.frames.is_multiple_of(600)
+            || (super::profile::enabled() && self.frames.is_multiple_of(60))
+        {
+            let line = self.memory_line();
+            eprintln!("{line}");
+        }
         let Some((image, w, h)) = self.colour_image(resource) else {
             log_once("PresentX of a resource nothing rendered to: nothing shown".into());
             return;

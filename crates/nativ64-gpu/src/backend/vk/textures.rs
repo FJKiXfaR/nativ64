@@ -33,12 +33,12 @@ use super::profile::{self, Count, Phase};
 use super::replay::{Staging, TitleImage, VkBackend, global_barrier, mip_count, stage_bytes};
 use super::sampler::Spec;
 use super::{Gpu, log_once};
-use crate::d3d12::descriptor::{View, views_from};
-use crate::d3d12::resource::{ResourceDesc, info_of_checked};
+use crate::d3d12::descriptor::{View, view_at, views_from};
+use crate::d3d12::resource::{ResourceDesc, info_of_checked, take_released};
 use crate::texture::detile;
 use ash::{Device, vk};
 use nativ64::api_ms_win_core_memory as table;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 const TEXTURE1D: u32 = 2;
 const TEXTURE2D: u32 = 3;
@@ -67,6 +67,12 @@ enum Entry {
     Sampler(Spec),
 }
 
+/// An image that can be freed to make room (`VkBackend::eviction_order`).
+pub(super) enum Victim {
+    Image(usize),
+    Placed(PlacedKey),
+}
+
 struct Hole {
     image: vk::Image,
     memory: vk::DeviceMemory,
@@ -85,6 +91,8 @@ pub(super) struct TexState {
     /// The resources and placed images with a view.
     sources: Vec<usize>,
     source_set: HashSet<usize>,
+    /// The registry indices whose entry is a texture of the resource.
+    by_res: HashMap<usize, Vec<u32>>,
     placed: Vec<PlacedKey>,
     /// Submissions that synced, to hash a texture once in each.
     pub(super) submission: u64,
@@ -465,7 +473,11 @@ impl<'g> VkBackend<'g> {
 
     /// The image of a placed view, made at its first use; None when it has none.
     fn placed_image(&mut self, d: &Device, cb: vk::CommandBuffer, key: PlacedKey) -> bool {
-        if let Some(t) = self.placed.get(&key) {
+        let submission = self.tex.submission;
+        if let Some(t) = self.placed.get_mut(&key) {
+            if let Some(t) = t {
+                t.touched = submission;
+            }
             return t.is_some();
         }
         let desc = placed_desc(&key.1);
@@ -504,6 +516,99 @@ impl<'g> VkBackend<'g> {
             return false;
         };
         upload(self.gpu, d, cb, t, staging, &mut self.stats, &mut self.tex)
+    }
+
+    /// Start of a submission: frees what was made for the resources the title released since
+    /// the last one. Their images and views go, and the entries that named them are classified
+    /// again from the registry (a hole now, or a texture when a new resource sits at the same
+    /// address); their descriptors are written again.
+    pub(super) fn reap(&mut self) {
+        let released = take_released();
+        if released.is_empty() {
+            return;
+        }
+        self.stats.released += released.len() as u64;
+        let gone: HashSet<usize> = released.iter().copied().collect();
+        let mut dropped = false;
+        for &res in &released {
+            if let Some(Some(t)) = self.images.remove(&res) {
+                self.draw.forget_image(res);
+                // SAFETY: the GPU is idle between submissions.
+                unsafe { self.destroy(t) };
+            } else {
+                self.images.remove(&res);
+            }
+            dropped |= self.tex.source_set.remove(&res);
+        }
+        if dropped {
+            self.tex.sources.retain(|r| !gone.contains(r));
+        }
+        for &res in &released {
+            let Some(indices) = self.tex.by_res.remove(&res) else {
+                continue;
+            };
+            let mut kept = Vec::new();
+            for i in indices {
+                let entry = view_at(i as usize).map_or(Entry::Hole, |v| self.classify(&v));
+                if let Entry::Texture { res: r, .. } = &entry {
+                    // a live resource at the same address
+                    if self.tex.source_set.insert(*r) {
+                        self.tex.sources.push(*r);
+                    }
+                    kept.push(i);
+                }
+                self.tex.entries[i as usize] = entry;
+                self.tex.dirty_from = self.tex.dirty_from.min(i as usize);
+            }
+            if !kept.is_empty() {
+                self.tex.by_res.insert(res, kept);
+            }
+        }
+    }
+
+    /// The host-owned images not used by the current submission, the least recently used
+    /// first: what can be freed to make room.
+    pub(super) fn eviction_order(&self) -> Vec<Victim> {
+        let now = self.tex.submission;
+        let mut v: Vec<(u64, Victim)> = Vec::new();
+        for (res, t) in &self.images {
+            if let Some(t) = t.as_ref().filter(|t| !t.gpu_owned && t.touched < now) {
+                v.push((t.touched, Victim::Image(*res)));
+            }
+        }
+        for (key, t) in &self.placed {
+            if let Some(t) = t.as_ref().filter(|t| !t.gpu_owned && t.touched < now) {
+                v.push((t.touched, Victim::Placed(*key)));
+            }
+        }
+        v.sort_by_key(|(touched, _)| *touched);
+        v.into_iter().map(|(_, victim)| victim).collect()
+    }
+
+    /// Frees an image of the host's: it is made again, and uploaded again, when next used, and
+    /// the descriptors that held its views are written again (holes until then).
+    pub(super) fn evict(&mut self, victim: Victim) {
+        self.stats.evictions += 1;
+        match victim {
+            Victim::Image(res) => {
+                if let Some(Some(t)) = self.images.remove(&res) {
+                    self.draw.forget_image(res);
+                    // SAFETY: the GPU is idle between submissions, and the image was not used
+                    // by the recording one (`eviction_order`).
+                    unsafe { self.destroy(t) };
+                }
+                for &i in self.tex.by_res.get(&res).into_iter().flatten() {
+                    self.tex.dirty_from = self.tex.dirty_from.min(i as usize);
+                }
+            }
+            Victim::Placed(key) => {
+                if let Some(Some(t)) = self.placed.remove(&key) {
+                    // SAFETY: as above.
+                    unsafe { self.destroy(t) };
+                }
+                self.tex.dirty_from = 0;
+            }
+        }
     }
 
     /// The 1x1 zero RGBA8 view every index that is not a texture holds.
@@ -656,6 +761,8 @@ impl<'g> VkBackend<'g> {
                     if self.tex.source_set.insert(*res) {
                         self.tex.sources.push(*res);
                     }
+                    let index = self.tex.entries.len() as u32;
+                    self.tex.by_res.entry(*res).or_default().push(index);
                 }
                 Entry::Placed { key, .. } if !self.tex.placed.contains(key) => {
                     self.tex.placed.push(*key);
@@ -1201,5 +1308,102 @@ mod tests {
         assert!(all_pixels(&b.read_back(target).unwrap(), [0, 255, 0, 255]));
         let placed = b.placed.values().flatten().find(|t| t.address == green);
         assert_eq!(placed.map(|t| t.uploads), Some(1));
+    }
+
+    /// Releases the resource object `res` as the title does.
+    fn release(res: usize) {
+        // SAFETY: a live resource of ours, released once.
+        let left = unsafe {
+            crate::xobj::XObject::<crate::d3d12::resource::ResourceData>::release(res as *mut _)
+        };
+        assert_eq!(left, 0);
+    }
+
+    #[test]
+    fn a_released_resource_frees_its_image_and_its_descriptor_becomes_the_hole() {
+        let Some(g) = gpu_or_skip() else { return };
+        let mut b = VkBackend::new(&g);
+        let d = desc(8, 8, 1, 28, 0, 0);
+        let tex = resource_at(tiled_memory(&d, |_, _, _, _| vec![200, 100, 50, 10]), d);
+        let pipe = sampling_pipeline(SAMPLING());
+        let target = texture(16, 8, 28, TARGET);
+        let handle = rtv(target);
+        let t1 = table();
+        srv(tex, None, t1 + 0x20);
+        let mut list = clear(handle, [0.0, 0.0, 1.0, 1.0]);
+        list.extend(textured_draw(pipe, handle, t1));
+        b.execute(&[list.clone()]);
+        assert!(all_pixels(&b.read_back(target).unwrap(), [200, 100, 50, 10]));
+        assert!(b.images.contains_key(&tex));
+        release(tex);
+        b.execute(&[list]);
+        assert_eq!(b.stats.released, 1);
+        assert!(!b.images.contains_key(&tex), "the image went with the resource");
+        assert!(!b.tex.sources.contains(&tex) && !b.tex.by_res.contains_key(&tex));
+        assert!(
+            all_pixels(&b.read_back(target).unwrap(), [0, 0, 0, 0]),
+            "the descriptor reads the hole"
+        );
+    }
+
+    #[test]
+    fn host_images_are_evicted_when_the_device_has_no_memory_left() {
+        let Some(g) = gpu_or_skip() else { return };
+        let mut b = VkBackend::new(&g);
+        let (old, written, recent, new) = (
+            texture(8, 8, 28, 0),
+            texture(8, 8, 28, TARGET),
+            texture(8, 8, 28, 0),
+            texture(8, 8, 28, 0),
+        );
+        let r = g.submit_once(|d, cb| {
+            b.tex.submission = 1;
+            assert!(b.image(d, cb, old).is_some());
+            assert!(b.image(d, cb, written).is_some());
+            b.own(written);
+            b.tex.submission = 2;
+            assert!(b.image(d, cb, recent).is_some());
+            // no memory for one more image: the least recently used host image goes, not the
+            // one the GPU wrote, and not an image of this submission
+            b.tex.submission = 3;
+            assert!(b.image(d, cb, recent).is_some());
+            b.refresh_stats();
+            b.budget = Some(b.stats.image_bytes);
+            assert!(b.image(d, cb, new).is_some());
+            assert_eq!(b.stats.evictions, 1);
+            assert!(!b.images.contains_key(&old));
+            assert!(b.images.contains_key(&written) && b.images.contains_key(&recent));
+            // everything left is protected: the next one gets no image
+            assert!(b.image(d, cb, texture(8, 8, 28, 0)).is_none());
+            assert_eq!(b.stats.evictions, 1);
+            // the evicted resource is made again once the budget allows
+            b.budget = None;
+            assert!(b.image(d, cb, old).is_some());
+        });
+        r.unwrap();
+        assert_eq!(b.images[&old].as_ref().unwrap().uploads, 0);
+    }
+
+    #[test]
+    fn the_arena_is_kept_across_submissions_and_grows_by_doubling() {
+        let Some(g) = gpu_or_skip() else { return };
+        let mut b = VkBackend::new(&g);
+        let pipe = sampling_pipeline(SAMPLING());
+        let target = texture(16, 8, 28, TARGET);
+        let handle = rtv(target);
+        let t = table();
+        let lists = |n: usize| -> Vec<Vec<Command>> {
+            (0..n).map(|_| textured_draw(pipe, handle, t)).collect()
+        };
+        let stride = super::super::rootblock::STRIDE;
+        b.execute(&lists(2));
+        assert_eq!(b.draw.arena_bytes(), 2 * stride);
+        b.execute(&lists(1));
+        assert_eq!(b.draw.arena_bytes(), 2 * stride, "kept, not shrunk");
+        b.execute(&lists(3));
+        assert_eq!(b.draw.arena_bytes(), 4 * stride, "doubled");
+        b.execute(&lists(9));
+        assert_eq!(b.draw.arena_bytes(), 9 * stride, "the need when larger than double");
+        assert_eq!(b.stats.drawn, 15);
     }
 }
