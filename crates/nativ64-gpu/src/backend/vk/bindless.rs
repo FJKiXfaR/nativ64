@@ -52,7 +52,8 @@ impl<'g> HostBuf<'g> {
                 d.create_buffer(
                     &vk::BufferCreateInfo::default().size(size as u64).usage(
                         vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
-                            | vk::BufferUsageFlags::STORAGE_BUFFER,
+                            | vk::BufferUsageFlags::STORAGE_BUFFER
+                            | vk::BufferUsageFlags::INDEX_BUFFER,
                     ),
                     None,
                 ),

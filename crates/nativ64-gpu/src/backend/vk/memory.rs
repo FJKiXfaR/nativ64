@@ -56,6 +56,8 @@ impl Gpu {
                         .size(len as u64)
                         .usage(
                             vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                                | vk::BufferUsageFlags::VERTEX_BUFFER
+                                | vk::BufferUsageFlags::INDEX_BUFFER
                                 | vk::BufferUsageFlags::TRANSFER_SRC
                                 | vk::BufferUsageFlags::TRANSFER_DST,
                         )

@@ -10,6 +10,11 @@
 //! (`take_gpu_changes`) drop the imports overlapping them at the start of each submission:
 //! the queue is idle between submissions, so a dropped import is never in use.
 //!
+//! Commits are not recorded as changes: a run that grew after its import (more pages committed
+//! next to it) is imported again, bigger, when a translate runs past the old import; the old
+//! import is kept (`retired`) until the next `sync`, since commands already recorded in the
+//! submission in progress name its buffer.
+//!
 //! shortcuts: a run is imported whole (a huge committed run is one buffer: a driver limit on
 //! the allocation size surfaces as an import error, logged, and the draw is skipped); the run
 //! is shrunk inwards to the import alignment, so a run smaller than it cannot be imported;
@@ -42,6 +47,8 @@ struct Import<'g> {
 pub struct GpuMemory<'g> {
     gpu: &'g Gpu,
     imports: BTreeMap<usize, Import<'g>>,
+    /// Imports replaced by a bigger one during the submission in progress.
+    retired: Vec<Import<'g>>,
 }
 
 impl<'g> GpuMemory<'g> {
@@ -50,6 +57,7 @@ impl<'g> GpuMemory<'g> {
         GpuMemory {
             gpu,
             imports: BTreeMap::new(),
+            retired: Vec::new(),
         }
     }
 
@@ -59,9 +67,16 @@ impl<'g> GpuMemory<'g> {
         self.imports.len()
     }
 
+    /// How many replaced imports are waiting for the submission to finish.
+    #[cfg(test)]
+    pub fn retired(&self) -> usize {
+        self.retired.len()
+    }
+
     /// Drops the imports overlapping a range the memory table or a heap recorded as changed.
     /// Called with the GPU idle. True when anything changed (device addresses may differ now).
     pub fn sync(&mut self) -> bool {
+        self.retired.clear();
         let changes = table::take_gpu_changes();
         let any = !changes.is_empty();
         if any {
@@ -85,8 +100,8 @@ impl<'g> GpuMemory<'g> {
         let at = usize::try_from(va).ok()?;
         let end = at.checked_add(usize::try_from(len.max(1)).ok()?)?;
         if let Some((&start, i)) = self.imports.range(..=at).next_back() {
-            if at < i.end {
-                return (end <= i.end).then(|| Self::mapped(start, i, at));
+            if at < i.end && end <= i.end {
+                return Some(Self::mapped(start, i, at));
             }
         }
         let (start, run_end) = self.run_around(at)?;
@@ -99,6 +114,13 @@ impl<'g> GpuMemory<'g> {
             ));
             return None;
         }
+        // An import of this run that is too small (the run grew): replaced by the whole run.
+        let old: Vec<usize> = self
+            .imports
+            .range(..run_end)
+            .filter(|(_, i)| i.end > start)
+            .map(|(&s, _)| s)
+            .collect();
         let buffer = match self.gpu.import_host(start as *mut u8, run_end - start) {
             Ok(b) => b,
             Err(e) => {
@@ -120,6 +142,11 @@ impl<'g> GpuMemory<'g> {
             buffer,
         };
         let m = Self::mapped(start, &import, at);
+        for s in old {
+            if let Some(i) = self.imports.remove(&s) {
+                self.retired.push(i);
+            }
+        }
         self.imports.insert(start, import);
         Some(m)
     }
@@ -180,6 +207,35 @@ mod tests {
         table::release(a).unwrap();
         m.sync();
         assert_eq!(m.imports(), 0);
+    }
+
+    #[test]
+    fn a_run_that_grew_is_imported_again_and_the_old_import_outlives_the_submission() {
+        let Some(g) = gpu_or_skip() else { return };
+        let mut m = GpuMemory::new(&g);
+        let a = table::alloc(0, 0x100000, RESERVE, RW, None).unwrap();
+        table::alloc(a, 0x40000, COMMIT, RW, None).unwrap();
+        let first = m.translate(a as u64 + 0x100, 16).unwrap();
+        // not committed yet
+        assert!(m.translate(a as u64 + 0x50000, 4).is_none());
+        assert_eq!(m.imports(), 1);
+        // more pages are committed next to the run (no change is recorded)
+        table::alloc(a + 0x40000, 0x40000, COMMIT, RW, None).unwrap();
+        m.sync();
+        assert_eq!(m.imports(), 1);
+        let grown = m.translate(a as u64 + 0x50000, 4).unwrap();
+        assert_eq!(m.imports(), 1);
+        assert_eq!(m.retired(), 1);
+        assert_ne!(first.buffer, grown.buffer);
+        // the whole run is one buffer now, the earlier addresses included
+        let again = m.translate(a as u64 + 0x100, 16).unwrap();
+        assert_eq!(again.buffer, grown.buffer);
+        assert_eq!(grown.address - again.address, 0x50000 - 0x100);
+        // the next submission lets the old import go
+        m.sync();
+        assert_eq!(m.retired(), 0);
+        table::release(a).unwrap();
+        m.sync();
     }
 
     #[test]
