@@ -67,12 +67,17 @@ impl<'g> VkBackend<'g> {
     /// blit `rect` of it (all when None) to `window`.
     pub fn present(&mut self, resource: usize, rect: Option<Rect>, window: Option<Window>) {
         self.frames += 1;
+        if self.frames.is_multiple_of(60) {
+            super::profile::report(self.frames, 60);
+        }
         let Some((image, w, h)) = self.colour_image(resource) else {
             log_once("PresentX of a resource nothing rendered to: nothing shown".into());
             return;
         };
         if let Some(dir) = self.dump.clone().filter(|_| dump_wanted(self.frames)) {
+            let t = super::profile::start();
             self.dump_frame(resource, &dir);
+            super::profile::stop(super::profile::Phase::Dump, t);
         }
         if self.inspecting_at_present() {
             self.dump_targets();

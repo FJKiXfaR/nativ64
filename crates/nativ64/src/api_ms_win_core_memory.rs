@@ -445,6 +445,25 @@ pub fn committed_run(addr: usize) -> Option<(usize, usize)> {
     Some((b + first * PAGE, b + last * PAGE))
 }
 
+/// Whether every page of `addr..addr + size` is committed and accessible, in one allocation of
+/// the table: the cost follows the size of the range, not of the allocation (unlike
+/// [`committed_run`]).
+pub fn is_committed(addr: usize, size: usize) -> bool {
+    let Some(end) = addr.checked_add(size) else {
+        return false;
+    };
+    let t = table();
+    let Some(b) = find(&t, addr & !(PAGE - 1)) else {
+        return false;
+    };
+    let r = &t.regions[&b];
+    let (first, last) = ((addr - b) / PAGE, (end - b).div_ceil(PAGE));
+    last <= r.pages.len()
+        && r.pages[first..last]
+            .iter()
+            .all(|&p| p != 0 && p & 0xff != PAGE_NOACCESS as u16)
+}
+
 /// One host mapping from `/proc/self/maps`: start, end, readable, writable, executable.
 fn host_mapping(addr: usize) -> Option<(usize, usize, bool, bool, bool)> {
     let maps = std::fs::read_to_string("/proc/self/maps").ok()?;
@@ -816,6 +835,9 @@ mod tests {
         assert_eq!(committed_run(a + 0x2000), Some((a + 0x1000, a + 0x4000)));
         assert_eq!(committed_run(a), None);
         assert_eq!(committed_run(a + 0x4000), None);
+        assert!(is_committed(a + 0x1800, 0x2000));
+        assert!(!is_committed(a + 0x1800, 0x2900));
+        assert!(!is_committed(a, 0x1000));
         free(a + 0x2000, 0x1000, MEM_DECOMMIT).unwrap();
         assert_eq!(committed_run(a + 0x1000), Some((a + 0x1000, a + 0x2000)));
         let ch = take_gpu_changes();

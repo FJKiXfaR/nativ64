@@ -16,6 +16,7 @@
 //! mapped again) the answer is None: the caller treats it as written and keeps its old path.
 
 use super::log_once;
+use super::profile::{self, Count, Phase};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
@@ -238,6 +239,7 @@ impl Watch {
             };
             // SAFETY: `arg` and the region vector it points to outlive the call.
             let n = unsafe { libc::ioctl(self.pagemap, PAGEMAP_SCAN, &mut arg) };
+            profile::count(Count::ScanCalls, 1);
             if n < 0 {
                 return Err(());
             }
@@ -259,8 +261,9 @@ impl Watch {
 /// Watches the committed run `start..end` (any page-aligned memory the process maps and may
 /// write): false when the kernel cannot.
 pub(super) fn watch(run: (usize, usize)) -> bool {
+    let t = profile::start();
     let (start, end) = (run.0 & !(PAGE - 1), run.1.next_multiple_of(PAGE));
-    with(|w| {
+    let ok = with(|w| {
         if w.covered(start, end) {
             return true;
         }
@@ -273,7 +276,16 @@ pub(super) fn watch(run: (usize, usize)) -> bool {
             }
         }
     })
-    .unwrap_or(false)
+    .unwrap_or(false);
+    profile::stop(Phase::Watch, t);
+    ok
+}
+
+/// Whether `range` lies in a run that is already watched: the cheap check before `watch`,
+/// which needs the whole committed run.
+pub(super) fn is_watched(range: (usize, usize)) -> bool {
+    let (start, end) = (range.0 & !(PAGE - 1), range.1.next_multiple_of(PAGE));
+    with(|w| w.covered(start, end)).unwrap_or(false)
 }
 
 /// Whether a page of `range` was written since this `cursor` last looked (a write by the
@@ -281,8 +293,9 @@ pub(super) fn watch(run: (usize, usize)) -> bool {
 /// says written. None when it cannot tell (not watched, or the memory was mapped again, in
 /// which case it is watched again): take it as written.
 pub(super) fn written(range: (usize, usize), cursor: &mut Cursor) -> Option<bool> {
+    let t = profile::start();
     let (start, end) = (range.0 & !(PAGE - 1), range.1.next_multiple_of(PAGE));
-    with(|w| {
+    let answer = with(|w| {
         if !w.covered(start, end) {
             return None;
         }
@@ -303,6 +316,7 @@ pub(super) fn written(range: (usize, usize), cursor: &mut Cursor) -> Option<bool
                     log_once(format!("cannot watch {:#x}..{:#x} again", run.0, run.1));
                 }
                 *cursor = Cursor(w.epoch);
+                profile::count(Count::ScanNone, 1);
                 return None;
             }
         }
@@ -313,13 +327,17 @@ pub(super) fn written(range: (usize, usize), cursor: &mut Cursor) -> Option<bool
             || w.log
                 .iter()
                 .any(|&(at, s, e)| at > seen && s < end && start < e);
+        profile::count_max(Count::LogMax, w.log.len() as u64);
         if w.log.len() > LOG_MAX {
+            profile::count(Count::LogDrops, 1);
             w.log.clear();
             w.floor = epoch + 1;
         }
         Some(hit)
     })
-    .flatten()
+    .flatten();
+    profile::stop(Phase::Watch, t);
+    answer
 }
 
 #[cfg(test)]

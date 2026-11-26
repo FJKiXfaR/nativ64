@@ -15,6 +15,7 @@ mod instance;
 mod memory;
 mod pipeline;
 mod present;
+mod profile;
 mod replay;
 mod rootblock;
 mod sampler;

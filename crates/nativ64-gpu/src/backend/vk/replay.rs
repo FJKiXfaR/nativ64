@@ -302,6 +302,8 @@ impl<'g> VkBackend<'g> {
             .count();
         self.draw.begin(draws);
         self.tex.submission += 1;
+        super::profile::count(super::profile::Count::Submissions, 1);
+        let ts = super::profile::start();
         if draws > 0 {
             // The textures are synced in passes of at most `UPLOAD_CAP` staged bytes, each
             // submitted and waited for, so that the staging of a scene change's textures
@@ -311,7 +313,11 @@ impl<'g> VkBackend<'g> {
                 self.tex.staged = 0;
                 self.tex.more = false;
                 let mut pass = Vec::new();
-                let r = gpu.submit_once(|d, cb| self.sync_textures(d, cb, &mut pass));
+                let r = gpu.submit_once(|d, cb| {
+                    let t = super::profile::start();
+                    self.sync_textures(d, cb, &mut pass);
+                    super::profile::stop(super::profile::Phase::SyncRec, t);
+                });
                 free_staging(gpu, pass);
                 if let Err(e) = &r {
                     log_once(format!("texture sync failed: {e}"));
@@ -322,6 +328,8 @@ impl<'g> VkBackend<'g> {
             }
             self.tex.capped = false;
         }
+        super::profile::stop(super::profile::Phase::Sync, ts);
+        let tr = super::profile::start();
         let r = gpu.submit_once(|d, cb| {
             for list in lists {
                 self.stats.lists += 1;
@@ -350,6 +358,7 @@ impl<'g> VkBackend<'g> {
         }
         self.draw.end();
         free_staging(gpu, staging);
+        super::profile::stop(super::profile::Phase::Record, tr);
     }
 
     /// Image of `res`, made (and moved to `GENERAL`) at first use; None when the resource is

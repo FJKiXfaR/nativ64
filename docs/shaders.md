@@ -1280,6 +1280,16 @@ it says otherwise.
      again at the same address: the scan fails, the run is registered again) answers None,
      taken as written, so the texture is hashed as before. The first look of a texture, and a
      texture never uploaded, are hashed. Logged once when the watch is unavailable.
+   * Cost of a look: `table::committed_run` walks the page array of the whole allocation (a
+     linear scan of up to millions of pages, twice per texture), which at 700 textures per
+     submission cost ~40 s per 60 frames from frame 180 on. A look now checks only the pages of
+     the texture (`table::is_committed`) and `watch::is_watched` (a map lookup); the committed
+     run is computed only to register a run that is not watched yet. The 120 s run then
+     passes frame 2300 (about 1 s per 60 frames once the scenes are loaded).
+   * `NATIV64_PROFILE=1` prints, every 60 presented frames, the seconds spent per phase of
+     the replay (sync, watch, hash, upload, record, dump, image, descr, host/placed uploads) and
+     counters (textures looked at and skipped, scan calls and failures, log size, MB hashed,
+     uploads, descriptors written) to stderr (`backend/vk/profile.rs`).
    * Tests (no GPU): first look written, second not, one byte dirties only its page, a pipe
      `read` into a watched page is reported, two lookers of one page, unmap and map again.
    * Unverified: the title's real memory (the run size, the cost of the registrations on the

@@ -29,6 +29,7 @@
 //! of a placed view is read from words 10 and 11 of its description **[unverified]**.
 
 use super::format::FormatInfo;
+use super::profile::{self, Count, Phase};
 use super::replay::{Staging, TitleImage, VkBackend, global_barrier, mip_count, stage_bytes};
 use super::sampler::Spec;
 use super::{Gpu, log_once};
@@ -294,6 +295,7 @@ fn upload(
         return false;
     }
     t.seen = submission;
+    profile::count(Count::Looked, 1);
     let Some(layout) = &t.layout else {
         return false;
     };
@@ -305,30 +307,34 @@ fn upload(
         return false;
     }
     let (at, size) = (t.address as usize, layout.size as usize);
-    let committed = table::committed_run(at)
-        .is_some_and(|(s, e)| s <= at && at.checked_add(size).is_some_and(|end| end <= e));
-    if !committed {
+    if !table::is_committed(at, size) {
         log_once(format!(
             "texture memory {at:#x} (+{size:#x}) is not committed: not uploaded"
         ));
         return false;
     }
     // pages not written since the last look: the hash would be the same
-    let watched = table::committed_run(at).is_some_and(super::watch::watch);
+    let watched = super::watch::is_watched((at, at + size))
+        || table::committed_run(at).is_some_and(super::watch::watch);
     if watched
         && super::watch::written((at, at + size), &mut t.watched) == Some(false)
         && t.uploaded.is_some()
     {
         stats.watch_skips += 1;
+        profile::count(Count::Skipped, 1);
         return false;
     }
+    let th = profile::start();
     // SAFETY: the range lies in committed, accessible pages of the memory table.
     let data = unsafe { std::slice::from_raw_parts(at as *const u8, size) };
     let hash = hash64(data);
     stats.hashed += size as u64;
+    profile::stop(Phase::Hash, th);
+    profile::count(Count::Hashed, size as u64);
     if t.uploaded == Some(hash) {
         return false;
     }
+    let tu = profile::start();
     let volume = t.desc.dimension == TEXTURE3D;
     let layers = if volume {
         1
@@ -397,6 +403,8 @@ fn upload(
     t.uploaded = Some(hash);
     t.uploads += 1;
     stats.uploads += 1;
+    profile::count(Count::Uploads, 1);
+    profile::stop(Phase::Upload, tu);
     true
 }
 
@@ -416,7 +424,11 @@ impl<'g> VkBackend<'g> {
         res: usize,
     ) -> bool {
         // a view of a resource the title released stays in the registry
-        if info_of_checked(res as *mut _).is_none() || self.image(d, cb, res).is_none() {
+        profile::count(Count::Visited, 1);
+        let ti = profile::start();
+        let ready = info_of_checked(res as *mut _).is_some() && self.image(d, cb, res).is_some();
+        profile::stop(Phase::Image, ti);
+        if !ready {
             return false;
         }
         let Some(Some(mut t)) = self.images.remove(&res) else {
@@ -652,12 +664,16 @@ impl<'g> VkBackend<'g> {
         self.tex.scanned += new.len();
         // 2. images and uploads
         let mut uploaded = false;
+        let th = profile::start();
         for res in self.tex.sources.clone() {
             uploaded |= self.host_upload(d, cb, staging, res);
         }
+        profile::stop(Phase::HostUp, th);
+        let tp = profile::start();
         for key in self.tex.placed.clone() {
             uploaded |= self.placed_upload(d, cb, staging, key);
         }
+        profile::stop(Phase::PlacedUp, tp);
         if uploaded {
             global_barrier(d, cb);
         }
@@ -678,6 +694,8 @@ impl<'g> VkBackend<'g> {
             ));
         }
         let end = total.min(count);
+        let td = profile::start();
+        profile::count(Count::Written, (end - from.min(end)) as u64);
         let hole = self.hole(d, cb);
         let default = self.draw.samplers.get(Spec::default_sampler());
         let mut images = Vec::new();
@@ -746,6 +764,7 @@ impl<'g> VkBackend<'g> {
         // SAFETY: the set is update-after-bind and not in use (the queue is idle); the infos
         // outlive the call; the views and samplers are alive.
         unsafe { d.update_descriptor_sets(&writes, &[]) };
+        profile::stop(Phase::Descr, td);
     }
 }
 
