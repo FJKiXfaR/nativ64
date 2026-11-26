@@ -6,6 +6,7 @@ use super::ops::{
     Slot, FLAG_CLAMP, FLAG_DLC, FLAG_FMODS_SHIFT, FLAG_GLC, FLAG_IMG_BVH, FLAG_LIT16, FLAG_OMOD,
     FLAG_OPSEL, FLAG_SUFFIX,
 };
+use super::table_ext;
 use super::{decode_wave, DecodeError, DppKind, Enc, Instr, Operand};
 use std::fmt::Write as _;
 
@@ -105,6 +106,7 @@ pub fn disasm_instr(i: &Instr) -> String {
     match i.enc {
         Enc::Smem => smem(i, &mut ops),
         Enc::Mubuf => return mubuf(i, s, ops),
+        Enc::Mtbuf => return mtbuf(i, s, ops),
         _ => {}
     }
     if !ops.is_empty() {
@@ -513,6 +515,46 @@ fn mimg(i: &Instr, mut s: String) -> String {
         (m.lwe, "lwe"),
         (m.d16, "d16"),
     ] {
+        if on {
+            s.push(' ');
+            s.push_str(t);
+        }
+    }
+    s
+}
+
+fn mtbuf(i: &Instr, mut s: String, mut parts: Vec<String>) -> String {
+    let m = &i.mem;
+    parts.push(match (m.offen, m.idxen) {
+        (false, false) => "off".into(),
+        (true, true) => format!("v[{}:{}]", m.vaddr, m.vaddr as u32 + 1),
+        _ => format!("v{}", m.vaddr),
+    });
+    parts.push(reg(m.srsrc as u16, 4));
+    parts.push(reg(m.soffset, 1));
+    s.push(' ');
+    s.push_str(&parts.join(", "));
+    // the default format (8-bit unorm) is not printed; unnamed values print as numbers
+    if m.format != 1 {
+        match table_ext::UFMT.get(usize::from(m.format)) {
+            Some(n) if !n.is_empty() => {
+                let _ = write!(s, " format:[{n}]");
+            }
+            _ => {
+                let _ = write!(s, " format:{}", m.format);
+            }
+        }
+    }
+    if m.idxen {
+        s.push_str(" idxen");
+    }
+    if m.offen {
+        s.push_str(" offen");
+    }
+    if m.offset != 0 {
+        let _ = write!(s, " offset:{}", m.offset);
+    }
+    for (on, t) in [(m.glc, "glc"), (m.slc, "slc"), (m.dlc, "dlc")] {
         if on {
             s.push(' ');
             s.push_str(t);

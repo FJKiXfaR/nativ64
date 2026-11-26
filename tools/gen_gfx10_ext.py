@@ -171,6 +171,49 @@ def mimg(fix, rnd):
     return ('MIMG', 256, rows)
 
 
+# ---------------------------------------------------------------- MTBUF
+
+
+def mtbuf_dw(op, fmt=4, **kw):
+    d0 = 0xE8000000 | (op & 7) << 16 | fmt << 19 | kw.get('d0', 0)
+    d1 = 0x00010304 | (op >> 3) << 21 | 4 << 24 | kw.get('d1', 0)
+    return [d0, d1]
+
+
+@family
+def mtbuf(fix, rnd):
+    rows = []
+    for op in range(16):
+        t = dis(u(*mtbuf_dw(op)), '1013')
+        if not t:
+            continue
+        name = t.split()[0]
+        m = re.search(r'^\S+ v(?:\[(\d+):(\d+)\]|(\d+))', t)
+        w = int(m.group(2)) - int(m.group(1)) + 1 if m.group(1) else 1
+        rows.append((op, name, ['Slot::Vdata(%d)' % w], 0))
+        fix.append((u(*mtbuf_dw(op)),))
+    for _ in range(900):
+        op = rnd.randrange(16)
+        d0 = (rnd.getrandbits(12) | rnd.getrandbits(4) << 12 | rnd.getrandbits(3) << 16
+              | rnd.randrange(128) << 19 | 0xE8000000)
+        d0 = (d0 & ~(7 << 16)) | (op & 7) << 16
+        d1 = (rnd.randrange(200) | rnd.randrange(200) << 8 | rnd.randrange(8) << 16
+              | (op >> 3) << 21 | rnd.getrandbits(1) << 22 | rnd.randrange(256) << 24)
+        fix.append((u(d0, d1),))
+    # the unified format names, by value
+    names = []
+    for f in range(128):
+        t = dis(u(*mtbuf_dw(0, f)), '1013')
+        m = re.search(r'format:\[(\w+)\]', t or '')
+        names.append(m.group(1) if m else '')
+    last = max(i for i, n in enumerate(names) if n)
+    FORMATS[:] = names[:last + 1]
+    return ('MTBUF', 16, rows)
+
+
+FORMATS = []
+
+
 def run():
     out_t, out_f = sys.argv[1], sys.argv[2]
     rnd = random.Random(1013)
@@ -182,6 +225,13 @@ def run():
         fix = []
         name, size, rows = f(fix, rnd)
         L.extend(table(name, size, rows))
+        if name == 'MTBUF':
+            L.append('/// Unified buffer format names by value (empty: LLVM has none). Value 1 is the default and')
+            L.append('/// is not printed.')
+            L.append('pub static UFMT: [&str; %d] = [' % len(FORMATS))
+            L.extend('    "%s",' % n for n in FORMATS)
+            L.append('];')
+            L.append('')
         for (b,) in fix:
             fixtures.append(b)
         print(name, len(rows), 'rows', len(fix), 'cases', file=sys.stderr)

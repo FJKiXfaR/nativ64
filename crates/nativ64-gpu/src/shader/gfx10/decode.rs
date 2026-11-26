@@ -39,6 +39,7 @@ pub fn decode_wave(code: &[u8], at: usize, wave32: bool) -> Result<Instr, Decode
             0x35 => Enc::Vop3,
             0x38 => Enc::Mubuf,
             0x3c => Enc::Mimg,
+            0x3a => Enc::Mtbuf,
             0x3d => Enc::Smem,
             0x3e => Enc::Exp,
             _ => {
@@ -46,7 +47,6 @@ pub fn decode_wave(code: &[u8], at: usize, wave32: bool) -> Result<Instr, Decode
                     0x33 => "VOP3P",
                     0x36 => "DS",
                     0x37 => "FLAT",
-                    0x3a => "MTBUF",
                     _ => "?",
                 };
                 return Err(c.err(ErrorKind::UnknownEncoding { name, word: d0 }));
@@ -66,6 +66,7 @@ pub fn decode_wave(code: &[u8], at: usize, wave32: bool) -> Result<Instr, Decode
         Enc::Exp => c.exp(d0),
         Enc::Mubuf => c.mubuf(d0),
         Enc::Mimg => c.mimg(d0),
+        Enc::Mtbuf => c.mtbuf(d0),
     }
 }
 
@@ -358,6 +359,37 @@ impl Cursor<'_> {
             lds: d0 >> 16 & 1 != 0,
             slc: d1 >> 22 & 1 != 0,
             tfe,
+            ..Mem::default()
+        };
+        Ok(i)
+    }
+
+    fn mtbuf(&self, d0: u32) -> Result<Instr, DecodeError> {
+        let d1 = self.dword(1)?;
+        // the d16 forms are opcodes of their own
+        let op = (d0 >> 16 & 7) | (d1 >> 21 & 1) << 3;
+        let info = self.lookup(&table_ext::MTBUF, Enc::Mtbuf, op)?;
+        if d1 >> 23 & 1 != 0 {
+            // LLVM has no tfe form of the typed buffer instructions
+            return Err(self.err(ErrorKind::BadField("MTBUF tfe")));
+        }
+        let f = Fields {
+            vdata: (d1 >> 8) & 0xff,
+            ..Fields::default()
+        };
+        let mut i = self.finish(Enc::Mtbuf, op, info, &f, 2, None)?;
+        i.mem = Mem {
+            offset: (d0 & 0xfff) as i32,
+            soffset: (d1 >> 24) as u16,
+            vaddr: d1 as u8,
+            srsrc: (d1 >> 16 & 0x1f) as u8 * 4,
+            glc: d0 >> 14 & 1 != 0,
+            dlc: d0 >> 15 & 1 != 0,
+            offen: d0 >> 12 & 1 != 0,
+            idxen: d0 >> 13 & 1 != 0,
+            slc: d1 >> 22 & 1 != 0,
+            format: (d0 >> 19 & 0x7f) as u8,
+            ..Mem::default()
         };
         Ok(i)
     }

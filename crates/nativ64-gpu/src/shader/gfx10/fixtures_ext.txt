@@ -1622,3 +1622,830 @@ a09182f154310700	image_get_lod v49, v[84:85], s[28:35], s[0:3] dmask:0x1 dim:SQ_
 023437f12071a7006965c810	image_gather4_c_b v[113:117], [v32, v105, v101], s[28:35], s[20:23] dmask:0x4 dim:SQ_RSRC_IMG_1D unorm glc tfe lwe
 8c9f8df2509e42003515c1c7364cf4c6	image_sample_d_cl v[158:162], [v80, v53, v21, v193, v199, v54, v76], s[8:15], s[8:11] dmask:0xf dim:SQ_RSRC_IMG_2D unorm slc dlc r128 tfe
 821857f31c2fe200ffd8758f	image_gather4_b_o v[47:51], [v28, v255, v216], s[8:15], s[28:31] dmask:0x8 dim:SQ_RSRC_IMG_1D unorm slc dlc tfe lwe
+000020e804030104	tbuffer_load_format_x v3, off, s[4:7], s4 format:[BUF_FMT_8_SSCALED]
+000021e804030104	tbuffer_load_format_xy v[3:4], off, s[4:7], s4 format:[BUF_FMT_8_SSCALED]
+000022e804030104	tbuffer_load_format_xyz v[3:5], off, s[4:7], s4 format:[BUF_FMT_8_SSCALED]
+000023e804030104	tbuffer_load_format_xyzw v[3:6], off, s[4:7], s4 format:[BUF_FMT_8_SSCALED]
+000024e804030104	tbuffer_store_format_x v3, off, s[4:7], s4 format:[BUF_FMT_8_SSCALED]
+000025e804030104	tbuffer_store_format_xy v[3:4], off, s[4:7], s4 format:[BUF_FMT_8_SSCALED]
+000026e804030104	tbuffer_store_format_xyz v[3:5], off, s[4:7], s4 format:[BUF_FMT_8_SSCALED]
+000027e804030104	tbuffer_store_format_xyzw v[3:6], off, s[4:7], s4 format:[BUF_FMT_8_SSCALED]
+000020e804032104	tbuffer_load_format_d16_x v3, off, s[4:7], s4 format:[BUF_FMT_8_SSCALED]
+000021e804032104	tbuffer_load_format_d16_xy v3, off, s[4:7], s4 format:[BUF_FMT_8_SSCALED]
+000022e804032104	tbuffer_load_format_d16_xyz v[3:4], off, s[4:7], s4 format:[BUF_FMT_8_SSCALED]
+000023e804032104	tbuffer_load_format_d16_xyzw v[3:4], off, s[4:7], s4 format:[BUF_FMT_8_SSCALED]
+000024e804032104	tbuffer_store_format_d16_x v3, off, s[4:7], s4 format:[BUF_FMT_8_SSCALED]
+000025e804032104	tbuffer_store_format_d16_xy v3, off, s[4:7], s4 format:[BUF_FMT_8_SSCALED]
+000026e804032104	tbuffer_store_format_d16_xyz v[3:4], off, s[4:7], s4 format:[BUF_FMT_8_SSCALED]
+000027e804032104	tbuffer_store_format_d16_xyzw v[3:4], off, s[4:7], s4 format:[BUF_FMT_8_SSCALED]
+afff04e9a33f21c3	tbuffer_store_format_d16_x v63, v[163:164], s[4:7], -3 format:[BUF_FMT_10_11_11_USCALED] idxen offen offset:4015 glc dlc
+f48298e939274051	tbuffer_load_format_x v39, off, s[0:3], s81 format:[BUF_FMT_2_10_10_10_SNORM] offset:756 slc dlc
+8cece5e9534e65ad	tbuffer_store_format_d16_xy v78, v83, s[20:23], 45 format:[BUF_FMT_8_8_8_8_UINT] idxen offset:3212 glc slc dlc
+068867ea9b8f2230	tbuffer_store_format_d16_xyzw v[143:144], off, s[8:11], s48 format:[BUF_FMT_32_32_32_32_SINT] offset:2054 dlc
+3954dde8b6c44790	tbuffer_store_format_xy v[196:197], v182, s[28:31], 16 format:[BUF_FMT_16_16_UINT] offen offset:1081 glc slc
+8a6d1ae976b260be	tbuffer_load_format_d16_xyz v[178:179], v118, s[0:3], 62 format:[BUF_FMT_10_11_11_SINT] idxen offset:3466 glc slc
+f73987ea434c03a1	tbuffer_store_format_xyzw v[76:79], v[67:68], s[12:15], 33 format:80 idxen offen offset:2551
+1a3b05ea2400020c	tbuffer_store_format_xy v[0:1], v[36:37], s[8:11], s12 format:[BUF_FMT_32_32_FLOAT] idxen offen offset:2842
+8551aae820404057	tbuffer_load_format_xyz v[64:66], v32, s[0:3], s87 format:[BUF_FMT_32_SINT] offen offset:389 glc slc
+9700a4e9a126645a	tbuffer_store_format_d16_x v38, off, s[16:19], s90 format:[BUF_FMT_2_10_10_10_USCALED] offset:151 slc
+1d2193e97fc2052f	tbuffer_load_format_xyzw v[194:197], v127, s[20:23], s47 format:[BUF_FMT_2_10_10_10_UNORM] idxen offset:285
+3e03ffe99c612686	tbuffer_store_format_d16_xyzw v[97:98], off, s[24:27], 6 format:[BUF_FMT_32_32_SINT] offset:830
+7087f9ea6f04450e	tbuffer_load_format_xy v[4:5], off, s[20:23], s14 format:95 offset:1904 slc dlc
+161330e9140744f1	tbuffer_load_format_x v7, v20, s[16:19], -0.5 format:[BUF_FMT_11_11_10_SNORM] offen offset:790 slc
+0e99fce980476576	tbuffer_store_format_d16_x v71, v128, s[20:23], ttmp10 format:[BUF_FMT_32_32_SINT] offen offset:2318 slc dlc
+c8a0e7e8b3b6052c	tbuffer_store_format_xyzw v[182:185], v179, s[20:23], s44 format:[BUF_FMT_16_16_SINT] idxen offset:200 dlc
+fe6d54eab69c069d	tbuffer_store_format_x v156, v182, s[24:27], 29 format:[BUF_FMT_32_32_32_FLOAT] idxen offset:3582 glc
+2aac2ee82c426790	tbuffer_store_format_d16_xyz v[66:67], v44, s[28:31], 16 format:[BUF_FMT_8_UINT] idxen offset:3114 slc dlc
+7d91e3e9668e2786	tbuffer_load_format_d16_xyzw v[142:143], v102, s[28:31], 6 format:[BUF_FMT_8_8_8_8_UINT] offen offset:381 dlc
+fbd645ea9b61638d	tbuffer_store_format_d16_xy v97, v155, s[12:15], 13 format:[BUF_FMT_32_32_32_UINT] offen offset:1787 glc slc dlc
+ecbc5eeb3caa411d	tbuffer_store_format_xyz v[170:172], v[60:61], s[4:7], s29 format:107 idxen offen offset:3308 slc dlc
+5a9812e91a5546c1	tbuffer_load_format_xyz v[85:87], v26, s[24:27], -1 format:[BUF_FMT_10_11_11_UINT] offen offset:2138 slc dlc
+e6b6b7e90d4d4428	tbuffer_store_format_xyzw v[77:80], v[13:14], s[16:19], s40 format:[BUF_FMT_2_10_10_10_UINT] idxen offen offset:1766 slc dlc
+0eb178e9651e25b9	tbuffer_load_format_d16_x v30, v[101:102], s[20:23], 57 format:[BUF_FMT_10_10_10_2_SSCALED] idxen offen offset:270 dlc
+7d5235eb83b445c8	tbuffer_store_format_xy v[180:181], v131, s[20:23], -8 format:102 offen offset:637 glc slc
+a59256e8a56c0390	tbuffer_store_format_xyz v[108:110], v165, s[12:15], 16 format:[BUF_FMT_16_SSCALED] offen offset:677 dlc
+11ebadeb8f196722	tbuffer_store_format_d16_xy v25, v143, s[28:31], s34 format:117 idxen offset:2833 glc slc dlc
+001201e9039143bf	tbuffer_load_format_xy v[145:146], v3, s[12:15], 63 format:[BUF_FMT_10_11_11_USCALED] offen offset:512 slc
+05156ce91bb841c7	tbuffer_store_format_x v184, v27, s[4:7], -7 format:[BUF_FMT_10_10_10_2_SNORM] offen offset:1285 slc
+7859fceba23846f5	tbuffer_store_format_x v56, v162, s[24:27], -2.0 format:127 offen offset:2424 glc slc
+db8efceb99c24625	tbuffer_store_format_x v194, off, s[24:27], s37 format:127 offset:3803 slc dlc
+246cdcebab6464ca	tbuffer_store_format_d16_x v100, v171, s[16:19], -10 format:123 idxen offset:3108 glc slc
+f07c32ea45bf218f	tbuffer_load_format_d16_xyz v[191:192], v[69:70], s[4:7], 15 format:[BUF_FMT_16_16_16_16_SINT] idxen offen offset:3312 glc
+eb81dceb56a3078a	tbuffer_store_format_x v163, off, s[28:31], 10 format:123 offset:491 dlc
+d4ade8eba736077b	tbuffer_load_format_x v54, v167, s[28:31], ttmp15 format:125 idxen offset:3540 dlc
+736fa1eb2c3160c5	tbuffer_load_format_d16_xy v49, v44, s[0:3], -5 format:116 idxen offset:3955 glc slc
+70a9e3eab30f0592	tbuffer_load_format_xyzw v[15:18], v179, s[20:23], 18 format:92 idxen offset:2416 dlc
+f42915eb343c6462	tbuffer_store_format_d16_xy v60, v52, s[16:19], s98 format:98 idxen offset:2548 slc
+258083e90f326211	tbuffer_load_format_d16_xyzw v[50:51], off, s[8:11], s17 format:[BUF_FMT_10_10_10_2_UINT] offset:37 slc dlc
+8cb5caea6b0c22a9	tbuffer_load_format_d16_xyz v[12:13], v[107:108], s[8:11], 41 format:89 idxen offen offset:1420 dlc
+e59cc4ea5996630b	tbuffer_store_format_d16_x v150, v89, s[12:15], s11 format:88 offen offset:3301 slc dlc
+b95705e8512b62cd	tbuffer_store_format_d16_xy v43, v81, s[8:11], -13 format:[BUF_FMT_INVALID] offen offset:1977 glc slc
+0cc1dfe94ac7264a	tbuffer_store_format_d16_xyzw v[199:200], off, s[24:27], s74 format:[BUF_FMT_8_8_8_8_SSCALED] offset:268 glc dlc
+0b612fea94826412	tbuffer_store_format_d16_xyzw v[130:131], v148, s[16:19], s18 format:[BUF_FMT_16_16_16_16_UINT] idxen offset:267 glc slc
+049974e90c226264	tbuffer_store_format_d16_x v34, v12, s[8:11], s100 format:[BUF_FMT_10_10_10_2_USCALED] offen offset:2308 slc dlc
+8f6bc7eb671b4723	tbuffer_store_format_xyzw v[27:30], v103, s[28:31], s35 format:120 idxen offset:2959 glc slc
+b81b52eb3b7e07cc	tbuffer_load_format_xyz v[126:128], v59, s[28:31], -12 format:106 offen offset:3000
+ec1f43e9ab042420	tbuffer_load_format_d16_xyzw v[4:5], v171, s[16:19], s32 format:[BUF_FMT_11_11_10_SSCALED] offen offset:4076
+691d5be8932463a1	tbuffer_load_format_d16_xyzw v[36:37], v147, s[12:15], 33 format:[BUF_FMT_16_UINT] offen offset:3433 slc
+ea6547eb76434516	tbuffer_store_format_xyzw v[67:70], v118, s[20:23], s22 format:104 idxen offset:1514 glc slc
+1571e3eb880261ee	tbuffer_load_format_d16_xyzw v[2:3], v[136:137], s[4:7], src_private_limit format:124 idxen offen offset:277 glc slc
+f1eee3e9600a0073	tbuffer_load_format_xyzw v[10:13], v96, s[0:3], ttmp7 format:[BUF_FMT_8_8_8_8_UINT] idxen offset:3825 glc dlc
+0e934cea0617426a	tbuffer_store_format_x v23, v6, s[8:11], vcc_lo format:[BUF_FMT_32_32_32_SINT] offen offset:782 slc dlc
+e7d749e8bf10671f	tbuffer_load_format_d16_xy v16, v191, s[28:31], s31 format:[BUF_FMT_16_USCALED] offen offset:2023 glc slc dlc
+b058d2e8187847ec	tbuffer_load_format_xyz v[120:122], v24, s[28:31], src_shared_limit format:[BUF_FMT_16_16_SSCALED] offen offset:2224 glc slc
+cc5d87e99c8544f5	tbuffer_store_format_xyzw v[133:136], v156, s[16:19], -2.0 format:[BUF_FMT_10_10_10_2_UINT] offen offset:3532 glc slc
+6b4807e941af0623	tbuffer_store_format_xyzw v[175:178], off, s[24:27], s35 format:[BUF_FMT_10_11_11_USCALED] offset:2155 glc
+9f0d96ea830d0064	tbuffer_store_format_xyz v[13:15], off, s[0:3], s100 format:82 offset:3487
+39bcefea197063b1	tbuffer_store_format_d16_xyzw v[112:113], v[25:26], s[12:15], 49 format:93 idxen offen offset:3129 slc dlc
+c51a4aeaac960635	tbuffer_load_format_xyz v[150:152], v172, s[24:27], s53 format:[BUF_FMT_32_32_32_SINT] offen offset:2757
+3c4e54eac013029f	tbuffer_store_format_x v19, off, s[8:11], 31 format:[BUF_FMT_32_32_32_FLOAT] offset:3644 glc
+82aa5be8b0b04026	tbuffer_load_format_xyzw v[176:179], v176, s[0:3], s38 format:[BUF_FMT_16_UINT] idxen offset:2690 slc dlc
+35b3efe91682649b	tbuffer_store_format_d16_xyzw v[130:131], v[22:23], s[16:19], 27 format:[BUF_FMT_8_8_8_8_SINT] idxen offen offset:821 slc dlc
+271d45e96186039f	tbuffer_store_format_xy v[134:135], v97, s[12:15], 31 format:[BUF_FMT_11_11_10_SSCALED] offen offset:3367
+e9450ceb0e3244e7	tbuffer_store_format_x v50, off, s[16:19], src_flat_scratch_base_hi format:97 offset:1513 glc slc
+688891ea587903b1	tbuffer_load_format_xy v[121:122], off, s[12:15], 49 format:82 offset:2152 dlc
+e5b306e8347700e7	tbuffer_store_format_xyz v[119:121], v[52:53], s[0:3], src_flat_scratch_base_hi format:[BUF_FMT_INVALID] idxen offen offset:997 dlc
+56e6fcea1d40400a	tbuffer_store_format_x v64, v29, s[0:3], s10 format:95 idxen offset:1622 glc slc dlc
+0f95d8e8815902a7	tbuffer_load_format_x v89, v129, s[8:11], 39 format:[BUF_FMT_16_16_UINT] offen offset:1295 dlc
+94c797e9915a66b3	tbuffer_store_format_d16_xyzw v[90:91], off, s[24:27], 51 format:[BUF_FMT_2_10_10_10_UNORM] offset:1940 glc slc dlc
+3ebb31eb0d3e6352	tbuffer_load_format_d16_xy v62, v[13:14], s[12:15], s82 format:102 idxen offen offset:2878 slc dlc
+59dac1eb745a07ef	tbuffer_load_format_xy v[90:91], v116, s[28:31], src_pops_exiting_wave_id format:120 offen offset:2649 glc dlc
+496587ea2831027d	tbuffer_store_format_xyzw v[49:52], v40, s[8:11], null format:80 idxen offset:1353 glc
+94587fe9bf7547b2	tbuffer_store_format_xyzw v[117:120], v191, s[28:31], 50 format:[BUF_FMT_10_10_10_2_SSCALED] offen offset:2196 glc slc
+49f965e89cba27ec	tbuffer_store_format_d16_xy v186, v[156:157], s[28:31], src_shared_limit format:[BUF_FMT_16_SINT] idxen offen offset:2377 glc dlc
+9f4851e8714e44c8	tbuffer_load_format_xy v[78:79], off, s[16:19], -8 format:[BUF_FMT_16_SSCALED] offset:2207 glc slc
+b6e014eaa76d2322	tbuffer_store_format_d16_x v109, v167, s[12:15], s34 format:[BUF_FMT_16_16_16_16_SNORM] idxen offset:182 glc dlc
+976b4ee94083068b	tbuffer_store_format_xyz v[131:133], v64, s[24:27], 11 format:[BUF_FMT_11_11_10_UINT] idxen offset:2967 glc
+f31098e9a3a000af	tbuffer_load_format_x v160, v163, s[0:3], 47 format:[BUF_FMT_2_10_10_10_SNORM] offen offset:243
+24130fea831a630f	tbuffer_store_format_d16_xyzw v[26:27], v131, s[12:15], s15 format:[BUF_FMT_16_16_16_16_UNORM] offen offset:804 slc
+a4812ae9261f61d0	tbuffer_load_format_d16_xyz v[31:32], off, s[4:7], -16 format:[BUF_FMT_11_11_10_UNORM] offset:420 slc dlc
+e1b207e8b99f249c	tbuffer_store_format_d16_xyzw v[159:160], v[185:186], s[16:19], 28 format:[BUF_FMT_INVALID] idxen offen offset:737 dlc
+595d0fe9043b4771	tbuffer_store_format_xyzw v[59:62], v4, s[28:31], ttmp5 format:[BUF_FMT_10_11_11_SSCALED] offen offset:3417 glc slc
+f7cf7ceb875a4431	tbuffer_store_format_x v90, off, s[16:19], s49 format:111 offset:4087 glc slc dlc
+4eef25e8af50228d	tbuffer_store_format_d16_xy v80, v175, s[8:11], 13 format:[BUF_FMT_8_SSCALED] idxen offset:3918 glc dlc
+f05a81eb18c02791	tbuffer_load_format_d16_xy v192, v24, s[28:31], 17 format:112 offen offset:2800 glc
+dcf180eac2a607a7	tbuffer_load_format_x v166, v[194:195], s[28:31], 39 format:80 idxen offen offset:476 glc dlc
+ca77dce9770702fd	tbuffer_store_format_x v7, v[119:120], s[8:11], src_scc format:[BUF_FMT_8_8_8_8_SSCALED] idxen offen offset:1994 glc
+9870e2eb55610020	tbuffer_load_format_xyz v[97:99], v[85:86], s[0:3], s32 format:124 idxen offen offset:152 glc
+67a948e913b3034b	tbuffer_load_format_x v179, v19, s[12:15], s75 format:[BUF_FMT_11_11_10_UINT] idxen offset:2407 dlc
+b69dc8e8471206ed	tbuffer_load_format_x v18, v71, s[24:27], src_private_base format:[BUF_FMT_16_16_USCALED] offen offset:3510 dlc
+02851cea0573658d	tbuffer_store_format_d16_x v115, off, s[20:23], 13 format:[BUF_FMT_16_16_16_16_USCALED] offset:1282 slc dlc
+ebf51de84c952560	tbuffer_store_format_d16_xy v149, v[76:77], s[20:23], s96 format:[BUF_FMT_8_USCALED] idxen offen offset:1515 glc dlc
+6818a5ebaa024470	tbuffer_store_format_xy v[2:3], v170, s[16:19], ttmp4 format:116 offen offset:2152 slc
+3dad7cea601e211c	tbuffer_store_format_d16_x v30, v96, s[4:7], s28 format:79 idxen offset:3389 dlc
+d2a329eb8f024221	tbuffer_load_format_xy v[2:3], v143, s[8:11], s33 format:101 idxen offset:978 slc dlc
+f87bb2ea8743206e	tbuffer_load_format_d16_xyz v[67:68], v[135:136], s[0:3], ttmp2 format:86 idxen offen offset:3064 glc
+56bc09e875b72072	tbuffer_load_format_d16_xy v183, v[117:118], s[0:3], ttmp6 idxen offen offset:3158 dlc
+bac494ebb0076655	tbuffer_store_format_d16_x v7, off, s[24:27], s85 format:114 offset:1210 glc slc dlc
+d2baf0ebb53c4342	tbuffer_load_format_x v60, v[181:182], s[12:15], s66 format:126 idxen offen offset:2770 slc dlc
+7eb4bae86e54460b	tbuffer_load_format_xyz v[84:86], v[110:111], s[24:27], s11 format:[BUF_FMT_16_16_UNORM] idxen offen offset:1150 slc dlc
+4e7b61eb11b6050f	tbuffer_load_format_xy v[182:183], v[17:18], s[20:23], s15 format:108 idxen offen offset:2894 glc
+bc3bc8e8a5542481	tbuffer_load_format_d16_x v84, v[165:166], s[16:19], 1 format:[BUF_FMT_16_16_USCALED] idxen offen offset:3004
+59e93de80d5e667f	tbuffer_store_format_d16_xy v94, v13, s[24:27], exec_hi format:[BUF_FMT_16_UNORM] idxen offset:2393 glc slc dlc
+94d6a9e96a0402b6	tbuffer_load_format_xy v[4:5], v106, s[8:11], 54 format:[BUF_FMT_2_10_10_10_SSCALED] offen offset:1684 glc dlc
+4945e5eb9f4f2562	tbuffer_store_format_d16_xy v79, off, s[20:23], s98 format:124 offset:1353 glc
+673c19e98025415b	tbuffer_load_format_xy v[37:38], v[128:129], s[4:7], s91 format:[BUF_FMT_10_11_11_SINT] idxen offen offset:3175 slc
+a009a8eba2aa4690	tbuffer_load_format_x v170, off, s[24:27], 16 format:117 offset:2464 slc
+62f2abeba6886311	tbuffer_load_format_d16_xyzw v[136:137], v[166:167], s[12:15], s17 format:117 idxen offen offset:610 glc slc dlc
+8d0d63ea9a712741	tbuffer_load_format_d16_xyzw v[113:114], off, s[28:31], s65 format:[BUF_FMT_32_32_32_32_SINT] offset:3469
+894f32e9a5862479	tbuffer_load_format_d16_xyz v[134:135], off, s[16:19], ttmp13 format:[BUF_FMT_11_11_10_SNORM] offset:3977 glc
+ee09d3ebc62967a9	tbuffer_load_format_d16_xyzw v[41:42], off, s[28:31], 41 format:122 offset:2542 slc
+dbc8b5e88900466b	tbuffer_store_format_xy v[0:1], off, s[24:27], vcc_hi format:[BUF_FMT_32_FLOAT] offset:2267 glc slc dlc
+61285be9024e242a	tbuffer_load_format_d16_xyzw v[78:79], v2, s[16:19], s42 format:[BUF_FMT_11_11_10_FLOAT] idxen offset:2145
+f629d6eb1ea34555	tbuffer_store_format_xyz v[163:165], v30, s[20:23], s85 format:122 idxen offset:2550 slc
+cbb6d1eb4ba046b5	tbuffer_load_format_xy v[160:161], v[75:76], s[24:27], 53 format:122 idxen offen offset:1739 slc dlc
+220ab3e8703324a3	tbuffer_load_format_d16_xyzw v[51:52], off, s[16:19], 35 format:[BUF_FMT_32_FLOAT] offset:2594
+c56bd3ea9ac426ed	tbuffer_load_format_d16_xyzw v[196:197], v154, s[24:27], src_private_base format:90 idxen offset:3013 glc
+728adee9afbd441e	tbuffer_store_format_xyz v[189:191], off, s[16:19], s30 format:[BUF_FMT_8_8_8_8_SSCALED] offset:2674 slc dlc
+f882b9e92d39432e	tbuffer_load_format_xy v[57:58], off, s[12:15], s46 format:[BUF_FMT_2_10_10_10_SINT] offset:760 slc dlc
+179cd9eab98c25cf	tbuffer_load_format_d16_xy v140, v185, s[20:23], -15 format:91 offen offset:3095 dlc
+08e031e8688122af	tbuffer_load_format_d16_xy v129, v104, s[8:11], 47 format:[BUF_FMT_8_SINT] idxen offset:8 glc dlc
+4f2e95eb2258641b	tbuffer_store_format_d16_xy v88, v34, s[16:19], s27 format:114 idxen offset:3663 slc
+6d019feac1b26212	tbuffer_store_format_d16_xyzw v[178:179], off, s[8:11], s18 format:83 offset:365 slc
+b5c1aaea1485676d	tbuffer_load_format_d16_xyz v[133:134], off, s[28:31], ttmp1 format:85 offset:437 glc slc dlc
+f55020e92f1923f7	tbuffer_load_format_d16_x v25, v47, s[12:15], -4.0 format:[BUF_FMT_10_11_11_FLOAT] offen offset:245 glc
+c9b23eeba39d0081	tbuffer_store_format_xyz v[157:159], v[163:164], s[0:3], 1 format:103 idxen offen offset:713 dlc
+74055ce9194621b5	tbuffer_store_format_d16_x v70, off, s[4:7], 53 format:[BUF_FMT_11_11_10_FLOAT] offset:1396
+9b42d4e837502476	tbuffer_store_format_d16_x v80, off, s[16:19], ttmp10 format:[BUF_FMT_16_16_SSCALED] offset:667 glc
+183aeee9842c032c	tbuffer_store_format_xyz v[44:46], v[132:133], s[12:15], s44 format:[BUF_FMT_8_8_8_8_SINT] idxen offen offset:2584
+ed201be97f122319	tbuffer_load_format_d16_xyzw v[18:19], v127, s[12:15], s25 format:[BUF_FMT_10_11_11_SINT] idxen offset:237
+a5310aeb4a76619e	tbuffer_load_format_d16_xyz v[118:119], v[74:75], s[4:7], 30 format:97 idxen offen offset:421 slc
+08dd69ea7a9f45ca	tbuffer_load_format_xy v[159:160], v122, s[20:23], -10 format:[BUF_FMT_32_32_32_32_FLOAT] offen offset:3336 glc slc dlc
+987cd2e924696548	tbuffer_load_format_d16_xyz v[105:106], v[36:37], s[20:23], s72 format:[BUF_FMT_8_8_8_8_USCALED] idxen offen offset:3224 glc slc
+a7bd22eaaf9343b2	tbuffer_load_format_xyz v[147:149], v[175:176], s[12:15], 50 format:[BUF_FMT_16_16_16_16_SSCALED] idxen offen offset:3495 slc dlc
+836e19e811bc2698	tbuffer_load_format_d16_xy v188, v17, s[24:27], 24 format:[BUF_FMT_8_USCALED] idxen offset:3715 glc
+defe98e83856027b	tbuffer_load_format_x v86, v[56:57], s[8:11], ttmp15 format:[BUF_FMT_8_8_SINT] idxen offen offset:3806 glc dlc
+0a2a30eb816f6137	tbuffer_load_format_d16_x v111, v129, s[4:7], s55 format:102 idxen offset:2570 slc
+58e4d8e8c203451b	tbuffer_load_format_x v3, v194, s[20:23], s27 format:[BUF_FMT_16_16_UINT] idxen offset:1112 glc slc dlc
+bddb0ae9643f60f4	tbuffer_load_format_d16_xyz v[63:64], v100, s[0:3], 2.0 format:[BUF_FMT_10_11_11_SSCALED] offen offset:3005 glc slc dlc
+9a0244ea8fc10432	tbuffer_store_format_x v193, off, s[16:19], s50 format:[BUF_FMT_32_32_32_UINT] offset:666
+05603eea06b46793	tbuffer_store_format_d16_xyz v[180:181], v6, s[28:31], 19 format:[BUF_FMT_16_16_16_16_FLOAT] idxen offset:5 glc slc
+7f99ceeb77aa26ae	tbuffer_store_format_d16_xyz v[170:171], v119, s[24:27], 46 format:121 offen offset:2431 dlc
+d2bea9eb586f6786	tbuffer_load_format_d16_xy v111, v[88:89], s[28:31], 6 format:117 idxen offen offset:3794 slc dlc
+d5b369e896746477	tbuffer_load_format_d16_xy v116, v[150:151], s[16:19], ttmp11 format:[BUF_FMT_16_FLOAT] idxen offen offset:981 slc dlc
+f7bf9ae8a5492663	tbuffer_load_format_d16_xyz v[73:74], v[165:166], s[24:27], s99 format:[BUF_FMT_8_8_SINT] idxen offen offset:4087 dlc
+0346f3e867070373	tbuffer_load_format_xyzw v[7:10], off, s[12:15], ttmp7 format:[BUF_FMT_10_11_11_UNORM] offset:1539 glc
+31ce8deab8176635	tbuffer_store_format_d16_xy v23, off, s[24:27], s53 format:81 offset:3633 glc slc dlc
+7c31a4ea7c36637e	tbuffer_store_format_d16_x v54, v[124:125], s[12:15], exec_lo format:84 idxen offen offset:380 slc
+db3aa7eb812a46f6	tbuffer_store_format_xyzw v[42:45], v[129:130], s[24:27], 4.0 format:116 idxen offen offset:2779 slc
+108739ea014f65fd	tbuffer_load_format_d16_xy v79, off, s[20:23], src_scc format:[BUF_FMT_16_16_16_16_FLOAT] offset:1808 slc dlc
+17b334e85d6701ec	tbuffer_store_format_x v103, v[93:94], s[4:7], src_shared_limit format:[BUF_FMT_8_SINT] idxen offen offset:791 dlc
+1099c9e8a3ab6669	tbuffer_load_format_d16_xy v171, v163, s[24:27], s105 format:[BUF_FMT_16_16_USCALED] offen offset:2320 slc dlc
+80025eeb1c28251f	tbuffer_store_format_d16_xyz v[40:41], off, s[20:23], s31 format:107 offset:640
+aea4d1eb39666095	tbuffer_load_format_d16_xy v102, v57, s[0:3], 21 format:122 idxen offset:1198 slc dlc
+efbc8dea1f5e445b	tbuffer_store_format_xy v[94:95], v[31:32], s[16:19], s91 format:81 idxen offen offset:3311 slc dlc
+c49e77eb5031045b	tbuffer_store_format_xyzw v[49:52], v80, s[16:19], s91 format:110 offen offset:3780 dlc
+50c8cee8b2a24720	tbuffer_store_format_xyz v[162:164], off, s[28:31], s32 format:[BUF_FMT_16_16_USCALED] offset:2128 glc slc dlc
+949a9cea5c650086	tbuffer_store_format_x v101, v92, s[0:3], 6 format:83 offen offset:2708 dlc
+b0a1fae9598307ef	tbuffer_load_format_xyz v[131:133], v89, s[28:31], src_pops_exiting_wave_id format:[BUF_FMT_32_32_SINT] idxen offset:432 dlc
+40261dea450c241b	tbuffer_store_format_d16_xy v12, v69, s[16:19], s27 format:[BUF_FMT_16_16_16_16_USCALED] idxen offset:1600
+8664f8ea453665c3	tbuffer_load_format_d16_x v54, v69, s[20:23], -3 format:95 idxen offset:1158 glc slc
+bc2f4dea528504b8	tbuffer_store_format_xy v[133:134], v82, s[16:19], 56 format:[BUF_FMT_32_32_32_SINT] idxen offset:4028
+aec484e874076524	tbuffer_store_format_d16_x v7, off, s[20:23], s36 format:[BUF_FMT_8_8_USCALED] offset:1198 glc slc dlc
+58c1e2eb6d90234d	tbuffer_load_format_d16_xyz v[144:145], off, s[12:15], s77 format:124 offset:344 glc dlc
+10f4ddea2462624e	tbuffer_store_format_d16_xy v98, v[36:37], s[8:11], s78 format:91 idxen offen offset:1040 glc slc dlc
+23b9b4ea29704483	tbuffer_store_format_x v112, v[41:42], s[16:19], 3 format:86 idxen offen offset:2339 slc dlc
+7581ebeb4ec40141	tbuffer_load_format_xyzw v[196:199], off, s[4:7], s65 format:125 offset:373 dlc
+1f08ece85b41232e	tbuffer_store_format_d16_x v65, off, s[12:15], s46 format:[BUF_FMT_16_16_FLOAT] offset:2079
+6f6761ea505b630d	tbuffer_load_format_d16_xy v91, v80, s[12:15], s13 format:[BUF_FMT_32_32_32_32_SINT] idxen offset:1903 glc slc
+858796e83e2f04b6	tbuffer_store_format_xyz v[47:49], off, s[16:19], 54 format:[BUF_FMT_8_8_UINT] offset:1925 dlc
+1744b7ea75502176	tbuffer_store_format_d16_xyzw v[80:81], off, s[4:7], ttmp10 format:86 offset:1047 glc
+b1d295e8619c6056	tbuffer_store_format_d16_xy v156, v97, s[0:3], s86 format:[BUF_FMT_8_8_UINT] offen offset:689 glc slc dlc
+288c52e9c75647c2	tbuffer_load_format_xyz v[86:88], off, s[28:31], -2 format:[BUF_FMT_11_11_10_SINT] offset:3112 slc dlc
+449a6ce8857d2198	tbuffer_store_format_d16_x v125, v133, s[4:7], 24 format:[BUF_FMT_16_FLOAT] offen offset:2628 dlc
+8f0c25ea47092084	tbuffer_store_format_d16_xy v9, off, s[0:3], 4 format:[BUF_FMT_16_16_16_16_SSCALED] offset:3215
+d27643e83cb36661	tbuffer_load_format_d16_xyzw v[179:180], v[60:61], s[24:27], s97 format:[BUF_FMT_16_SNORM] idxen offen offset:1746 glc slc
+0cd916e94f9e4585	tbuffer_store_format_xyz v[158:160], v79, s[20:23], 5 format:[BUF_FMT_10_11_11_UINT] offen offset:2316 glc slc dlc
+4bd020eb69b06097	tbuffer_load_format_d16_x v176, v105, s[0:3], 23 format:100 offen offset:75 glc slc dlc
+2fbf52e86c9a60cd	tbuffer_load_format_d16_xyz v[154:155], v[108:109], s[0:3], -13 format:[BUF_FMT_16_SSCALED] idxen offen offset:3887 slc dlc
+5504b8e8446226c3	tbuffer_load_format_d16_x v98, off, s[24:27], -3 format:[BUF_FMT_16_16_UNORM] offset:1109
+a854b2eb2e9b4528	tbuffer_load_format_xyz v[155:157], v46, s[20:23], s40 format:118 offen offset:1192 glc slc
+b6eda3ebbc8f6158	tbuffer_load_format_d16_xyzw v[143:144], v188, s[4:7], s88 format:116 idxen offset:3510 glc slc dlc
+db9b2be9584c650b	tbuffer_load_format_d16_xyzw v[76:77], v88, s[20:23], s11 format:[BUF_FMT_11_11_10_UNORM] offen offset:3035 slc dlc
+5c2fa9e828166609	tbuffer_load_format_d16_xy v22, v40, s[24:27], s9 format:[BUF_FMT_32_SINT] idxen offset:3932 slc
+ab6e57e8b8400736	tbuffer_store_format_xyzw v[64:67], v184, s[28:31], s54 format:[BUF_FMT_16_SSCALED] idxen offset:3755 glc
+4d0f50eb68194577	tbuffer_load_format_x v25, off, s[20:23], ttmp11 format:106 offset:3917 slc
+8dfc52eb4a3d069d	tbuffer_load_format_xyz v[61:63], v[74:75], s[24:27], 29 format:106 idxen offen offset:3213 glc dlc
+02af52eb83af46c1	tbuffer_load_format_xyz v[175:177], v131, s[24:27], -1 format:106 idxen offset:3842 slc dlc
+fad797e883124085	tbuffer_store_format_xyzw v[18:21], v131, s[0:3], 5 format:[BUF_FMT_8_8_UINT] offen offset:2042 glc slc dlc
+f45942eab47e4534	tbuffer_load_format_xyz v[126:128], v180, s[20:23], s52 format:[BUF_FMT_32_32_32_UINT] offen offset:2548 glc slc
+92b0e2e9952d65a7	tbuffer_load_format_d16_xyz v[45:46], v[149:150], s[20:23], 39 format:[BUF_FMT_8_8_8_8_UINT] idxen offen offset:146 slc dlc
+b476b3ea71146460	tbuffer_load_format_d16_xyzw v[20:21], v[113:114], s[16:19], s96 format:86 idxen offen offset:1716 glc slc
+bd490fe97c454566	tbuffer_store_format_xyzw v[69:72], off, s[20:23], s102 format:[BUF_FMT_10_11_11_SSCALED] offset:2493 glc slc
+fa9a77e933522079	tbuffer_store_format_d16_xyzw v[82:83], v51, s[0:3], ttmp13 format:[BUF_FMT_10_10_10_2_USCALED] offen offset:2810 dlc
+b05f1ae92fbb2720	tbuffer_load_format_d16_xyz v[187:188], v47, s[28:31], s32 format:[BUF_FMT_10_11_11_SINT] offen offset:4016 glc
+8e8821ea8b172189	tbuffer_load_format_d16_xy v23, off, s[4:7], 9 format:[BUF_FMT_16_16_16_16_SSCALED] offset:2190 dlc
+92ebf4e805ae42e6	tbuffer_store_format_x v174, v5, s[8:11], src_flat_scratch_base_lo format:[BUF_FMT_10_11_11_UNORM] idxen offset:2962 glc slc dlc
+5a4a05eb5821219a	tbuffer_store_format_d16_xy v33, off, s[4:7], 26 format:96 offset:2650 glc
+413609eb958a4740	tbuffer_load_format_xy v[138:139], v[149:150], s[28:31], s64 format:97 idxen offen offset:1601 slc
+002bbce9688b40d0	tbuffer_store_format_x v139, v104, s[0:3], -16 format:[BUF_FMT_2_10_10_10_SINT] idxen offset:2816 slc
+d41743e91372225b	tbuffer_load_format_d16_xyzw v[114:115], v19, s[8:11], s91 format:[BUF_FMT_11_11_10_SSCALED] offen offset:2004
+c2acd3eac61741e7	tbuffer_load_format_xyzw v[23:26], v198, s[4:7], src_flat_scratch_base_hi format:90 idxen offset:3266 slc dlc
+f9b5bfeac05623cb	tbuffer_store_format_d16_xyzw v[86:87], v[192:193], s[12:15], -11 format:87 idxen offen offset:1529 dlc
+d1b1a9eb6cba20b2	tbuffer_load_format_d16_xy v186, v[108:109], s[0:3], 50 format:117 idxen offen offset:465 dlc
+346680e8a5012003	tbuffer_load_format_d16_x v1, v165, s[0:3], s3 format:[BUF_FMT_8_8_USCALED] idxen offset:1588 glc
+0b17efeb180a230f	tbuffer_store_format_d16_xyzw v[10:11], v24, s[12:15], s15 format:125 offen offset:1803
+fc6721e9c2404375	tbuffer_load_format_xy v[64:65], v194, s[12:15], ttmp9 format:[BUF_FMT_10_11_11_FLOAT] idxen offset:2044 glc slc
+45123debab6c0558	tbuffer_store_format_xy v[108:109], v171, s[20:23], s88 format:103 offen offset:581
+221a35e84c2d45e6	tbuffer_store_format_xy v[45:46], v76, s[20:23], src_flat_scratch_base_lo format:[BUF_FMT_8_SINT] offen offset:2594 slc
+dccb5aea7baf45a8	tbuffer_load_format_xyz v[175:177], off, s[20:23], 40 format:[BUF_FMT_32_32_32_32_UINT] offset:3036 glc slc dlc
+b1cafce9767b25bc	tbuffer_store_format_d16_x v123, off, s[20:23], 60 format:[BUF_FMT_32_32_SINT] offset:2737 glc dlc
+21313feb38a121f4	tbuffer_store_format_d16_xyzw v[161:162], v[56:57], s[4:7], 2.0 format:103 idxen offen offset:289
+a040ceea42ba64b1	tbuffer_store_format_d16_xyz v[186:187], off, s[16:19], 49 format:89 offset:160 glc slc
+60920deb330f44a7	tbuffer_store_format_xy v[15:16], v51, s[16:19], 39 format:97 offen offset:608 slc dlc
+6d2fb4ea804a647b	tbuffer_store_format_d16_x v74, v128, s[16:19], ttmp15 format:86 idxen offset:3949 slc
+7af7c8eac6c4666f	tbuffer_load_format_d16_x v196, v[198:199], s[24:27], ttmp3 format:89 idxen offen offset:1914 glc slc dlc
+e91765e86b0722b0	tbuffer_store_format_d16_xy v7, v107, s[8:11], 48 format:[BUF_FMT_16_SINT] offen offset:2025
+90bc39e80cbe23cf	tbuffer_load_format_d16_xy v190, v[12:13], s[12:15], -15 format:[BUF_FMT_16_UNORM] idxen offen offset:3216 dlc
+c46d19ea055d6789	tbuffer_load_format_d16_xy v93, v5, s[28:31], 9 format:[BUF_FMT_16_16_16_16_USCALED] idxen offset:3524 glc slc
+d2b2f7eb91632331	tbuffer_store_format_d16_xyzw v[99:100], v[145:146], s[12:15], s49 format:126 idxen offen offset:722 dlc
+9e4beaeb0403038d	tbuffer_load_format_xyz v[3:5], off, s[12:15], 13 format:125 offset:2974 glc
+6f5a9be8764e46a4	tbuffer_load_format_xyzw v[78:81], v118, s[24:27], 36 format:[BUF_FMT_8_8_SINT] offen offset:2671 glc slc
+05f87eea5e50028a	tbuffer_store_format_xyz v[80:82], v[94:95], s[8:11], 10 format:79 idxen offen offset:2053 glc dlc
+e8e8ede8acb465b3	tbuffer_store_format_d16_xy v180, v172, s[20:23], 51 format:[BUF_FMT_16_16_FLOAT] idxen offset:2280 glc slc dlc
+44e7afe810626762	tbuffer_store_format_d16_xyzw v[98:99], v16, s[28:31], s98 format:[BUF_FMT_32_SINT] idxen offset:1860 glc slc dlc
+08cabaea2479470b	tbuffer_load_format_xyz v[121:123], off, s[28:31], s11 format:87 offset:2568 glc slc dlc
+aa823de8202066b5	tbuffer_store_format_d16_xy v32, off, s[24:27], 53 format:[BUF_FMT_16_UNORM] offset:682 slc dlc
+88b273ea214401bc	tbuffer_load_format_xyzw v[68:71], v[33:34], s[4:7], 60 format:78 idxen offen offset:648 dlc
+baabf4e8458d2091	tbuffer_store_format_d16_x v141, v69, s[0:3], 17 format:[BUF_FMT_10_11_11_UNORM] idxen offset:3002 dlc
+a02cade9af30629d	tbuffer_store_format_d16_xy v48, v175, s[8:11], 29 format:[BUF_FMT_2_10_10_10_SSCALED] idxen offset:3232 slc
+b15f2ee997492524	tbuffer_store_format_d16_xyz v[73:74], v151, s[20:23], s36 format:[BUF_FMT_11_11_10_UNORM] offen offset:4017 glc
+c69746eb395b064a	tbuffer_store_format_xyz v[91:93], v57, s[24:27], s74 format:104 offen offset:1990 dlc
+aadf4ee8bb9425cd	tbuffer_store_format_d16_xyz v[148:149], v187, s[20:23], -13 format:[BUF_FMT_16_USCALED] offen offset:4010 glc dlc
+01d400eb0bb52781	tbuffer_load_format_d16_x v181, v11, s[28:31], 1 format:96 offen offset:1025 glc dlc
+ddaa83e8ab28427e	tbuffer_load_format_xyzw v[40:43], v171, s[8:11], exec_lo format:[BUF_FMT_8_8_USCALED] idxen offset:2781 slc dlc
+563fc6e9287b433d	tbuffer_store_format_xyz v[123:125], v[40:41], s[12:15], s61 format:[BUF_FMT_8_8_8_8_UNORM] idxen offen offset:3926 slc
+f183c6e99c752454	tbuffer_store_format_d16_xyz v[117:118], off, s[16:19], s84 format:[BUF_FMT_8_8_8_8_UNORM] offset:1009 dlc
+bba709e82f3523aa	tbuffer_load_format_d16_xy v53, v47, s[12:15], 42 idxen offset:1979 dlc
+43dd50eb753c6043	tbuffer_load_format_d16_x v60, v117, s[0:3], s67 format:106 offen offset:3395 glc slc dlc
+d3dd4beb234c417e	tbuffer_load_format_xyzw v[76:79], v35, s[4:7], exec_lo format:105 offen offset:3539 glc slc dlc
+c8415aea82616252	tbuffer_load_format_d16_xyz v[97:98], off, s[8:11], s82 format:[BUF_FMT_32_32_32_32_UINT] offset:456 glc slc
+c47bfbeb2a09447d	tbuffer_load_format_xyzw v[9:12], v[42:43], s[16:19], null format:127 idxen offen offset:3012 glc slc
+1b93b2e97c944054	tbuffer_load_format_xyz v[148:150], v124, s[0:3], s84 format:[BUF_FMT_2_10_10_10_UINT] offen offset:795 slc dlc
+db1613ea04b86233	tbuffer_load_format_d16_xyzw v[184:185], v4, s[8:11], s51 format:[BUF_FMT_16_16_16_16_SNORM] offen offset:1755 slc
+8f4ce2e9019a63f4	tbuffer_load_format_d16_xyz v[154:155], off, s[12:15], 2.0 format:[BUF_FMT_8_8_8_8_UINT] offset:3215 glc slc
+f558bde9a2624709	tbuffer_store_format_xy v[98:99], v162, s[28:31], s9 format:[BUF_FMT_2_10_10_10_SINT] offen offset:2293 glc slc
+8ad4cce92d166323	tbuffer_store_format_d16_x v22, v45, s[12:15], s35 format:[BUF_FMT_8_8_8_8_SNORM] offen offset:1162 glc slc dlc
+830f26ea564a6324	tbuffer_store_format_d16_xyz v[74:75], off, s[12:15], s36 format:[BUF_FMT_16_16_16_16_SSCALED] offset:3971 slc
+2c8d71e83aad43c1	tbuffer_load_format_xy v[173:174], off, s[12:15], -1 format:[BUF_FMT_8_8_UNORM] offset:3372 slc dlc
+2188aaeb1503050d	tbuffer_load_format_xyz v[3:5], off, s[20:23], s13 format:117 offset:2081 dlc
+d6fb05e872026202	tbuffer_store_format_d16_xy v2, v[114:115], s[8:11], s2 format:[BUF_FMT_INVALID] idxen offen offset:3030 glc slc dlc
+d27647e9522a22aa	tbuffer_store_format_d16_xyzw v[42:43], v[82:83], s[8:11], 42 format:[BUF_FMT_11_11_10_SSCALED] idxen offen offset:1746 glc
+8bec55ea32bc0685	tbuffer_store_format_xy v[188:189], v50, s[24:27], 5 format:[BUF_FMT_32_32_32_FLOAT] idxen offset:3211 glc dlc
+abff32ea2d3d238e	tbuffer_load_format_d16_xyz v[61:62], v[45:46], s[12:15], 14 format:[BUF_FMT_16_16_16_16_SINT] idxen offen offset:4011 glc dlc
+9932e0e90fbf60b0	tbuffer_load_format_d16_x v191, v[15:16], s[0:3], 48 format:[BUF_FMT_8_8_8_8_UINT] idxen offen offset:665 slc
+0dc3c0ea46b403c7	tbuffer_load_format_x v180, off, s[12:15], -7 format:88 offset:781 glc dlc
+03e225ea65012716	tbuffer_store_format_d16_xy v1, v101, s[28:31], s22 format:[BUF_FMT_16_16_16_16_SSCALED] idxen offset:515 glc dlc
+719137e9781061cf	tbuffer_store_format_d16_xyzw v[16:17], v120, s[4:7], -15 format:[BUF_FMT_11_11_10_SNORM] offen offset:369 slc dlc
+c3ab2ce9b20c6504	tbuffer_store_format_d16_x v12, v178, s[20:23], s4 format:[BUF_FMT_11_11_10_UNORM] idxen offset:3011 slc dlc
+22c988eaa29e41f1	tbuffer_load_format_x v158, off, s[4:7], -0.5 format:81 offset:2338 glc slc dlc
+747632eb1264039b	tbuffer_load_format_xyz v[100:102], v[18:19], s[12:15], 27 format:102 idxen offen offset:1652 glc
+9c3da1eaa208255a	tbuffer_load_format_d16_xy v8, v[162:163], s[20:23], s90 format:84 idxen offen offset:3484
+285b6ee8a68c01ed	tbuffer_store_format_xyz v[140:142], v166, s[4:7], src_private_base format:[BUF_FMT_16_FLOAT] offen offset:2856 glc
+23787fe859be075e	tbuffer_store_format_xyzw v[190:193], v[89:90], s[28:31], s94 format:[BUF_FMT_8_8_SNORM] idxen offen offset:2083 glc
+d8da20e9c47f6578	tbuffer_load_format_d16_x v127, v196, s[20:23], ttmp12 format:[BUF_FMT_10_11_11_FLOAT] offen offset:2776 glc slc dlc
+59bbbceb30556094	tbuffer_store_format_d16_x v85, v[48:49], s[0:3], 20 format:119 idxen offen offset:2905 slc dlc
+450d53e85eb10201	tbuffer_load_format_xyzw v[177:180], off, s[8:11], s1 format:[BUF_FMT_16_SSCALED] offset:3397
+21df28e985a36351	tbuffer_load_format_d16_x v163, v133, s[12:15], s81 format:[BUF_FMT_11_11_10_UNORM] offen offset:3873 glc slc dlc
+eaaf92e95a1964e6	tbuffer_load_format_d16_xyz v[25:26], v90, s[16:19], src_flat_scratch_base_lo format:[BUF_FMT_2_10_10_10_UNORM] idxen offset:4074 slc dlc
+114909e85903274a	tbuffer_load_format_d16_xy v3, off, s[28:31], s74 offset:2321 glc
+1c68a5e83f912133	tbuffer_store_format_d16_xy v145, v63, s[4:7], s51 format:[BUF_FMT_32_UINT] idxen offset:2076 glc
+b816c8ea2639418e	tbuffer_load_format_x v57, v38, s[4:7], 14 format:89 offen offset:1720 slc
+19e5a2e83d594740	tbuffer_load_format_xyz v[89:91], v61, s[28:31], s64 format:[BUF_FMT_32_UINT] idxen offset:1305 glc slc dlc
+812910eb8fbc010b	tbuffer_load_format_x v188, v143, s[4:7], s11 format:98 idxen offset:2433
+30da89e8c4280702	tbuffer_load_format_xy v[40:41], v196, s[28:31], s2 format:[BUF_FMT_8_8_SSCALED] offen offset:2608 glc dlc
+54a6f0ea242a40c3	tbuffer_load_format_x v42, v36, s[0:3], -3 format:94 idxen offset:1620 slc dlc
+b8fb1be835640085	tbuffer_load_format_xyzw v[100:103], v[53:54], s[0:3], 5 format:[BUF_FMT_8_USCALED] idxen offen offset:3000 glc dlc
+12db2de876aa25c3	tbuffer_store_format_d16_xy v170, v118, s[20:23], -3 format:[BUF_FMT_8_UINT] offen offset:2834 glc dlc
+c53d4de9873a26c0	tbuffer_store_format_d16_xy v58, v[135:136], s[24:27], 64 format:[BUF_FMT_11_11_10_UINT] idxen offen offset:3525
+28017febc6ac63b3	tbuffer_store_format_d16_xyzw v[172:173], off, s[12:15], 51 format:111 offset:296 slc
+ddce20eb2dbc43a5	tbuffer_load_format_x v188, off, s[12:15], 37 format:100 offset:3805 glc slc dlc
+f17c73e912622323	tbuffer_load_format_d16_xyzw v[98:99], v[18:19], s[12:15], s35 format:[BUF_FMT_10_10_10_2_USCALED] idxen offen offset:3313 glc
+a49d24ea9b700198	tbuffer_store_format_x v112, v155, s[4:7], 24 format:[BUF_FMT_16_16_16_16_SSCALED] offen offset:3492 dlc
+41b4f4e8ba5e25a7	tbuffer_store_format_d16_x v94, v[186:187], s[20:23], 39 format:[BUF_FMT_10_11_11_UNORM] idxen offen offset:1089 dlc
+5747a9e92c40423c	tbuffer_load_format_xy v[64:65], off, s[8:11], s60 format:[BUF_FMT_2_10_10_10_SSCALED] offset:1879 glc slc
+a1cc7de9469a21fc	tbuffer_store_format_d16_xy v154, off, s[4:7], src_execz format:[BUF_FMT_10_10_10_2_SSCALED] offset:3233 glc dlc
+d96addeb580e655b	tbuffer_store_format_d16_xy v14, v88, s[20:23], s91 format:123 idxen offset:2777 glc slc
+3c58f7e83f8300c3	tbuffer_store_format_xyzw v[131:134], v63, s[0:3], -3 format:[BUF_FMT_10_11_11_UNORM] offen offset:2108 glc
+4ec84fea27ac46ba	tbuffer_store_format_xyzw v[172:175], off, s[24:27], 58 format:[BUF_FMT_32_32_32_SINT] offset:2126 glc slc dlc
+fffed1e9799001cc	tbuffer_load_format_xy v[144:145], v[121:122], s[4:7], -12 format:[BUF_FMT_8_8_8_8_USCALED] idxen offen offset:3839 glc dlc
+7da2b4e938c5651f	tbuffer_store_format_d16_x v197, v56, s[20:23], s31 format:[BUF_FMT_2_10_10_10_UINT] idxen offset:637 slc dlc
+69b9f1ea43502262	tbuffer_load_format_d16_xy v80, v[67:68], s[8:11], s98 format:94 idxen offen offset:2409 dlc
+ed1c6be9336863eb	tbuffer_load_format_d16_xyzw v[104:105], v51, s[12:15], src_shared_base format:[BUF_FMT_10_10_10_2_SNORM] offen offset:3309 slc
+b75c66e86f11273d	tbuffer_store_format_d16_xyz v[17:18], v111, s[28:31], s61 format:[BUF_FMT_16_SINT] offen offset:3255 glc
+372951e95d5727c5	tbuffer_load_format_d16_xy v87, v93, s[28:31], -5 format:[BUF_FMT_11_11_10_SINT] idxen offset:2359
+1ed0a1eb9b7d23ab	tbuffer_load_format_d16_xy v125, v155, s[12:15], 43 format:116 offen offset:30 glc dlc
+40185ce85bbe0299	tbuffer_store_format_x v190, v91, s[8:11], 25 format:[BUF_FMT_16_UINT] offen offset:2112
+b5a1baea3f4f21fd	tbuffer_load_format_d16_xyz v[79:80], v63, s[4:7], src_scc format:87 idxen offset:437 dlc
+c9ab7dea611526f4	tbuffer_store_format_d16_xy v21, v97, s[24:27], 2.0 format:79 idxen offset:3017 dlc
+587dbbe92331478f	tbuffer_load_format_xyzw v[49:52], v[35:36], s[28:31], 15 format:[BUF_FMT_2_10_10_10_SINT] idxen offen offset:3416 glc slc
+01276aebb9aa0108	tbuffer_load_format_xyz v[170:172], v185, s[4:7], s8 format:109 idxen offset:1793
+0498d9ea59c2632a	tbuffer_load_format_d16_xy v194, v89, s[12:15], s42 format:91 offen offset:2052 slc dlc
+c5cfcbe86646479e	tbuffer_load_format_xyzw v[70:73], off, s[28:31], 30 format:[BUF_FMT_16_16_USCALED] offset:4037 glc slc dlc
+37cec7ea6f8103b8	tbuffer_store_format_xyzw v[129:132], off, s[12:15], 56 format:88 offset:3639 glc dlc
+f0ad8ee914830520	tbuffer_store_format_xyz v[131:133], v20, s[20:23], s32 format:[BUF_FMT_10_10_10_2_SINT] idxen offset:3568 dlc
+ef3f3beb90444527	tbuffer_load_format_xyzw v[68:71], v[144:145], s[20:23], s39 format:103 idxen offen offset:4079 slc
+18d869e99c136540	tbuffer_load_format_d16_xy v19, v156, s[20:23], s64 format:[BUF_FMT_10_10_10_2_SNORM] offen offset:2072 glc slc dlc
+850beeea4aa822b8	tbuffer_store_format_d16_xyz v[168:169], off, s[8:11], 56 format:93 offset:2949
+5f0ab6eba8744268	tbuffer_store_format_xyz v[116:118], off, s[8:11], s104 format:118 offset:2655 slc
+c94c0aeb3aaa474b	tbuffer_load_format_xyz v[170:172], off, s[28:31], s75 format:97 offset:3273 glc slc
+f8ce72eb7d454428	tbuffer_load_format_xyz v[69:71], off, s[16:19], s40 format:110 offset:3832 glc slc dlc
+dc808eea864c2136	tbuffer_store_format_d16_xyz v[76:77], off, s[4:7], s54 format:81 offset:220 dlc
+b470d8ea4d5007c6	tbuffer_load_format_x v80, v[77:78], s[28:31], -6 format:91 idxen offen offset:180 glc
+646e78e9980b0620	tbuffer_load_format_x v11, v152, s[24:27], s32 format:[BUF_FMT_10_10_10_2_SSCALED] idxen offset:3684 glc
+40ae50eb19670659	tbuffer_load_format_x v103, v25, s[24:27], s89 format:106 idxen offset:3648 dlc
+67119cea6c21263a	tbuffer_store_format_d16_x v33, v108, s[24:27], s58 format:83 offen offset:359
+9f5f18ea20ba45b0	tbuffer_load_format_x v186, v32, s[20:23], 48 format:[BUF_FMT_16_16_16_16_USCALED] offen offset:3999 glc slc
+06e1b5e800c5221e	tbuffer_store_format_d16_xy v197, v0, s[8:11], s30 format:[BUF_FMT_32_FLOAT] idxen offset:262 glc dlc
+9a4645e9aa58427c	tbuffer_store_format_xy v[88:89], off, s[8:11], m0 format:[BUF_FMT_11_11_10_SSCALED] offset:1690 glc slc
+ce0547e8c20c4621	tbuffer_store_format_xyzw v[12:15], off, s[24:27], s33 format:[BUF_FMT_16_SNORM] offset:1486 slc
+be1a0eea4b9e2211	tbuffer_store_format_d16_xyz v[158:159], v75, s[8:11], s17 format:[BUF_FMT_16_16_16_16_UNORM] offen offset:2750
+c8cedee86356222f	tbuffer_store_format_d16_xyz v[86:87], off, s[8:11], s47 format:[BUF_FMT_16_16_UINT] offset:3784 glc dlc
+a22883eb3fb741c7	tbuffer_load_format_xyzw v[183:186], v63, s[4:7], -7 format:112 idxen offset:2210 slc
+278a85e837c22473	tbuffer_store_format_d16_xy v194, off, s[16:19], ttmp7 format:[BUF_FMT_8_8_USCALED] offset:2599 dlc
+0771dbeb05760708	tbuffer_load_format_xyzw v[118:121], v[5:6], s[28:31], s8 format:123 idxen offen offset:263 glc
+2a3c05eba36f4741	tbuffer_store_format_xy v[111:112], v[163:164], s[28:31], s65 format:96 idxen offen offset:3114 slc
+e7320feaaf4c02eb	tbuffer_store_format_xyzw v[76:79], v[175:176], s[8:11], src_shared_base format:[BUF_FMT_16_16_16_16_UNORM] idxen offen offset:743
+c03f11e90c510432	tbuffer_load_format_xy v[81:82], v[12:13], s[16:19], s50 format:[BUF_FMT_10_11_11_UINT] idxen offen offset:4032
+f947bbe94d9c43b7	tbuffer_load_format_xyzw v[156:159], off, s[12:15], 55 format:[BUF_FMT_2_10_10_10_SINT] offset:2041 glc slc
+c7bc1ae9a492471d	tbuffer_load_format_xyz v[146:148], v[164:165], s[28:31], s29 format:[BUF_FMT_10_11_11_SINT] idxen offen offset:3271 slc dlc
+04b0a8ea1f764430	tbuffer_load_format_x v118, v[31:32], s[16:19], s48 format:85 idxen offen offset:4 slc dlc
+f308deeb869041a2	tbuffer_store_format_xyz v[144:146], off, s[4:7], 34 format:123 offset:2291 slc
+4c10ace8c55326be	tbuffer_store_format_d16_x v83, v197, s[24:27], 62 format:[BUF_FMT_32_SINT] offen offset:76
+a9abd9e99d2b036d	tbuffer_load_format_xy v[43:44], v157, s[12:15], ttmp1 format:[BUF_FMT_8_8_8_8_SSCALED] idxen offset:2985 dlc
+716a23e86f68029e	tbuffer_load_format_xyzw v[104:107], v111, s[8:11], 30 format:[BUF_FMT_8_SSCALED] idxen offset:2673 glc
+01b60ce962be21cd	tbuffer_store_format_d16_x v190, v[98:99], s[4:7], -13 format:[BUF_FMT_10_11_11_SSCALED] idxen offen offset:1537 dlc
+f1f763eba7bd4377	tbuffer_load_format_xyzw v[189:192], v[167:168], s[12:15], ttmp11 format:108 idxen offen offset:2033 glc slc dlc
+77847be92e3046f6	tbuffer_load_format_xyzw v[48:51], off, s[24:27], 4.0 format:[BUF_FMT_10_10_10_2_SSCALED] offset:1143 slc dlc
+38c7eeea19b82201	tbuffer_store_format_d16_xyz v[184:185], off, s[8:11], s1 format:93 offset:1848 glc dlc
+22515be84e6c2726	tbuffer_load_format_d16_xyzw v[108:109], v78, s[28:31], s38 format:[BUF_FMT_16_UINT] offen offset:290 glc
+2884e7eb114c654a	tbuffer_store_format_d16_xyzw v[76:77], off, s[20:23], s74 format:124 offset:1064 slc dlc
+d411b8e9246c238d	tbuffer_load_format_d16_x v108, v36, s[12:15], 13 format:[BUF_FMT_2_10_10_10_SINT] offen offset:468
+031ceceb74570132	tbuffer_store_format_x v87, v116, s[4:7], s50 format:125 offen offset:3075
+1e5198eb7f4261c9	tbuffer_load_format_d16_x v66, v127, s[4:7], -9 format:115 offen offset:286 glc slc
+c2982ae91399628d	tbuffer_load_format_d16_xyz v[153:154], v19, s[8:11], 13 format:[BUF_FMT_11_11_10_UNORM] offen offset:2242 slc dlc
+50c2abeb7b0c65cf	tbuffer_load_format_d16_xyzw v[12:13], off, s[20:23], -15 format:117 offset:592 glc slc dlc
+c86159ea2ba5623f	tbuffer_load_format_d16_xy v165, v43, s[8:11], s63 format:[BUF_FMT_32_32_32_32_UINT] idxen offset:456 glc slc
+f515bae82d96075a	tbuffer_load_format_xyz v[150:152], v45, s[28:31], s90 format:[BUF_FMT_16_16_UNORM] offen offset:1525
+36bf71eb8812664c	tbuffer_load_format_d16_xy v18, v[136:137], s[24:27], s76 format:110 idxen offen offset:3894 slc dlc
+5478b0e8329120eb	tbuffer_load_format_d16_x v145, v[50:51], s[0:3], src_shared_base format:[BUF_FMT_32_FLOAT] idxen offen offset:2132 glc
+258a5ceab46c044d	tbuffer_store_format_x v108, off, s[16:19], s77 format:[BUF_FMT_32_32_32_32_UINT] offset:2597 dlc
+c5304eea82a3037b	tbuffer_store_format_xyz v[163:165], v[130:131], s[12:15], ttmp15 format:[BUF_FMT_32_32_32_SINT] idxen offen offset:197
+a3e79aea2a15403a	tbuffer_load_format_xyz v[21:23], v42, s[0:3], s58 format:83 idxen offset:1955 glc slc dlc
+6a4277ea54b74212	tbuffer_store_format_xyzw v[183:186], off, s[8:11], s18 format:78 offset:618 glc slc
+b11fd6e80b702142	tbuffer_store_format_d16_xyz v[112:113], v11, s[4:7], s66 format:[BUF_FMT_16_16_SSCALED] offen offset:4017
+cc1180e86d0e2143	tbuffer_load_format_d16_x v14, v109, s[4:7], s67 format:[BUF_FMT_8_8_USCALED] offen offset:460
+f9c215eb8297223c	tbuffer_store_format_d16_xy v151, off, s[8:11], s60 format:98 offset:761 glc dlc
+a94eb8e84a4b45c9	tbuffer_load_format_x v75, off, s[20:23], -9 format:[BUF_FMT_16_16_UNORM] offset:3753 glc slc
+3263dbe815be0615	tbuffer_load_format_xyzw v[190:193], v21, s[24:27], s21 format:[BUF_FMT_16_16_UINT] idxen offset:818 glc
+2eadb7ea979d2677	tbuffer_store_format_d16_xyzw v[157:158], v151, s[24:27], ttmp11 format:86 idxen offset:3374 dlc
+adb2a6eab1a56470	tbuffer_store_format_d16_xyz v[165:166], v[177:178], s[16:19], ttmp4 format:84 idxen offen offset:685 slc dlc
+7c075eeb2baa27b2	tbuffer_store_format_d16_xyz v[170:171], off, s[28:31], 50 format:107 offset:1916
+1e9cbbe8691d46f6	tbuffer_load_format_xyzw v[29:32], v105, s[24:27], 4.0 format:[BUF_FMT_16_16_UNORM] offen offset:3102 slc dlc
+13855beb9a60028f	tbuffer_load_format_xyzw v[96:99], off, s[8:11], 15 format:107 offset:1299 dlc
+c88cdbeb1e8827c5	tbuffer_load_format_d16_xyzw v[136:137], off, s[28:31], -5 format:123 offset:3272 dlc
+dad0bcebb9b10087	tbuffer_store_format_x v177, v185, s[0:3], 7 format:119 offen offset:218 glc dlc
+f02142e9c4b72152	tbuffer_load_format_d16_xyz v[183:184], v196, s[4:7], s82 format:[BUF_FMT_11_11_10_SSCALED] idxen offset:496
+e1b57be83e0c6744	tbuffer_load_format_d16_xyzw v[12:13], v[62:63], s[28:31], s68 format:[BUF_FMT_8_8_SNORM] idxen offen offset:1505 slc dlc
+b534f8ebbcba2745	tbuffer_load_format_d16_x v186, v[188:189], s[28:31], s69 format:127 idxen offen offset:1205
+f51089e9391c03c3	tbuffer_load_format_xy v[28:29], v57, s[12:15], -3 format:[BUF_FMT_10_10_10_2_SINT] offen offset:245
+e66532e985174344	tbuffer_load_format_xyz v[23:25], v133, s[12:15], s68 format:[BUF_FMT_11_11_10_SNORM] idxen offset:1510 glc slc
+9af2cceaa48b26f1	tbuffer_store_format_d16_x v139, v[164:165], s[24:27], -0.5 format:89 idxen offen offset:666 glc dlc
+e8cf4aeb2d7f450d	tbuffer_load_format_xyz v[127:129], off, s[20:23], s13 format:105 offset:4072 glc slc dlc
+fe08cfea344d26f6	tbuffer_store_format_d16_xyzw v[77:78], off, s[24:27], 4.0 format:89 offset:2302
+45bcbee82da80278	tbuffer_store_format_xyz v[168:170], v[45:46], s[8:11], ttmp12 format:[BUF_FMT_16_16_UNORM] idxen offen offset:3141 dlc
+3e0d98e904b4015c	tbuffer_load_format_x v180, off, s[4:7], s92 format:[BUF_FMT_2_10_10_10_SNORM] offset:3390
+0e2979eab53d6376	tbuffer_load_format_d16_xy v61, v181, s[12:15], ttmp10 format:79 idxen offset:2318 slc
+812b06ea3db026fc	tbuffer_store_format_d16_xyz v[176:177], v61, s[24:27], src_execz format:[BUF_FMT_32_32_FLOAT] idxen offset:2945
+852306e81db2068b	tbuffer_store_format_xyz v[178:180], v29, s[24:27], 11 format:[BUF_FMT_INVALID] idxen offset:901
+741fc2e90f6e02f3	tbuffer_load_format_xyz v[110:112], v15, s[8:11], -1.0 format:[BUF_FMT_8_8_8_8_UNORM] offen offset:3956
+c65e8ae8529360fd	tbuffer_load_format_d16_xyz v[147:148], v82, s[0:3], src_scc format:[BUF_FMT_8_8_SSCALED] offen offset:3782 glc slc
+1e82fbe81c40676e	tbuffer_load_format_d16_xyzw v[64:65], off, s[28:31], ttmp2 format:[BUF_FMT_10_11_11_SNORM] offset:542 slc dlc
+8637f0eb4e5523b2	tbuffer_load_format_d16_x v85, v[78:79], s[12:15], 50 format:126 idxen offen offset:1926
+8edafae9139945bf	tbuffer_load_format_xyz v[153:155], v19, s[20:23], 63 format:[BUF_FMT_32_32_SINT] offen offset:2702 glc slc dlc
+adcd70e9c7106370	tbuffer_load_format_d16_x v16, off, s[12:15], ttmp4 format:[BUF_FMT_10_10_10_2_USCALED] offset:3501 glc slc dlc
+5d7c26e89010639f	tbuffer_store_format_d16_xyz v[16:17], v[144:145], s[12:15], 31 format:[BUF_FMT_8_SSCALED] idxen offen offset:3165 glc slc
+3bb77aea7149444c	tbuffer_load_format_xyz v[73:75], v[113:114], s[16:19], s76 format:79 idxen offen offset:1851 slc dlc
+89d6b8eab02a2726	tbuffer_load_format_d16_x v42, v176, s[28:31], s38 format:87 offen offset:1673 glc dlc
+980364eba45f671c	tbuffer_store_format_d16_x v95, off, s[28:31], s28 format:108 offset:920 slc
+8283ade92b480478	tbuffer_store_format_xy v[72:73], off, s[16:19], ttmp12 format:[BUF_FMT_2_10_10_10_SSCALED] offset:898 dlc
+10c5f1e9364b449c	tbuffer_load_format_xy v[75:76], off, s[16:19], 28 format:[BUF_FMT_32_32_UINT] offset:1296 glc slc dlc
+59ebdfeb3d70451d	tbuffer_store_format_xyzw v[112:115], v61, s[20:23], s29 format:123 idxen offset:2905 glc slc dlc
+d17ac7e8874e24af	tbuffer_store_format_d16_xyzw v[78:79], v[135:136], s[16:19], 47 format:[BUF_FMT_16_16_SNORM] idxen offen offset:2769 glc
+3f9f46e82c824692	tbuffer_store_format_xyz v[130:132], v44, s[24:27], 18 format:[BUF_FMT_16_SNORM] offen offset:3903 slc dlc
+0cefa5ea4a230153	tbuffer_store_format_xy v[35:36], v74, s[4:7], s83 format:84 idxen offset:3852 glc dlc
+0e11c9ea667b4548	tbuffer_load_format_xy v[123:124], v102, s[20:23], s72 format:89 offen offset:270 slc
+6b9bcae9578a23be	tbuffer_load_format_d16_xyz v[138:139], v87, s[12:15], 62 format:[BUF_FMT_8_8_8_8_SNORM] offen offset:2923 dlc
+a4241be802162428	tbuffer_load_format_d16_xyzw v[22:23], v2, s[16:19], s40 format:[BUF_FMT_8_USCALED] idxen offset:1188
+4907ede96c2b2730	tbuffer_store_format_d16_xy v43, off, s[28:31], s48 format:[BUF_FMT_8_8_8_8_SINT] offset:1865
+e64b1ee8ba1b060e	tbuffer_store_format_xyz v[27:29], off, s[24:27], s14 format:[BUF_FMT_8_USCALED] offset:3046 glc
+fe62e7e8550f2178	tbuffer_store_format_d16_xyzw v[15:16], v85, s[4:7], ttmp12 format:[BUF_FMT_16_16_SINT] idxen offset:766 glc
+1e0868e95b46207b	tbuffer_load_format_d16_x v70, off, s[0:3], ttmp15 format:[BUF_FMT_10_10_10_2_SNORM] offset:2078
+d98f23e8008b6471	tbuffer_load_format_d16_xyzw v[139:140], off, s[16:19], ttmp5 format:[BUF_FMT_8_SSCALED] offset:4057 slc dlc
+513b8aeaa81740aa	tbuffer_load_format_xyz v[23:25], v[168:169], s[0:3], 42 format:81 idxen offen offset:2897 slc
+139eede875014529	tbuffer_store_format_xy v[1:2], v117, s[20:23], s41 format:[BUF_FMT_16_16_FLOAT] offen offset:3603 slc dlc
+4b5ff9ebc42b4330	tbuffer_load_format_xy v[43:44], v196, s[12:15], s48 format:127 offen offset:3915 glc slc
+f6ead5e911c34091	tbuffer_store_format_xy v[195:196], v17, s[0:3], 17 format:[BUF_FMT_8_8_8_8_USCALED] idxen offset:2806 glc slc dlc
+7fac68e86e38423a	tbuffer_load_format_x v56, v110, s[8:11], s58 format:[BUF_FMT_16_FLOAT] idxen offset:3199 slc dlc
+ed1971ea5ca22517	tbuffer_load_format_d16_xy v162, v92, s[20:23], s23 format:78 offen offset:2541
+c0146ae944642670	tbuffer_load_format_d16_xyz v[100:101], v68, s[24:27], ttmp4 format:[BUF_FMT_10_10_10_2_SNORM] offen offset:1216
+8a73dae88da0223e	tbuffer_load_format_d16_xyz v[160:161], v[141:142], s[8:11], s62 format:[BUF_FMT_16_16_UINT] idxen offen offset:906 glc
+7b19f6eac46e636d	tbuffer_store_format_d16_xyz v[110:111], v196, s[12:15], ttmp1 format:94 offen offset:2427 slc
+bd73f3ea1d63200c	tbuffer_load_format_d16_xyzw v[99:100], v[29:30], s[0:3], s12 format:94 idxen offen offset:957 glc
+477e74eac56c0515	tbuffer_store_format_x v108, v[197:198], s[20:23], s21 format:78 idxen offen offset:3655 glc
+bd29fae90c3d0312	tbuffer_load_format_xyz v[61:63], v12, s[12:15], s18 format:[BUF_FMT_32_32_SINT] idxen offset:2493
+1f2e71ea316f0073	tbuffer_load_format_xy v[111:112], v49, s[0:3], ttmp7 format:78 idxen offset:3615
+808a74e9893343a5	tbuffer_store_format_x v51, off, s[12:15], 37 format:[BUF_FMT_10_10_10_2_USCALED] offset:2688 slc dlc
+731719eb078b00ca	tbuffer_load_format_xy v[139:140], v7, s[0:3], -10 format:99 offen offset:1907
+b06b1aeabfb3406c	tbuffer_load_format_xyz v[179:181], v191, s[0:3], ttmp0 format:[BUF_FMT_16_16_16_16_USCALED] idxen offset:2992 glc slc
+4a00f2e9568e072c	tbuffer_load_format_xyz v[142:144], off, s[28:31], s44 format:[BUF_FMT_32_32_UINT] offset:74
+5b0c13ea49086653	tbuffer_load_format_d16_xyzw v[8:9], off, s[24:27], s83 format:[BUF_FMT_16_16_16_16_SNORM] offset:3163 slc
+17941ae9859a402a	tbuffer_load_format_xyz v[154:156], v133, s[0:3], s42 format:[BUF_FMT_10_11_11_SINT] offen offset:1047 slc dlc
+2a4553e8bb95249d	tbuffer_load_format_d16_xyzw v[149:150], off, s[16:19], 29 format:[BUF_FMT_16_SSCALED] offset:1322 glc
+e9cfefe8997e4774	tbuffer_store_format_xyzw v[126:129], off, s[28:31], ttmp8 format:[BUF_FMT_16_16_FLOAT] offset:4073 glc slc dlc
+7d9cf2eb499d4451	tbuffer_load_format_xyz v[157:159], v73, s[16:19], s81 format:126 offen offset:3197 slc dlc
+a91512ebb46a41a2	tbuffer_load_format_xyz v[106:108], v180, s[4:7], 34 format:98 offen offset:1449 slc
+d5c7fce9123a2235	tbuffer_store_format_d16_x v58, off, s[8:11], s53 format:[BUF_FMT_32_32_SINT] offset:2005 glc dlc
+74e4f9e9ad7b2199	tbuffer_load_format_d16_xy v123, v173, s[4:7], 25 format:[BUF_FMT_32_32_SINT] idxen offset:1140 glc dlc
+8d7dc8eb55b6050b	tbuffer_load_format_x v182, v[85:86], s[20:23], s11 format:121 idxen offen offset:3469 glc
+248318e87d5120b5	tbuffer_load_format_d16_x v81, off, s[0:3], 53 format:[BUF_FMT_8_USCALED] offset:804 dlc
+f2730fe95e3c6628	tbuffer_store_format_d16_xyzw v[60:61], v[94:95], s[24:27], s40 format:[BUF_FMT_10_11_11_SSCALED] idxen offen offset:1010 glc slc
+ac12fcea75290766	tbuffer_store_format_x v41, v117, s[28:31], s102 format:95 offen offset:684
+0d4b01ea229a4552	tbuffer_load_format_xy v[154:155], off, s[20:23], s82 format:[BUF_FMT_32_32_FLOAT] offset:2829 glc slc
+095452e969a80402	tbuffer_load_format_xyz v[168:170], v105, s[16:19], s2 format:[BUF_FMT_11_11_10_SINT] offen offset:1033 glc
+58352de901892710	tbuffer_store_format_d16_xy v137, v[1:2], s[28:31], s16 format:[BUF_FMT_11_11_10_UNORM] idxen offen offset:1368
+2bfda1e83f2d6702	tbuffer_load_format_d16_xy v45, v[63:64], s[28:31], s2 format:[BUF_FMT_32_UINT] idxen offen offset:3371 glc slc dlc
+5a8650e9b65667f6	tbuffer_load_format_d16_x v86, off, s[28:31], 4.0 format:[BUF_FMT_11_11_10_SINT] offset:1626 slc dlc
+8ed70dea25382322	tbuffer_store_format_d16_xy v56, v37, s[12:15], s34 format:[BUF_FMT_16_16_16_16_UNORM] offen offset:1934 glc dlc
+a3add1eb29a765a6	tbuffer_load_format_d16_xy v167, v41, s[20:23], 38 format:122 idxen offset:3491 slc dlc
+5cad3ee9761a20be	tbuffer_store_format_d16_xyz v[26:27], v118, s[0:3], 62 format:[BUF_FMT_11_11_10_USCALED] idxen offset:3420 dlc
+0adb28eb6f5805ad	tbuffer_load_format_x v88, v111, s[20:23], 45 format:101 offen offset:2826 glc dlc
+6d2711e926a4225e	tbuffer_load_format_d16_xy v164, v38, s[8:11], s94 format:[BUF_FMT_10_11_11_UINT] idxen offset:1901
+60a9c4ebafba41f4	tbuffer_store_format_x v186, v175, s[4:7], 2.0 format:120 idxen offset:2400 slc dlc
+7a5fe5e8aa81075c	tbuffer_store_format_xy v[129:130], v170, s[28:31], s92 format:[BUF_FMT_16_16_SINT] offen offset:3962 glc
+2f4a4fe9abc56468	tbuffer_store_format_d16_xyzw v[197:198], off, s[16:19], s104 format:[BUF_FMT_11_11_10_UINT] offset:2607 glc slc
+53a87fe8c20763a9	tbuffer_store_format_d16_xyzw v[7:8], v194, s[12:15], 41 format:[BUF_FMT_8_8_SNORM] idxen offset:2131 slc dlc
+694d70eb967b611b	tbuffer_load_format_d16_x v123, off, s[4:7], s27 format:110 offset:3433 glc slc
+245f86ea03ba60a6	tbuffer_store_format_d16_xyz v[186:187], v3, s[0:3], 38 format:80 offen offset:3876 glc slc
+813614ea9539438a	tbuffer_store_format_x v57, v[149:150], s[12:15], 10 format:[BUF_FMT_16_16_16_16_SNORM] idxen offen offset:1665 slc
+744e3cea5aae0303	tbuffer_store_format_x v174, off, s[12:15], s3 format:[BUF_FMT_16_16_16_16_FLOAT] offset:3700 glc
+56cc87e915790473	tbuffer_store_format_xyzw v[121:124], off, s[16:19], ttmp7 format:[BUF_FMT_10_10_10_2_UINT] offset:3158 glc dlc
+c5831ae9bf4702a4	tbuffer_load_format_xyz v[71:73], off, s[8:11], 36 format:[BUF_FMT_10_11_11_SINT] offset:965 dlc
+9b9facebbe7a6204	tbuffer_store_format_d16_x v122, v190, s[8:11], s4 format:117 offen offset:3995 slc dlc
+a2c813eb904c67ef	tbuffer_load_format_d16_xyzw v[76:77], off, s[28:31], src_pops_exiting_wave_id format:98 offset:2210 glc slc dlc
+d8c2bfeac5492441	tbuffer_store_format_d16_xyzw v[73:74], off, s[16:19], s65 format:87 offset:728 glc dlc
+3020c8ebbdb365fd	tbuffer_load_format_d16_x v179, v189, s[20:23], src_scc format:121 idxen offset:48 slc
+9f7d31eab0c16132	tbuffer_load_format_d16_xy v193, v[176:177], s[4:7], s50 format:[BUF_FMT_16_16_16_16_SINT] idxen offen offset:3487 glc slc
+97264ceb7929246e	tbuffer_store_format_d16_x v41, v121, s[16:19], ttmp2 format:105 idxen offset:1687
+ce515be9540a21c6	tbuffer_load_format_d16_xyzw v[10:11], v84, s[4:7], -6 format:[BUF_FMT_11_11_10_FLOAT] offen offset:462 glc
+f47592e91e072220	tbuffer_load_format_d16_xyz v[7:8], v[30:31], s[8:11], s32 format:[BUF_FMT_2_10_10_10_UNORM] idxen offen offset:1524 glc
+c02857e85998658b	tbuffer_store_format_d16_xyzw v[152:153], v89, s[20:23], 11 format:[BUF_FMT_16_SSCALED] idxen offset:2240 slc
+2c3b7bea6fc44216	tbuffer_load_format_xyzw v[196:199], v[111:112], s[8:11], s22 format:79 idxen offen offset:2860 slc
+c293aae8849b26bf	tbuffer_load_format_d16_xyz v[155:156], v132, s[24:27], 63 format:[BUF_FMT_32_SINT] offen offset:962 dlc
+e745a0e8558b0378	tbuffer_load_format_x v139, off, s[12:15], ttmp12 format:[BUF_FMT_32_UINT] offset:1511 glc
+deda9fe8b185045f	tbuffer_store_format_xyzw v[133:136], v177, s[16:19], s95 format:[BUF_FMT_8_8_SINT] offen offset:2782 glc dlc
+7f1597eb119726a7	tbuffer_store_format_d16_xyzw v[151:152], v17, s[24:27], 39 format:114 offen offset:1407
+535deeea3b120448	tbuffer_store_format_xyz v[18:20], v59, s[16:19], s72 format:93 offen offset:3411 glc
+f8b9e2eb95a02314	tbuffer_load_format_d16_xyz v[160:161], v[149:150], s[12:15], s20 format:124 idxen offen offset:2552 dlc
+a78903eb5239469b	tbuffer_load_format_xyzw v[57:60], off, s[24:27], 27 format:96 offset:2471 slc dlc
+1f6403ea31a5248f	tbuffer_load_format_d16_xyzw v[165:166], v49, s[16:19], 15 format:[BUF_FMT_32_32_FLOAT] idxen offset:1055 glc
+1fb240e80ca02426	tbuffer_load_format_d16_x v160, v[12:13], s[16:19], s38 format:[BUF_FMT_16_SNORM] idxen offen offset:543 dlc
+ab8291eb673f6628	tbuffer_load_format_d16_xy v63, off, s[24:27], s40 format:114 offset:683 slc dlc
+bc4925e92367464d	tbuffer_store_format_xy v[103:104], off, s[24:27], s77 format:[BUF_FMT_10_11_11_FLOAT] offset:2492 glc slc
+e4a795e87e15479d	tbuffer_store_format_xy v[21:22], v126, s[28:31], 29 format:[BUF_FMT_8_8_UINT] idxen offset:2020 slc dlc
+6a5d53eb644247cc	tbuffer_load_format_xyzw v[66:69], v100, s[28:31], -12 format:106 offen offset:3434 glc slc
+04a343ea052526a9	tbuffer_load_format_d16_xyzw v[37:38], v5, s[24:27], 41 format:[BUF_FMT_32_32_32_UINT] idxen offset:772 dlc
+88b209e9bd37636a	tbuffer_load_format_d16_xy v55, v[189:190], s[12:15], vcc_lo format:[BUF_FMT_10_11_11_SSCALED] idxen offen offset:648 slc dlc
+81b697eab405032d	tbuffer_store_format_xyzw v[5:8], v[180:181], s[12:15], s45 format:82 idxen offen offset:1665 dlc
+bfc314e8642d2679	tbuffer_store_format_d16_x v45, off, s[24:27], ttmp13 format:[BUF_FMT_8_SNORM] offset:959 glc dlc
+5a10b6eb72be2602	tbuffer_store_format_d16_xyz v[190:191], v114, s[24:27], s2 format:118 offen offset:90
+13507be80ea0621c	tbuffer_load_format_d16_xyzw v[160:161], v14, s[8:11], s28 format:[BUF_FMT_8_8_SNORM] offen offset:19 glc slc
+4b14c5eb1d9a64b1	tbuffer_store_format_d16_xy v154, v29, s[16:19], 49 format:120 offen offset:1099 slc
+439a36e9459b6195	tbuffer_store_format_d16_xyz v[155:156], v69, s[4:7], 21 format:[BUF_FMT_11_11_10_SNORM] offen offset:2627 slc dlc
+2d11f4e9bb412144	tbuffer_store_format_d16_x v65, v187, s[4:7], s68 format:[BUF_FMT_32_32_UINT] offen offset:301
+a5beb3eb23860792	tbuffer_load_format_xyzw v[134:137], v[35:36], s[28:31], 18 format:118 idxen offen offset:3749 dlc
+e3f8d7eb415a21ac	tbuffer_store_format_d16_xyzw v[90:91], v[65:66], s[4:7], 44 format:122 idxen offen offset:2275 glc dlc
+8914ebeb9304468e	tbuffer_load_format_xyzw v[4:7], v147, s[24:27], 14 format:125 offen offset:1161 slc
+c74273e820a5077e	tbuffer_load_format_xyzw v[165:168], off, s[28:31], exec_lo format:[BUF_FMT_8_8_UNORM] offset:711 glc
+8d08f3eb6a016652	tbuffer_load_format_d16_xyzw v[1:2], off, s[24:27], s82 format:126 offset:2189 slc
+b68191ebb07162b5	tbuffer_load_format_d16_xy v113, off, s[8:11], 53 format:114 offset:438 slc dlc
+56f5ceea464345ba	tbuffer_store_format_xyz v[67:69], v[70:71], s[20:23], 58 format:89 idxen offen offset:1366 glc slc dlc
+07ce2be93d3b42be	tbuffer_load_format_xyzw v[59:62], off, s[8:11], 62 format:[BUF_FMT_11_11_10_UNORM] offset:3591 glc slc dlc
+e2b526eb0b692203	tbuffer_store_format_d16_xyz v[105:106], v[11:12], s[8:11], s3 format:100 idxen offen offset:1506 dlc
+eb7dd9ea2d3427b2	tbuffer_load_format_d16_xy v52, v[45:46], s[28:31], 50 format:91 idxen offen offset:3563 glc
+542023ea8196259f	tbuffer_load_format_d16_xyzw v[150:151], v129, s[20:23], 31 format:[BUF_FMT_16_16_16_16_SSCALED] idxen offset:84
+92d68beb94aa45c6	tbuffer_load_format_xyzw v[170:173], v148, s[20:23], -6 format:113 offen offset:1682 glc slc dlc
+1e6effeb413e2305	tbuffer_store_format_d16_xyzw v[62:63], v65, s[12:15], s5 format:127 idxen offset:3614 glc
+5d581be912034578	tbuffer_load_format_xyzw v[3:6], v18, s[20:23], ttmp12 format:[BUF_FMT_10_11_11_SINT] offen offset:2141 glc slc
+a27a73eb996c2131	tbuffer_load_format_d16_xyzw v[108:109], v[153:154], s[4:7], s49 format:110 idxen offen offset:2722 glc
+a8fc0beb6e36439f	tbuffer_load_format_xyzw v[54:57], v[110:111], s[12:15], 31 format:97 idxen offen offset:3240 glc slc dlc
+bed24ce93d4f6553	tbuffer_store_format_d16_x v79, v61, s[20:23], s83 format:[BUF_FMT_11_11_10_UINT] offen offset:702 glc slc dlc
+bf77aaea9a872506	tbuffer_load_format_d16_xyz v[135:136], v[154:155], s[20:23], s6 format:85 idxen offen offset:1983 glc
+5dd698e99e47029f	tbuffer_load_format_x v71, v158, s[8:11], 31 format:[BUF_FMT_2_10_10_10_SNORM] offen offset:1629 glc dlc
+7b2f49eb6fc4018a	tbuffer_load_format_xy v[196:197], v111, s[4:7], 10 format:105 idxen offset:3963
+705826eab7270765	tbuffer_store_format_xyz v[39:41], v183, s[28:31], s101 format:[BUF_FMT_16_16_16_16_SSCALED] offen offset:2160 glc
+5faf5ee921c12496	tbuffer_store_format_d16_xyz v[193:194], v33, s[16:19], 22 format:[BUF_FMT_11_11_10_FLOAT] idxen offset:3935 dlc
+3e02b8e9355d2398	tbuffer_load_format_d16_x v93, off, s[12:15], 24 format:[BUF_FMT_2_10_10_10_SINT] offset:574
+13fd46e88d5b2625	tbuffer_store_format_d16_xyz v[91:92], v[141:142], s[24:27], s37 format:[BUF_FMT_16_SNORM] idxen offen offset:3347 glc dlc
+f64c06e888432782	tbuffer_store_format_d16_xyz v[67:68], off, s[28:31], 2 format:[BUF_FMT_INVALID] offset:3318 glc
+7486d4eaab574690	tbuffer_store_format_x v87, off, s[24:27], 16 format:90 offset:1652 slc dlc
+fcf123eb587627f7	tbuffer_load_format_d16_xyzw v[118:119], v[88:89], s[28:31], -4.0 format:100 idxen offen offset:508 glc dlc
+ee41e1e98ea24610	tbuffer_load_format_xy v[162:163], off, s[24:27], s16 format:[BUF_FMT_8_8_8_8_UINT] offset:494 glc slc
+6f5688e8438f0388	tbuffer_load_format_x v143, v67, s[12:15], 8 format:[BUF_FMT_8_8_SSCALED] offen offset:1647 glc
+18a8e2e897b246c4	tbuffer_load_format_xyz v[178:180], v151, s[24:27], -4 format:[BUF_FMT_16_16_SINT] idxen offset:2072 slc dlc
+e7b3c7eba12620c2	tbuffer_store_format_d16_xyzw v[38:39], v[161:162], s[0:3], -2 format:120 idxen offen offset:999 dlc
+08cd9beaa8a8614e	tbuffer_load_format_d16_xyzw v[168:169], off, s[4:7], s78 format:83 offset:3336 glc slc dlc
+ebbe7cea2524012c	tbuffer_store_format_x v36, v[37:38], s[4:7], s44 format:79 idxen offen offset:3819 dlc
+9047eeea110a45bf	tbuffer_store_format_xyz v[10:12], off, s[20:23], 63 format:93 offset:1936 glc slc
+ff9bc0eba71d6548	tbuffer_load_format_d16_x v29, v167, s[20:23], s72 format:120 offen offset:3071 slc dlc
+4424b1ea45c6235f	tbuffer_load_format_d16_xy v198, v69, s[12:15], s95 format:86 idxen offset:1092
+3da085eb3b880652	tbuffer_store_format_xy v[136:137], v59, s[24:27], s82 format:112 idxen offset:61 dlc
+74c361e9aabc208d	tbuffer_load_format_d16_xy v188, off, s[0:3], 13 format:[BUF_FMT_10_10_10_2_UNORM] offset:884 glc dlc
+4ed1f6e83232466f	tbuffer_store_format_xyz v[50:52], v50, s[24:27], ttmp3 format:[BUF_FMT_10_11_11_UNORM] offen offset:334 glc slc dlc
+06631ae89488047b	tbuffer_load_format_xyz v[136:138], v148, s[16:19], ttmp15 format:[BUF_FMT_8_USCALED] idxen offset:774 glc
+5f0052ea8d7b463a	tbuffer_load_format_xyz v[123:125], off, s[24:27], s58 format:[BUF_FMT_32_32_32_FLOAT] offset:95 slc
+2486dfe912a140fc	tbuffer_store_format_xyzw v[161:164], off, s[0:3], src_execz format:[BUF_FMT_8_8_8_8_SSCALED] offset:1572 slc dlc
+0f941eea2ec44700	tbuffer_store_format_xyz v[196:198], v46, s[28:31], s0 format:[BUF_FMT_16_16_16_16_USCALED] offen offset:1039 slc dlc
+6dad48e9354b2029	tbuffer_load_format_d16_x v75, v53, s[0:3], s41 format:[BUF_FMT_11_11_10_UINT] idxen offset:3437 dlc
+6c19dbea90b2062c	tbuffer_load_format_xyzw v[178:181], v144, s[24:27], s44 format:91 offen offset:2412
+521b39eb0c8345a3	tbuffer_load_format_xy v[131:132], v12, s[20:23], 35 format:103 offen offset:2898 slc
+4ea973ea75a72756	tbuffer_load_format_d16_xyzw v[167:168], v117, s[28:31], s86 format:78 idxen offset:2382 dlc
+7414bde852922498	tbuffer_store_format_d16_xy v146, v82, s[16:19], 24 format:[BUF_FMT_16_16_UNORM] offen offset:1140
+aa204deb4e9b61ca	tbuffer_store_format_d16_xy v155, v78, s[4:7], -10 format:105 idxen offset:170 slc
+5a1f81eb95396710	tbuffer_load_format_d16_xy v57, v149, s[28:31], s16 format:112 offen offset:3930 slc
+2691c3e8a3204792	tbuffer_load_format_xyzw v[32:35], v163, s[28:31], 18 format:[BUF_FMT_16_16_SNORM] offen offset:294 slc dlc
+305b19e9880041af	tbuffer_load_format_xy v[0:1], v136, s[4:7], 47 format:[BUF_FMT_10_11_11_SINT] offen offset:2864 glc slc
+734c70eb58c76560	tbuffer_load_format_d16_x v199, off, s[20:23], s96 format:110 offset:3187 glc slc
+298e6aea9243029e	tbuffer_load_format_xyz v[67:69], off, s[8:11], 30 format:[BUF_FMT_32_32_32_32_FLOAT] offset:3625 dlc
+43ff4ce87f70607d	tbuffer_store_format_d16_x v112, v[127:128], s[0:3], null format:[BUF_FMT_16_USCALED] idxen offen offset:3907 glc slc dlc
+1aa1e5ebab616397	tbuffer_store_format_d16_xy v97, v171, s[12:15], 23 format:124 idxen offset:282 slc dlc
+1d98e5eb0fc12587	tbuffer_store_format_d16_xy v193, v15, s[20:23], 7 format:124 offen offset:2077 dlc
+18c850e87957022b	tbuffer_load_format_x v87, off, s[8:11], s43 format:[BUF_FMT_16_SSCALED] offset:2072 glc dlc
+aab870eb4d0220c6	tbuffer_load_format_d16_x v2, v[77:78], s[0:3], -6 format:110 idxen offen offset:2218 dlc
+adf9a5ea4ac0648e	tbuffer_store_format_d16_xy v192, v[74:75], s[16:19], 14 format:84 idxen offen offset:2477 glc slc dlc
+1754f1e9542141a1	tbuffer_load_format_xy v[33:34], v84, s[4:7], 33 format:[BUF_FMT_32_32_UINT] offen offset:1047 glc slc
+7d69ade91721635c	tbuffer_store_format_d16_xy v33, v23, s[12:15], s92 format:[BUF_FMT_2_10_10_10_SSCALED] idxen offset:2429 glc slc
+1a9da6eaa0aa4729	tbuffer_store_format_xyz v[170:172], v160, s[28:31], s41 format:84 offen offset:3354 slc dlc
+8d27adeb2ec7401f	tbuffer_store_format_xy v[199:200], v46, s[0:3], s31 format:117 idxen offset:1933 slc
+fc3c47e94ab46794	tbuffer_store_format_d16_xyzw v[180:181], v[74:75], s[28:31], 20 format:[BUF_FMT_11_11_10_SSCALED] idxen offen offset:3324 slc
+832c1ce9bb1f6388	tbuffer_store_format_d16_x v31, v187, s[12:15], 8 format:[BUF_FMT_10_11_11_SINT] idxen offset:3203 slc
+1e712beab14704ca	tbuffer_load_format_xyzw v[71:74], v[177:178], s[16:19], -10 format:[BUF_FMT_16_16_16_16_UINT] idxen offen offset:286 glc
+8ab0f0e987170300	tbuffer_load_format_x v23, v[135:136], s[12:15], s0 format:[BUF_FMT_32_32_UINT] idxen offen offset:138 dlc
+e45fb3eb895544b9	tbuffer_load_format_xyzw v[85:88], v137, s[16:19], 57 format:118 offen offset:4068 glc slc
+2ccc8de815b24239	tbuffer_store_format_xy v[178:179], off, s[8:11], s57 format:[BUF_FMT_8_8_SSCALED] offset:3116 glc slc dlc
+c22f98e97cb54704	tbuffer_load_format_x v181, v124, s[28:31], s4 format:[BUF_FMT_2_10_10_10_SNORM] idxen offset:4034 slc
+bee83fea6c170749	tbuffer_store_format_xyzw v[23:26], v108, s[28:31], s73 format:[BUF_FMT_16_16_16_16_FLOAT] idxen offset:2238 glc dlc
+11cfb9e951ac0107	tbuffer_load_format_xy v[172:173], off, s[4:7], s7 format:[BUF_FMT_2_10_10_10_SINT] offset:3857 glc dlc
+dc943ae83f9a65af	tbuffer_load_format_d16_xyz v[154:155], v63, s[20:23], 47 format:[BUF_FMT_16_UNORM] offen offset:1244 slc dlc
+898840ea20be40fd	tbuffer_load_format_x v190, off, s[0:3], src_scc format:[BUF_FMT_32_32_32_UINT] offset:2185 slc dlc
+81be0feba69606ba	tbuffer_store_format_xyzw v[150:153], v[166:167], s[24:27], 58 format:97 idxen offen offset:3713 dlc
+3d1d2deb8647249c	tbuffer_store_format_d16_xy v71, v134, s[16:19], 28 format:101 offen offset:3389
+4b802dea7b24012d	tbuffer_store_format_xy v[36:37], off, s[4:7], s45 format:[BUF_FMT_16_16_16_16_UINT] offset:75 dlc
+367f62eb4d15203c	tbuffer_load_format_d16_xyz v[21:22], v[77:78], s[0:3], s60 format:108 idxen offen offset:3894 glc
+903564e8858340f8	tbuffer_store_format_x v131, v[133:134], s[0:3], 0.15915494 format:[BUF_FMT_16_SINT] idxen offen offset:1424 slc
+607093ea88b3254a	tbuffer_load_format_d16_xyzw v[179:180], v[136:137], s[20:23], s74 format:82 idxen offen offset:96 glc
+991956e88667666d	tbuffer_store_format_d16_xyz v[103:104], v134, s[24:27], ttmp1 format:[BUF_FMT_16_SSCALED] offen offset:2457 slc
+617db0eb7b400172	tbuffer_load_format_x v64, v[123:124], s[4:7], ttmp6 format:118 idxen offen offset:3425 glc
+eec358e8a2630428	tbuffer_load_format_x v99, off, s[16:19], s40 format:[BUF_FMT_16_UINT] offset:1006 glc dlc
+9df86ce853730786	tbuffer_store_format_x v115, v[83:84], s[28:31], 6 format:[BUF_FMT_16_FLOAT] idxen offen offset:2205 glc dlc
+27998ee862794564	tbuffer_store_format_xyz v[121:123], v98, s[20:23], s100 format:[BUF_FMT_8_8_SSCALED] offen offset:2343 slc dlc
+c00d56e9182f669f	tbuffer_store_format_d16_xyz v[47:48], off, s[24:27], 31 format:[BUF_FMT_11_11_10_SINT] offset:3520 slc
+637fe8eb45a66296	tbuffer_load_format_d16_x v166, v[69:70], s[8:11], 22 format:125 idxen offen offset:3939 glc slc
+64c5daeb8baa0129	tbuffer_load_format_xyz v[170:172], off, s[4:7], s41 format:123 offset:1380 glc dlc
+724d5ceaa840214e	tbuffer_store_format_d16_x v64, off, s[4:7], s78 format:[BUF_FMT_32_32_32_32_UINT] offset:3442 glc
+3e7a2feb6573677c	tbuffer_store_format_d16_xyzw v[115:116], v[101:102], s[28:31], m0 format:101 idxen offen offset:2622 glc slc
+86900fea50b60020	tbuffer_store_format_xyzw v[182:185], v80, s[0:3], s32 format:[BUF_FMT_16_16_16_16_UNORM] offen offset:134 dlc
+15213fe8ad6944af	tbuffer_store_format_xyzw v[105:108], v173, s[16:19], 47 format:[BUF_FMT_16_UNORM] idxen offset:277 slc
+6a9906e942a90267	tbuffer_store_format_xyz v[169:171], v66, s[8:11], s103 format:[BUF_FMT_10_11_11_USCALED] offen offset:2410 dlc
+427e24ea6064467e	tbuffer_store_format_x v100, v[96:97], s[24:27], exec_lo format:[BUF_FMT_16_16_16_16_SSCALED] idxen offen offset:3650 glc slc
+bf8e2ce92d8e00b2	tbuffer_store_format_x v142, off, s[0:3], 50 format:[BUF_FMT_11_11_10_UNORM] offset:3775 dlc
+69bbbfea00be2797	tbuffer_store_format_d16_xyzw v[190:191], v[0:1], s[28:31], 23 format:87 idxen offen offset:2921 dlc
+62145ceb5d1a2028	tbuffer_store_format_d16_x v26, v93, s[0:3], s40 format:107 offen offset:1122
+b52effebba304256	tbuffer_store_format_xyzw v[48:51], v186, s[8:11], s86 format:127 idxen offset:3765 slc
+fb5e97e86f9b026c	tbuffer_store_format_xyzw v[155:158], v111, s[8:11], ttmp0 format:[BUF_FMT_8_8_UINT] offen offset:3835 glc
+b69ab1e9020c2470	tbuffer_load_format_d16_xy v12, v2, s[16:19], ttmp4 format:[BUF_FMT_2_10_10_10_UINT] offen offset:2742 dlc
+a08463eb60876416	tbuffer_load_format_d16_xyzw v[135:136], off, s[16:19], s22 format:108 offset:1184 slc dlc
+44c09aea8058232b	tbuffer_load_format_d16_xyz v[88:89], off, s[12:15], s43 format:83 offset:68 glc dlc
+50ea79ea287601b6	tbuffer_load_format_xy v[118:119], v40, s[4:7], 54 format:79 idxen offset:2640 glc dlc
+bf16e8e9b86b6473	tbuffer_load_format_d16_x v107, v184, s[16:19], ttmp7 format:[BUF_FMT_8_8_8_8_SINT] offen offset:1727 slc
+9e6cfeea560020cc	tbuffer_store_format_d16_xyz v[0:1], v86, s[0:3], -12 format:95 idxen offset:3230 glc
+e8ff4de85e1124c0	tbuffer_store_format_d16_xy v17, v[94:95], s[16:19], 64 format:[BUF_FMT_16_USCALED] idxen offen offset:4072 glc dlc
+e49088eb6010215a	tbuffer_load_format_d16_x v16, v96, s[4:7], s90 format:113 offen offset:228 dlc
+d3a8f6e9b5bf2026	tbuffer_store_format_d16_xyz v[191:192], v181, s[0:3], s38 format:[BUF_FMT_32_32_UINT] idxen offset:2259 dlc
+6f5701ea0e8a65f3	tbuffer_load_format_d16_xy v138, v14, s[20:23], -1.0 format:[BUF_FMT_32_32_FLOAT] offen offset:1903 glc slc
+5967d8e943ad006d	tbuffer_load_format_x v173, v67, s[0:3], ttmp1 format:[BUF_FMT_8_8_8_8_SSCALED] idxen offset:1881 glc
+c1709aeaa05d22ec	tbuffer_load_format_d16_xyz v[93:94], v[160:161], s[8:11], src_shared_limit format:83 idxen offen offset:193 glc
+ef2336ea18904053	tbuffer_store_format_xyz v[144:146], v24, s[0:3], s83 format:[BUF_FMT_16_16_16_16_SINT] idxen offset:1007 slc
+6d323dea002803a1	tbuffer_store_format_xy v[40:41], v[0:1], s[12:15], 33 format:[BUF_FMT_16_16_16_16_FLOAT] idxen offen offset:621
+d428b7eac42b0273	tbuffer_store_format_xyzw v[43:46], v196, s[8:11], ttmp7 format:86 idxen offset:2260
+7b8571ea9b394527	tbuffer_load_format_xy v[57:58], off, s[20:23], s39 format:78 offset:1403 slc dlc
+f8e3b3e9262300f3	tbuffer_load_format_xyzw v[35:38], v38, s[0:3], -1.0 format:[BUF_FMT_2_10_10_10_UINT] idxen offset:1016 glc dlc
+8376b0e9bc160673	tbuffer_load_format_x v22, v[188:189], s[24:27], ttmp7 format:[BUF_FMT_2_10_10_10_UINT] idxen offen offset:1667 glc
+9ef5d8ebacc02082	tbuffer_load_format_d16_x v192, v[172:173], s[0:3], 2 format:123 idxen offen offset:1438 glc dlc
+00c9abe81d3d2395	tbuffer_load_format_d16_xyzw v[61:62], off, s[12:15], 21 format:[BUF_FMT_32_SINT] offset:2304 glc dlc
+c4b523e86a5b04cf	tbuffer_load_format_xyzw v[91:94], v[106:107], s[16:19], -15 format:[BUF_FMT_8_SSCALED] idxen offen offset:1476 dlc
+492a72eb8e68472b	tbuffer_load_format_xyz v[104:106], v142, s[28:31], s43 format:110 idxen offset:2633 slc
+b72901e90b9807ec	tbuffer_load_format_xy v[152:153], v11, s[28:31], src_shared_limit format:[BUF_FMT_10_11_11_USCALED] idxen offset:2487
+868be0eb73192239	tbuffer_load_format_d16_x v25, off, s[8:11], s57 format:124 offset:2950 dlc
+240411e962904164	tbuffer_load_format_xy v[144:145], off, s[4:7], s100 format:[BUF_FMT_10_11_11_UINT] offset:1060 slc
+63ca94e8153400be	tbuffer_store_format_x v52, off, s[0:3], 62 format:[BUF_FMT_8_8_UINT] offset:2659 glc dlc
+5f4b8fe8a35f6393	tbuffer_store_format_d16_xyzw v[95:96], off, s[12:15], 19 format:[BUF_FMT_8_8_SSCALED] offset:2911 glc slc
+b2a161ebb35e257b	tbuffer_load_format_d16_xy v94, v179, s[20:23], ttmp15 format:108 idxen offset:434 dlc
+6a25f9eaa947403e	tbuffer_load_format_xy v[71:72], v169, s[0:3], s62 format:95 idxen offset:1386 slc
+a9b8ade84a5905a8	tbuffer_store_format_xy v[89:90], v[74:75], s[20:23], 40 format:[BUF_FMT_32_SINT] idxen offen offset:2217 dlc
+1311afebaf8b4360	tbuffer_store_format_xyzw v[139:142], v175, s[12:15], s96 format:117 offen offset:275 slc
+f7f4acea39c2664a	tbuffer_store_format_d16_x v194, v[57:58], s[24:27], s74 format:85 idxen offen offset:1271 glc slc dlc
+27c470eb7d1b6743	tbuffer_load_format_d16_x v27, off, s[28:31], s67 format:110 offset:1063 glc slc dlc
+93f688e92fbd6143	tbuffer_load_format_d16_x v189, v[47:48], s[4:7], s67 format:[BUF_FMT_10_10_10_2_SINT] idxen offen offset:1683 glc slc dlc
+021e07ebb03e6608	tbuffer_store_format_d16_xyzw v[62:63], v176, s[24:27], s8 format:96 offen offset:3586 slc
+8b79fde95aaa4093	tbuffer_store_format_xy v[170:171], v[90:91], s[0:3], 19 format:[BUF_FMT_32_32_SINT] idxen offen offset:2443 glc slc
+ff5b55eb0d4560b6	tbuffer_store_format_d16_xy v69, v13, s[0:3], 54 format:106 offen offset:3071 glc slc
+87373be9b5b76077	tbuffer_load_format_d16_xyzw v[183:184], v[181:182], s[0:3], ttmp11 format:[BUF_FMT_11_11_10_USCALED] idxen offen offset:1927 slc
+3981d3e808ba400d	tbuffer_load_format_xyzw v[186:189], off, s[0:3], s13 format:[BUF_FMT_16_16_SSCALED] offset:313 slc dlc
+7d7e3be866086726	tbuffer_load_format_d16_xyzw v[8:9], v[102:103], s[28:31], s38 format:[BUF_FMT_16_UNORM] idxen offen offset:3709 glc slc
+c05aa4eaa098224a	tbuffer_store_format_d16_x v152, v160, s[8:11], s74 format:84 offen offset:2752 glc
+49e44aea4e4f0326	tbuffer_load_format_xyz v[79:81], v78, s[12:15], s38 format:[BUF_FMT_32_32_32_SINT] idxen offset:1097 glc dlc
+af2110e8855e6789	tbuffer_load_format_d16_x v94, v133, s[28:31], 9 format:[BUF_FMT_8_SNORM] idxen offset:431 slc
+9fdddfea26b525cc	tbuffer_store_format_d16_xyzw v[181:182], v38, s[20:23], -12 format:91 offen offset:3487 glc dlc
+481f41eb881a224e	tbuffer_load_format_d16_xy v26, v136, s[8:11], s78 format:104 offen offset:3912
+26abd3eb623b4726	tbuffer_load_format_xyzw v[59:62], v98, s[28:31], s38 format:122 idxen offset:2854 slc dlc
+623068eb8840266e	tbuffer_load_format_d16_x v64, v[136:137], s[24:27], ttmp2 format:109 idxen offen offset:98
+b728f1ea797f0193	tbuffer_load_format_xy v[127:128], v121, s[4:7], 19 format:94 idxen offset:2231
+9ca4d6e9999a2726	tbuffer_store_format_d16_xyz v[154:155], v153, s[28:31], s38 format:[BUF_FMT_8_8_8_8_USCALED] idxen offset:1180 dlc
+ac5d6fe932be0039	tbuffer_store_format_xyzw v[190:193], v50, s[0:3], s57 format:[BUF_FMT_10_10_10_2_SNORM] offen offset:3500 glc
+092f80e843c24321	tbuffer_load_format_x v194, v67, s[12:15], s33 format:[BUF_FMT_8_8_USCALED] idxen offset:3849 slc
+7f7b7aeb9a4547bd	tbuffer_load_format_xyz v[69:71], v[154:155], s[28:31], 61 format:111 idxen offen offset:2943 glc slc
+27220ae8127d04ad	tbuffer_load_format_xyz v[125:127], v18, s[16:19], 45 idxen offset:551
+f0b0caeb6d4720cb	tbuffer_load_format_d16_xyz v[71:72], v[109:110], s[0:3], -11 format:121 idxen offen offset:240 dlc
+b60b70ea1c804328	tbuffer_load_format_x v128, off, s[12:15], s40 format:78 offset:2998 slc
+4bef81e99c9f05b8	tbuffer_load_format_xy v[159:160], v156, s[20:23], 56 format:[BUF_FMT_10_10_10_2_UINT] idxen offset:3915 glc dlc
+45f8dce841b860a0	tbuffer_store_format_d16_x v184, v[65:66], s[0:3], 32 format:[BUF_FMT_16_16_UINT] idxen offen offset:2117 glc slc dlc
+56417be8b1922515	tbuffer_load_format_d16_xyzw v[146:147], off, s[20:23], s21 format:[BUF_FMT_8_8_SNORM] offset:342 glc
+4d6348eb3abd442a	tbuffer_load_format_x v189, v58, s[16:19], s42 format:105 idxen offset:845 glc slc
+bad177e951a44518	tbuffer_store_format_xyzw v[164:167], v81, s[20:23], s24 format:[BUF_FMT_10_10_10_2_USCALED] offen offset:442 glc slc dlc
+d84dceeb90512054	tbuffer_store_format_d16_xyz v[81:82], off, s[0:3], s84 format:121 offset:3544 glc
+d414afe9270424b0	tbuffer_store_format_d16_xyzw v[4:5], v39, s[16:19], 48 format:[BUF_FMT_2_10_10_10_SSCALED] offen offset:1236
+5b1662e9c13824a6	tbuffer_load_format_d16_xyz v[56:57], v193, s[16:19], 38 format:[BUF_FMT_10_10_10_2_UNORM] offen offset:1627
+ee19c0eb5d510739	tbuffer_load_format_x v81, v93, s[28:31], s57 format:120 offen offset:2542
+dccccde94f9b278c	tbuffer_store_format_d16_xy v155, off, s[28:31], 12 format:[BUF_FMT_8_8_8_8_SNORM] offset:3292 glc dlc
+4b0046e897602437	tbuffer_store_format_d16_xyz v[96:97], off, s[16:19], s55 format:[BUF_FMT_16_SNORM] offset:75
+dc9746eb00b2650a	tbuffer_store_format_d16_xyz v[178:179], v0, s[20:23], s10 format:104 offen offset:2012 slc dlc
+b6a342ea8f0c42be	tbuffer_load_format_xyz v[12:14], v143, s[8:11], 62 format:[BUF_FMT_32_32_32_UINT] idxen offset:950 slc dlc
+36e502eb392c07f6	tbuffer_load_format_xyz v[44:46], v57, s[28:31], 4.0 format:96 idxen offset:1334 glc dlc
+67b424ea4a7a02a3	tbuffer_store_format_x v122, v[74:75], s[8:11], 35 format:[BUF_FMT_16_16_16_16_SSCALED] idxen offen offset:1127 dlc
+69e352e9013f42c3	tbuffer_load_format_xyz v[63:65], v1, s[8:11], -3 format:[BUF_FMT_11_11_10_SINT] idxen offset:873 glc slc dlc
+3a52bfe99cb42036	tbuffer_store_format_d16_xyzw v[180:181], v156, s[0:3], s54 format:[BUF_FMT_2_10_10_10_SINT] offen offset:570 glc
+e19af0ea511525cf	tbuffer_load_format_d16_x v21, v81, s[20:23], -15 format:94 offen offset:2785 dlc
+00052ce9647d2544	tbuffer_store_format_d16_x v125, off, s[20:23], s68 format:[BUF_FMT_11_11_10_UNORM] offset:1280
+b7c51deac7bf2659	tbuffer_store_format_d16_xy v191, off, s[24:27], s89 format:[BUF_FMT_16_16_16_16_USCALED] offset:1463 glc dlc
+d09885e9c35563ae	tbuffer_store_format_d16_xy v85, v195, s[12:15], 46 format:[BUF_FMT_10_10_10_2_UINT] offen offset:2256 slc dlc
+2edcbdebb466628f	tbuffer_store_format_d16_xy v102, v180, s[8:11], 15 format:119 offen offset:3118 glc slc dlc
+c01fa2ea7754072d	tbuffer_load_format_xyz v[84:86], v119, s[28:31], s45 format:84 offen offset:4032
+31efe6e9a8b224bf	tbuffer_store_format_d16_xyz v[178:179], v168, s[16:19], 63 format:[BUF_FMT_8_8_8_8_UINT] idxen offset:3889 glc dlc
+3da372e96a702550	tbuffer_load_format_d16_xyz v[112:113], v106, s[20:23], s80 format:[BUF_FMT_10_10_10_2_USCALED] idxen offset:829 dlc
+fdc8a3e896c241fd	tbuffer_load_format_xyzw v[194:197], off, s[4:7], src_scc format:[BUF_FMT_32_UINT] offset:2301 glc slc dlc
+5ba037e95f2a405b	tbuffer_store_format_xyzw v[42:45], v95, s[0:3], s91 format:[BUF_FMT_11_11_10_SNORM] idxen offset:91 slc dlc
+158087e8291a217d	tbuffer_store_format_d16_xyzw v[26:27], off, s[4:7], null format:[BUF_FMT_8_8_USCALED] offset:21 dlc
+120476e877ab2497	tbuffer_store_format_d16_xyz v[171:172], off, s[16:19], 23 format:[BUF_FMT_8_8_UNORM] offset:1042
+5e15adea4e406005	tbuffer_store_format_d16_xy v64, v78, s[0:3], s5 format:85 offen offset:1374 slc
+742921ebc48944cb	tbuffer_load_format_xy v[137:138], v196, s[16:19], -11 format:100 idxen offset:2420 slc
+a909f6e90ac340a7	tbuffer_store_format_xyz v[195:197], off, s[0:3], 39 format:[BUF_FMT_32_32_UINT] offset:2473 slc
+a1af51e8998d227c	tbuffer_load_format_d16_xy v141, v153, s[8:11], m0 format:[BUF_FMT_16_SSCALED] idxen offset:4001 dlc
+e3d73ce91ba460ae	tbuffer_store_format_d16_x v164, v27, s[0:3], 46 format:[BUF_FMT_11_11_10_USCALED] offen offset:2019 glc slc dlc
+22ef09ea213407c2	tbuffer_load_format_xy v[52:53], v33, s[28:31], -2 format:[BUF_FMT_16_16_16_16_UNORM] idxen offset:3874 glc dlc
+f8fdcae9311b0687	tbuffer_load_format_xyz v[27:29], v[49:50], s[24:27], 7 format:[BUF_FMT_8_8_8_8_SNORM] idxen offen offset:3576 glc dlc
+8c5a8feb731d44c9	tbuffer_store_format_xyzw v[29:32], v115, s[16:19], -9 format:113 offen offset:2700 glc slc
+7012cce96894418f	tbuffer_store_format_x v148, v104, s[4:7], 15 format:[BUF_FMT_8_8_8_8_SNORM] offen offset:624 slc
+1e53d2e87c674069	tbuffer_load_format_xyz v[103:105], v124, s[0:3], s105 format:[BUF_FMT_16_16_SSCALED] offen offset:798 glc slc
+540978ea536d2603	tbuffer_load_format_d16_x v109, off, s[24:27], s3 format:79 offset:2388
+ade9a1eb179d4759	tbuffer_load_format_xy v[157:158], v23, s[28:31], s89 format:116 idxen offset:2477 glc slc dlc
+6f1f16e9217e6326	tbuffer_store_format_d16_xyz v[126:127], v33, s[12:15], s38 format:[BUF_FMT_10_11_11_UINT] offen offset:3951 slc
+319e0bea1133206d	tbuffer_load_format_d16_xyzw v[51:52], v17, s[0:3], ttmp1 format:[BUF_FMT_16_16_16_16_UNORM] offen offset:3633 dlc
+697502e98b7b07b9	tbuffer_load_format_xyz v[123:125], v[139:140], s[28:31], 57 format:[BUF_FMT_10_11_11_USCALED] idxen offen offset:1385 glc
+65ff6de98e1b4512	tbuffer_store_format_xy v[27:28], v[142:143], s[20:23], s18 format:[BUF_FMT_10_10_10_2_SNORM] idxen offen offset:3941 glc slc dlc
+1e7115e9a16d4068	tbuffer_store_format_xy v[109:110], v[161:162], s[0:3], s104 format:[BUF_FMT_10_11_11_UINT] idxen offen offset:286 glc slc
+ba28e6e97122415b	tbuffer_store_format_xyz v[34:36], v113, s[4:7], s91 format:[BUF_FMT_8_8_8_8_UINT] idxen offset:2234 slc
+665816eaab0125b8	tbuffer_store_format_d16_xyz v[1:2], v171, s[20:23], 56 format:[BUF_FMT_16_16_16_16_SNORM] offen offset:2150 glc
+c0db52ea0b3d2769	tbuffer_load_format_d16_xyz v[61:62], v11, s[28:31], s105 format:[BUF_FMT_32_32_32_FLOAT] offen offset:3008 glc dlc
+723599eb657a6606	tbuffer_load_format_d16_xy v122, v[101:102], s[24:27], s6 format:115 idxen offen offset:1394 slc
+1e56a3e90b7140c9	tbuffer_load_format_xyzw v[113:116], v11, s[0:3], -9 format:[BUF_FMT_2_10_10_10_USCALED] offen offset:1566 glc slc
+982d8aebb847032e	tbuffer_load_format_xyz v[71:73], v184, s[12:15], s46 format:113 idxen offset:3480
+bd2eace8473c409f	tbuffer_store_format_x v60, v71, s[0:3], 31 format:[BUF_FMT_32_SINT] idxen offset:3773 slc
+e0334de8765b62ee	tbuffer_store_format_d16_xy v91, v[118:119], s[8:11], src_private_limit format:[BUF_FMT_16_USCALED] idxen offen offset:992 slc
+649c2be939bf0148	tbuffer_load_format_xyzw v[191:194], v57, s[4:7], s72 format:[BUF_FMT_11_11_10_UNORM] offen offset:3172 dlc
+885b65e8bc55446f	tbuffer_store_format_xy v[85:86], v188, s[16:19], ttmp3 format:[BUF_FMT_16_SINT] offen offset:2952 glc slc
+885a97ea979a2133	tbuffer_store_format_d16_xyzw v[154:155], v151, s[4:7], s51 format:82 offen offset:2696 glc
+73b409e8326a61a1	tbuffer_load_format_d16_xy v106, v[50:51], s[4:7], 33 idxen offen offset:1139 slc dlc
+07843bea36104604	tbuffer_load_format_xyzw v[16:19], off, s[24:27], s4 format:[BUF_FMT_16_16_16_16_FLOAT] offset:1031 slc dlc
+155541ebae81045f	tbuffer_load_format_xy v[129:130], v174, s[16:19], s95 format:104 offen offset:1301 glc
+c166d8e908a70217	tbuffer_load_format_x v167, v8, s[8:11], s23 format:[BUF_FMT_8_8_8_8_SSCALED] idxen offset:1729 glc
+68c919e933212735	tbuffer_load_format_d16_xy v33, off, s[28:31], s53 format:[BUF_FMT_10_11_11_SINT] offset:2408 glc dlc
+44cb14e96c704750	tbuffer_store_format_x v112, off, s[28:31], s80 format:[BUF_FMT_10_11_11_UINT] offset:2884 glc slc dlc
+be8c00e815822452	tbuffer_load_format_d16_x v130, off, s[16:19], s82 format:[BUF_FMT_INVALID] offset:3262 dlc
+989675e827002352	tbuffer_store_format_d16_xy v0, v39, s[12:15], s82 format:[BUF_FMT_8_8_UNORM] offen offset:1688 dlc
+bf2637eb859f4451	tbuffer_store_format_xyzw v[159:162], v133, s[16:19], s81 format:102 idxen offset:1727 slc
+ee0c7ceb6abe4131	tbuffer_store_format_x v190, off, s[4:7], s49 format:111 offset:3310 slc
+48e0f1eb5073205e	tbuffer_load_format_d16_xy v115, v80, s[0:3], s94 format:126 idxen offset:72 glc dlc
+f10f5ce969364416	tbuffer_store_format_x v54, off, s[16:19], s22 format:[BUF_FMT_11_11_10_FLOAT] offset:4081 slc
+cd670feb59b14655	tbuffer_store_format_xyzw v[177:180], v89, s[24:27], s85 format:97 idxen offset:1997 glc slc
+52328de863b40646	tbuffer_store_format_xy v[180:181], v[99:100], s[24:27], s70 format:[BUF_FMT_8_8_SSCALED] idxen offen offset:594
+9f93fceb4c0706a2	tbuffer_store_format_x v7, v76, s[24:27], 34 format:127 offen offset:927 dlc
+fbfb51eb6606007e	tbuffer_load_format_xy v[6:7], v[102:103], s[0:3], exec_lo format:106 idxen offen offset:3067 glc dlc
+d77b80e827372115	tbuffer_load_format_d16_x v55, v[39:40], s[4:7], s21 format:[BUF_FMT_8_8_USCALED] idxen offen offset:3031 glc
+c3f348e94002675a	tbuffer_load_format_d16_x v2, v[64:65], s[28:31], s90 format:[BUF_FMT_11_11_10_UINT] idxen offen offset:963 glc slc dlc
+27cd7febb1a4205d	tbuffer_store_format_d16_xyzw v[164:165], off, s[0:3], s93 format:111 offset:3367 glc dlc
+3f0615e90fae40c3	tbuffer_store_format_xy v[174:175], off, s[0:3], -3 format:[BUF_FMT_10_11_11_UINT] offset:1599 slc
+1d0b03ebc58f0594	tbuffer_load_format_xyzw v[143:146], off, s[20:23], 20 format:96 offset:2845
+9e9bbce8c0a745b3	tbuffer_store_format_x v167, v192, s[20:23], 51 format:[BUF_FMT_16_16_UNORM] offen offset:2974 slc dlc
+97b4eeeb99b2610c	tbuffer_store_format_d16_xyz v[178:179], v[153:154], s[4:7], s12 format:125 idxen offen offset:1175 slc dlc
+4b3159e80e2a46b1	tbuffer_load_format_xy v[42:43], v[14:15], s[24:27], 49 format:[BUF_FMT_16_UINT] idxen offen offset:331 slc
+00acd6e9681766b9	tbuffer_store_format_d16_xyz v[23:24], v104, s[24:27], 57 format:[BUF_FMT_8_8_8_8_USCALED] idxen offset:3072 slc dlc
+8c2593e8c0b10417	tbuffer_load_format_xyzw v[177:180], v192, s[16:19], s23 format:[BUF_FMT_8_8_UINT] idxen offset:1420
+d72778e924bb07ee	tbuffer_load_format_x v187, v36, s[28:31], src_private_limit format:[BUF_FMT_10_10_10_2_SSCALED] idxen offset:2007
+80f72ae861150111	tbuffer_load_format_xyz v[21:23], v[97:98], s[4:7], s17 format:[BUF_FMT_8_UINT] idxen offen offset:1920 glc dlc
+498f97e8c12e6448	tbuffer_store_format_d16_xyzw v[46:47], off, s[16:19], s72 format:[BUF_FMT_8_8_UINT] offset:3913 slc dlc
+2fe0eeea90c22678	tbuffer_store_format_d16_xyz v[194:195], v144, s[24:27], ttmp12 format:93 idxen offset:47 glc dlc
+9a148eeb06186534	tbuffer_store_format_d16_xyz v[24:25], v6, s[20:23], s52 format:113 offen offset:1178 slc
+50468eea35b045f8	tbuffer_store_format_xyz v[176:178], off, s[20:23], 0.15915494 format:81 offset:1616 glc slc
+013a58ebbd1345ca	tbuffer_load_format_x v19, v[189:190], s[20:23], -10 format:107 idxen offen offset:2561 slc
+c43c72ea0e902358	tbuffer_load_format_d16_xyz v[144:145], v[14:15], s[12:15], s88 format:78 idxen offen offset:3268
+f40a0dea406c604e	tbuffer_store_format_d16_xy v108, off, s[0:3], s78 format:[BUF_FMT_16_16_16_16_UNORM] offset:2804 slc
+6dbe60e90b424632	tbuffer_load_format_x v66, v[11:12], s[24:27], s50 format:[BUF_FMT_10_10_10_2_UNORM] idxen offen offset:3693 slc dlc
+85d602eb60ab4048	tbuffer_load_format_xyz v[171:173], v96, s[0:3], s72 format:96 offen offset:1669 glc slc dlc
+2f6bfbea755567e7	tbuffer_load_format_d16_xyzw v[85:86], v117, s[28:31], src_flat_scratch_base_hi format:95 idxen offset:2863 glc slc
+8c436fe83ba620ba	tbuffer_store_format_d16_xyzw v[166:167], off, s[0:3], 58 format:[BUF_FMT_16_FLOAT] offset:908 glc
+8f372ceaa61527a7	tbuffer_store_format_d16_x v21, v[166:167], s[28:31], 39 format:[BUF_FMT_16_16_16_16_UINT] idxen offen offset:1935
+ce46ace83950670f	tbuffer_store_format_d16_x v80, off, s[28:31], s15 format:[BUF_FMT_32_SINT] offset:1742 glc slc
+2b44bae8952745a1	tbuffer_load_format_xyz v[39:41], off, s[20:23], 33 format:[BUF_FMT_16_16_UNORM] offset:1067 glc slc
+fccf35e84777209d	tbuffer_store_format_d16_xy v119, off, s[0:3], 29 format:[BUF_FMT_8_SINT] offset:4092 glc dlc
+5f5c1eeb7c4d2796	tbuffer_store_format_d16_xyz v[77:78], v124, s[28:31], 22 format:99 offen offset:3167 glc
+d6fca7ea0cc6067f	tbuffer_store_format_xyzw v[198:201], v[12:13], s[24:27], exec_hi format:84 idxen offen offset:3286 glc dlc
+34e33cea143e2595	tbuffer_store_format_d16_x v62, v20, s[20:23], 21 format:[BUF_FMT_16_16_16_16_FLOAT] idxen offset:820 glc dlc
+d2ee2eeb797023c4	tbuffer_store_format_d16_xyz v[112:113], v121, s[12:15], -4 format:101 idxen offset:3794 glc dlc
+89196ee9366b6269	tbuffer_store_format_d16_xyz v[107:108], v54, s[8:11], s105 format:[BUF_FMT_10_10_10_2_SNORM] offen offset:2441 slc
+6623b2e9358b6460	tbuffer_load_format_d16_xyz v[139:140], v53, s[16:19], s96 format:[BUF_FMT_2_10_10_10_UINT] idxen offset:870 slc
+2b3780ea087f667d	tbuffer_load_format_d16_x v127, v[8:9], s[24:27], null format:80 idxen offen offset:1835 slc
+426f9aea4b002003	tbuffer_load_format_d16_xyz v[0:1], v75, s[0:3], s3 format:83 idxen offset:3906 glc
+23a085eb5eb1663f	tbuffer_store_format_d16_xy v177, v94, s[24:27], s63 format:112 idxen offset:35 slc dlc
+0678b3e863bc447d	tbuffer_load_format_xyzw v[188:191], v[99:100], s[16:19], null format:[BUF_FMT_32_FLOAT] idxen offen offset:2054 glc slc
+9e7affea98a200af	tbuffer_store_format_xyzw v[162:165], v[152:153], s[0:3], 47 format:95 idxen offen offset:2718 glc
+56016feb09694732	tbuffer_store_format_xyzw v[105:108], off, s[28:31], s50 format:109 offset:342 slc
+a639f8e9912240ed	tbuffer_load_format_x v34, v[145:146], s[0:3], src_private_base format:[BUF_FMT_32_32_SINT] idxen offen offset:2470 slc
+db619ae8ac110496	tbuffer_load_format_xyz v[17:19], v172, s[16:19], 22 format:[BUF_FMT_8_8_SINT] idxen offset:475 glc
+900415ea8a384334	tbuffer_store_format_xy v[56:57], off, s[12:15], s52 format:[BUF_FMT_16_16_16_16_SNORM] offset:1168 slc
+5d152eea2a5f4148	tbuffer_store_format_xyz v[95:97], v42, s[4:7], s72 format:[BUF_FMT_16_16_16_16_UINT] offen offset:1373 slc
+96d0f3ea38b823a4	tbuffer_load_format_d16_xyzw v[184:185], v56, s[12:15], 36 format:94 offen offset:150 glc dlc
+c78298e8512a23ad	tbuffer_load_format_d16_x v42, off, s[12:15], 45 format:[BUF_FMT_8_8_SINT] offset:711 dlc
+e78809e97688663a	tbuffer_load_format_d16_xy v136, off, s[24:27], s58 format:[BUF_FMT_10_11_11_SSCALED] offset:2279 slc dlc
+96f9d1e970816358	tbuffer_load_format_d16_xy v129, v[112:113], s[12:15], s88 format:[BUF_FMT_8_8_8_8_USCALED] idxen offen offset:2454 glc slc dlc
+68abf7eb02954356	tbuffer_store_format_xyzw v[149:152], v2, s[12:15], s86 format:126 idxen offset:2920 slc dlc
+88795aebb64623b9	tbuffer_load_format_d16_xyz v[70:71], v[182:183], s[12:15], 57 format:107 idxen offen offset:2440 glc
+e07427ea502e6404	tbuffer_store_format_d16_xyzw v[46:47], v[80:81], s[16:19], s4 format:[BUF_FMT_16_16_16_16_SSCALED] idxen offen offset:1248 glc slc
+49d7a5e8b59024a3	tbuffer_store_format_d16_xy v144, v181, s[16:19], 35 format:[BUF_FMT_32_UINT] offen offset:1865 glc dlc
+7802c6eb6146043b	tbuffer_store_format_xyz v[70:72], off, s[16:19], s59 format:120 offset:632
+a71864e9a7896169	tbuffer_store_format_d16_x v137, v167, s[4:7], s105 format:[BUF_FMT_10_10_10_2_UNORM] offen offset:2215 slc
+b2e482e97c6205fd	tbuffer_load_format_xyz v[98:100], v124, s[20:23], src_scc format:[BUF_FMT_10_10_10_2_UINT] idxen offset:1202 glc dlc
+77121ee9369d03a4	tbuffer_store_format_xyz v[157:159], v54, s[12:15], 36 format:[BUF_FMT_10_11_11_SINT] offen offset:631
+9928c9e853a9249d	tbuffer_load_format_d16_xy v169, v83, s[16:19], 29 format:[BUF_FMT_16_16_USCALED] idxen offset:2201
+f965deea6c6b67f6	tbuffer_store_format_d16_xyz v[107:108], v108, s[28:31], 4.0 format:91 idxen offset:1529 glc slc
+940161e98c49429e	tbuffer_load_format_xy v[73:74], off, s[8:11], 30 format:[BUF_FMT_10_10_10_2_UNORM] offset:404 slc
+79b131e935a82382	tbuffer_load_format_d16_xy v168, v[53:54], s[12:15], 2 format:[BUF_FMT_11_11_10_SNORM] idxen offen offset:377 dlc
+92540ee92e59411e	tbuffer_store_format_xyz v[89:91], v46, s[4:7], s30 format:[BUF_FMT_10_11_11_SSCALED] offen offset:1170 glc slc
+bde354eb0fa44724	tbuffer_store_format_x v164, v15, s[28:31], s36 format:106 idxen offset:957 glc slc dlc
+9ea673eb8412418a	tbuffer_load_format_xyzw v[18:21], v132, s[4:7], 10 format:110 idxen offset:1694 slc dlc
+817dd7ea684a203f	tbuffer_store_format_d16_xyzw v[74:75], v[104:105], s[0:3], s63 format:90 idxen offen offset:3457 glc
+e13a59e80aab4601	tbuffer_load_format_xy v[171:172], v[10:11], s[24:27], s1 format:[BUF_FMT_16_UINT] idxen offen offset:2785 slc
+df6124ea7ea823f8	tbuffer_store_format_d16_x v168, v126, s[12:15], 0.15915494 format:[BUF_FMT_16_16_16_16_SSCALED] idxen offset:479 glc
+bec241e831ad21c9	tbuffer_load_format_d16_xy v173, off, s[4:7], -9 format:[BUF_FMT_16_SNORM] offset:702 glc dlc
+e691aaebc03f43f6	tbuffer_load_format_xyz v[63:65], v192, s[12:15], 4.0 format:117 offen offset:486 slc dlc
+e17867eb829a0402	tbuffer_store_format_xyzw v[154:157], v[130:131], s[16:19], s2 format:108 idxen offen offset:2273 glc
+076912eaaa526403	tbuffer_load_format_d16_xyz v[82:83], v170, s[16:19], s3 format:[BUF_FMT_16_16_16_16_SNORM] idxen offset:2311 glc slc
+41476fe86f4466bc	tbuffer_store_format_d16_xyzw v[68:69], off, s[24:27], 60 format:[BUF_FMT_16_FLOAT] offset:1857 glc slc
+15cd6fea46552752	tbuffer_store_format_d16_xyzw v[85:86], off, s[28:31], s82 format:[BUF_FMT_32_32_32_32_FLOAT] offset:3349 glc dlc
+0530b6e80d170572	tbuffer_store_format_xyz v[23:25], v[13:14], s[20:23], ttmp6 format:[BUF_FMT_32_FLOAT] idxen offen offset:5
+652b02eac0af4668	tbuffer_load_format_xyz v[175:177], v192, s[24:27], s104 format:[BUF_FMT_32_32_FLOAT] idxen offset:2917 slc
+20604cebb55643eb	tbuffer_store_format_x v86, v181, s[12:15], src_shared_base format:105 idxen offset:32 glc slc
+fb898ae8a6c20608	tbuffer_load_format_xyz v[194:196], off, s[24:27], s8 format:[BUF_FMT_8_8_SSCALED] offset:2555 dlc
+17b088eb9d5a2183	tbuffer_load_format_d16_x v90, v[157:158], s[4:7], 3 format:113 idxen offen offset:23 dlc
+8c20dbe9259345bd	tbuffer_load_format_xyzw v[147:150], v37, s[20:23], 61 format:[BUF_FMT_8_8_8_8_SSCALED] idxen offset:140 slc
+ddd5edea1f3f44ec	tbuffer_store_format_xy v[63:64], v31, s[16:19], src_shared_limit format:93 offen offset:1501 glc slc dlc
+941f98eb19aa0337	tbuffer_load_format_x v170, v25, s[12:15], s55 format:115 offen offset:3988
+d85ca9ea78926764	tbuffer_load_format_d16_xy v146, v120, s[28:31], s100 format:85 offen offset:3288 glc slc
+ff4b7ce870720196	tbuffer_store_format_x v114, off, s[4:7], 22 format:[BUF_FMT_8_8_SNORM] offset:3071 glc
+0a59d5e882614724	tbuffer_store_format_xy v[97:98], v130, s[28:31], s36 format:[BUF_FMT_16_16_SSCALED] offen offset:2314 glc slc
+97b533e8af9e249a	tbuffer_load_format_d16_xyzw v[158:159], v[175:176], s[16:19], 26 format:[BUF_FMT_8_SINT] idxen offen offset:1431 dlc
+c7e5b5e97e3e44b8	tbuffer_store_format_xy v[62:63], v126, s[16:19], 56 format:[BUF_FMT_2_10_10_10_UINT] idxen offset:1479 glc slc dlc
+84f623ea45722460	tbuffer_load_format_d16_xyzw v[114:115], v[69:70], s[16:19], s96 format:[BUF_FMT_16_16_16_16_SSCALED] idxen offen offset:1668 glc dlc
+f7e576eb783a221f	tbuffer_store_format_d16_xyz v[58:59], v120, s[8:11], s31 format:110 idxen offset:1527 glc dlc
+719c24e8131c4051	tbuffer_store_format_x v28, v19, s[0:3], s81 format:[BUF_FMT_8_SSCALED] offen offset:3185 slc dlc
+daff08e9050947b7	tbuffer_load_format_x v9, v[5:6], s[28:31], 55 format:[BUF_FMT_10_11_11_SSCALED] idxen offen offset:4058 glc slc dlc
+4026f0e9249344c1	tbuffer_load_format_x v147, v36, s[16:19], -1 format:[BUF_FMT_32_32_UINT] idxen offset:1600 slc
+935481e88455673f	tbuffer_load_format_d16_xy v85, v132, s[28:31], s63 format:[BUF_FMT_8_8_USCALED] offen offset:1171 glc slc
+5dbfcfe835654607	tbuffer_store_format_xyzw v[101:104], v[53:54], s[24:27], s7 format:[BUF_FMT_16_16_USCALED] idxen offen offset:3933 slc dlc
+0f804be94cbe033d	tbuffer_load_format_xyzw v[190:193], off, s[12:15], s61 format:[BUF_FMT_11_11_10_UINT] offset:15 dlc
+f17cabe92b444597	tbuffer_load_format_xyzw v[68:71], v[43:44], s[20:23], 23 format:[BUF_FMT_2_10_10_10_SSCALED] idxen offen offset:3313 glc slc
+1b5712e81d7a4451	tbuffer_load_format_xyz v[122:124], v29, s[16:19], s81 format:[BUF_FMT_8_SNORM] offen offset:1819 glc slc
+3c5813eb876a618b	tbuffer_load_format_d16_xyzw v[106:107], v135, s[4:7], 11 format:98 offen offset:2108 glc slc
+c98f20e893b146a5	tbuffer_load_format_x v177, off, s[24:27], 37 format:[BUF_FMT_8_SSCALED] offset:4041 slc dlc
+17eed0eab562208c	tbuffer_load_format_d16_x v98, v181, s[0:3], 12 format:90 idxen offset:3607 glc dlc
+fec5ceea4fbc6048	tbuffer_store_format_d16_xyz v[188:189], off, s[0:3], s72 format:89 offset:1534 glc slc dlc

@@ -46,6 +46,7 @@ pub enum Enc {
     Exp,
     Mubuf,
     Mimg,
+    Mtbuf,
 }
 
 impl Enc {
@@ -65,6 +66,7 @@ impl Enc {
             Self::Exp => "EXP",
             Self::Mubuf => "MUBUF",
             Self::Mimg => "MIMG",
+            Self::Mtbuf => "MTBUF",
         }
     }
 }
@@ -166,6 +168,8 @@ pub struct Mem {
     pub idxen: bool,
     pub lds: bool,
     pub tfe: bool,
+    /// MTBUF unified data / numeric format.
+    pub format: u8,
 }
 
 /// MIMG fields. `vaddr` lists the address VGPRs in order (all of them for the NSA form; the
