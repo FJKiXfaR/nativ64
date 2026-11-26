@@ -18,9 +18,12 @@
 //!
 //! Copies from a host-owned image upload it first (`host_to_image`).
 //!
-//! shortcuts: every texture with a view is hashed in every submission with draws, sampled or
-//! not (VIctory tracks pages with write guards: the upgrade path if the hash shows in a
-//! profile); a depth image is viewed as its depth aspect with its own format; planar and
+//! Only the textures whose pages were written since their last look are hashed
+//! (`watch.rs`: Linux write watches on the committed run, so that a texture that nobody
+//! touched costs one `ioctl`); where the kernel gives no watch every texture is hashed in every
+//! submission with draws, sampled or not.
+//!
+//! shortcuts: a depth image is viewed as its depth aspect with its own format; planar and
 //! multisampled textures and 1D textures have no image; a view type that the shader's variable
 //! does not match (a cube read through the 2D variable) cannot be detected here; the address
 //! of a placed view is read from words 10 and 11 of its description **[unverified]**.
@@ -308,6 +311,15 @@ fn upload(
         log_once(format!(
             "texture memory {at:#x} (+{size:#x}) is not committed: not uploaded"
         ));
+        return false;
+    }
+    // pages not written since the last look: the hash would be the same
+    let watched = table::committed_run(at).is_some_and(super::watch::watch);
+    if watched
+        && super::watch::written((at, at + size), &mut t.watched) == Some(false)
+        && t.uploaded.is_some()
+    {
+        stats.watch_skips += 1;
         return false;
     }
     // SAFETY: the range lies in committed, accessible pages of the memory table.
@@ -945,11 +957,11 @@ mod tests {
                 }
             }
         }
-        // the same memory again: hashed, not uploaded
-        let hashed = b.stats.hashed;
+        // the same memory again: not written (or hashed without a watch), not uploaded
+        let (hashed, skips) = (b.stats.hashed, b.stats.watch_skips);
         b.execute(std::slice::from_ref(&list));
         assert_eq!(uploads_of(&b, tex), 1);
-        assert!(b.stats.hashed > hashed);
+        assert!(b.stats.hashed > hashed || b.stats.watch_skips > skips);
         // changed bytes: uploaded again, and seen
         // SAFETY: committed, writable title memory of the texture.
         unsafe {

@@ -47,6 +47,8 @@ pub(super) struct TitleImage {
     pub(super) uploads: u32,
     /// The submission whose host memory was last looked at (hashed).
     pub(super) seen: u64,
+    /// What the write watch told this image's pages last.
+    pub(super) watched: super::watch::Cursor,
     /// The sampled views made of the image, by description.
     pub(super) views: HashMap<super::textures::TexKey, vk::ImageView>,
 }
@@ -128,6 +130,8 @@ pub struct ReplayStats {
     pub skipped: u64,
     /// Bytes of host texture memory hashed, and textures uploaded because the hash changed.
     pub hashed: u64,
+    /// Textures not hashed because the write watch saw none of their pages written.
+    pub watch_skips: u64,
     pub uploads: u64,
 }
 
@@ -540,6 +544,7 @@ impl<'g> VkBackend<'g> {
                 uploaded: None,
                 uploads: 0,
                 seen: 0,
+                watched: Default::default(),
                 views: HashMap::new(),
             })
         }

@@ -1264,6 +1264,28 @@ it says otherwise.
      refusal test no longer lists 17. Unverified: the flat value of the second triangle is
      `va`'s, the first's is `v0`'s (provoking vertices); blends and culling over the rectangle
      as the hardware does them; the real validation (frames 4+ of the title) is not done.
+   **As built (chunk 10b, part 4)** (`backend/vk/watch.rs`, `textures.rs::upload`). A texture
+   whose pages were not written since its last look is no longer hashed (`ReplayStats::watch_skips`
+   counts them; `hashed` still counts the bytes that are).
+   * Mechanism: one process-wide `userfaultfd` (`UFFD_USER_MODE_ONLY`, so unprivileged) with
+     `WP_ASYNC | WP_UNPOPULATED`, `UFFDIO_REGISTER_MODE_WP` on the whole committed run holding the
+     texture, and `PAGEMAP_SCAN` on `/proc/self/pagemap` (`PM_SCAN_WP_MATCHING |
+     PM_SCAN_CHECK_WPASYNC`, `PAGE_IS_WRITTEN`) that reports and re-protects the written pages.
+     Nothing faults into the process; writes by the kernel (`read(2)`) are tracked (tested).
+   * A scan clears the state of its pages, and textures share pages: the written regions are
+     kept in a log with the epoch of the scan, each `TitleImage` holds a `Cursor`, and a look
+     answers for the writes since the cursor's own previous look. A trimmed log, or a run
+     registered again, makes older cursors answer written.
+   * Fallback: any refusal (no `userfaultfd`, no `PAGEMAP_SCAN`, memory unmapped and mapped
+     again at the same address: the scan fails, the run is registered again) answers None,
+     taken as written, so the texture is hashed as before. The first look of a texture, and a
+     texture never uploaded, are hashed. Logged once when the watch is unavailable.
+   * Tests (no GPU): first look written, second not, one byte dirties only its page, a pipe
+     `read` into a watched page is reported, two lookers of one page, unmap and map again.
+   * Unverified: the title's real memory (the run size, the cost of the registrations on the
+     VMAs of the table); pages Vulkan imports as host pointers (`gpumem`) while watched; the
+     interaction with `mprotect` / `VirtualProtect` by the title on a registered run;
+     a `fork`ed child (the registration is not inherited as a watch).
 11. **Widening, driven by the corpus report**: f16 and `v_pk_*`, remaining VOP3, MIMG
     gather/compare/derivatives, FLAT/SCRATCH stores and atomics, ray queries, merged stages if a
     title uses them (none in this corpus: its stages are VS, PS, CS, mesh only).

@@ -20,6 +20,7 @@ mod rootblock;
 mod sampler;
 mod swapchain;
 mod textures;
+mod watch;
 
 use ash::vk;
 use std::collections::HashSet;
