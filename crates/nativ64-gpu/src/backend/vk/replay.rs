@@ -7,26 +7,48 @@
 //! Buffers are the title's own memory, so buffer copies are plain CPU copies at record time,
 //! in order with the staging of uploads (an upload reads its source bytes while recording).
 //! Every submission waits for the GPU to be idle.
+//!
+//! Chunk 10b: an image is owned by the host (its content is the title's memory, uploaded by
+//! `textures.rs` when it is sampled or copied from) until it has been a render or depth target,
+//! a clear or copy destination (then the GPU's: its host memory is stale and never read again).
 
 use super::format::{self, FormatInfo};
+use super::textures::TexState;
 use super::{log_once, vk_try, Gpu, Result, VkError};
 use crate::d3d12::command::{Command, CopyLocation, Rect};
 use crate::d3d12::descriptor::{depth_stencil_view, render_target_view};
 use crate::d3d12::resource::{info_of, ResourceDesc};
+use crate::texture::Layout;
 use ash::{vk, Device};
 use std::collections::{HashMap, HashSet};
 use std::mem::Discriminant;
 
 /// `D3D12_RESOURCE_DIMENSION_BUFFER` and `..._TEXTURE2D`.
 const BUFFER: u32 = 1;
+const TEXTURE1D: u32 = 2;
 const TEXTURE2D: u32 = 3;
+const TEXTURE3D: u32 = 4;
 
 /// A device-local image standing for one title resource.
 pub(super) struct TitleImage {
-    image: vk::Image,
-    memory: vk::DeviceMemory,
-    desc: ResourceDesc,
-    info: FormatInfo,
+    pub(super) image: vk::Image,
+    pub(super) memory: vk::DeviceMemory,
+    pub(super) desc: ResourceDesc,
+    pub(super) info: FormatInfo,
+    /// The title memory the resource covers (its GPU address).
+    pub(super) address: u64,
+    /// The console layout of the host memory; None when `texture/` does not handle it.
+    pub(super) layout: Option<Layout>,
+    /// The GPU wrote the image: the host memory is stale and never read again.
+    pub(super) gpu_owned: bool,
+    /// Hash of the host memory at the last upload.
+    pub(super) uploaded: Option<u64>,
+    /// How many times it was uploaded.
+    pub(super) uploads: u32,
+    /// The submission whose host memory was last looked at (hashed).
+    pub(super) seen: u64,
+    /// The sampled views made of the image, by description.
+    pub(super) views: HashMap<super::textures::TexKey, vk::ImageView>,
 }
 
 /// The copyable part of a `TitleImage`, used while recording.
@@ -37,24 +59,44 @@ pub(super) struct Img {
     pub(super) width: u32,
     pub(super) height: u32,
     pub(super) mips: u32,
+    /// Array layers (1 for a 3D image).
     pub(super) layers: u32,
+    /// Depth of a 3D image, 1 otherwise.
+    pub(super) depth: u32,
+}
+
+/// Mip levels of a texture description (0 means the whole chain).
+pub(super) fn mip_count(desc: &ResourceDesc) -> u32 {
+    match u32::from(desc.mip_levels) {
+        0 => {
+            let mut biggest = (desc.width as u32).max(desc.height);
+            if desc.dimension == TEXTURE3D {
+                biggest = biggest.max(u32::from(desc.depth_or_array_size));
+            }
+            32 - biggest.max(1).leading_zeros()
+        }
+        n => n,
+    }
 }
 
 impl TitleImage {
     fn img(&self) -> Img {
+        let n = u32::from(self.desc.depth_or_array_size).max(1);
+        let volume = self.desc.dimension == TEXTURE3D;
         Img {
             image: self.image,
             info: self.info,
             width: self.desc.width as u32,
             height: self.desc.height,
-            mips: u32::from(self.desc.mip_levels).max(1),
-            layers: u32::from(self.desc.depth_or_array_size).max(1),
+            mips: mip_count(&self.desc),
+            layers: if volume { 1 } else { n },
+            depth: if volume { n } else { 1 },
         }
     }
 }
 
 /// A host-visible buffer that lives until the submission using it is done.
-struct Staging {
+pub(super) struct Staging {
     buffer: vk::Buffer,
     memory: vk::DeviceMemory,
 }
@@ -73,6 +115,9 @@ pub struct ReplayStats {
     pub draw_skips: super::draw::DrawSkips,
     pub dispatches: u64,
     pub skipped: u64,
+    /// Bytes of host texture memory hashed, and textures uploaded because the hash changed.
+    pub hashed: u64,
+    pub uploads: u64,
 }
 
 /// A read-back image: `bytes` are rows of `width * bytes_per_texel`, top row first.
@@ -86,7 +131,11 @@ pub struct Readback {
 /// The Vulkan replay of recorded streams, owning the images of the title's resources.
 pub struct VkBackend<'g> {
     pub(super) gpu: &'g Gpu,
-    images: HashMap<usize, Option<TitleImage>>,
+    pub(super) images: HashMap<usize, Option<TitleImage>>,
+    /// Images of placed views (memory with a description, no resource), by address and
+    /// description words.
+    pub(super) placed: HashMap<super::textures::PlacedKey, Option<TitleImage>>,
+    pub(super) tex: TexState,
     pub(super) draw: super::draw::DrawState<'g>,
     pub stats: ReplayStats,
     logged: HashSet<Discriminant<Command>>,
@@ -162,11 +211,62 @@ pub(super) fn view_range(img: Img, desc: Option<[u32; 6]>, depth: bool) -> (u32,
     }
 }
 
+/// A host-visible staging buffer holding `data`, kept in `staging` until the submission is done.
+pub(super) fn stage_bytes(g: &Gpu, data: &[u8], staging: &mut Vec<Staging>) -> Result<vk::Buffer> {
+    let d = &g.device;
+    // SAFETY: handles are destroyed in `execute` or right here on failure.
+    unsafe {
+        let buffer = vk_try(
+            "vkCreateBuffer",
+            d.create_buffer(
+                &vk::BufferCreateInfo::default()
+                    .size(data.len().max(1) as u64)
+                    .usage(vk::BufferUsageFlags::TRANSFER_SRC),
+                None,
+            ),
+        )?;
+        let req = d.get_buffer_memory_requirements(buffer);
+        let flags = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
+        let Some(ty) = g.memory_type(req.memory_type_bits, flags) else {
+            d.destroy_buffer(buffer, None);
+            return Err(VkError::NoMemoryType);
+        };
+        let memory = match d.allocate_memory(
+            &vk::MemoryAllocateInfo::default()
+                .allocation_size(req.size)
+                .memory_type_index(ty),
+            None,
+        ) {
+            Ok(m) => m,
+            Err(e) => {
+                d.destroy_buffer(buffer, None);
+                return Err(VkError::Vk("vkAllocateMemory", e));
+            }
+        };
+        let filled = d
+            .bind_buffer_memory(buffer, memory, 0)
+            .and_then(|_| d.map_memory(memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty()))
+            .map(|p| {
+                std::ptr::copy_nonoverlapping(data.as_ptr(), p.cast::<u8>(), data.len());
+                d.unmap_memory(memory);
+            });
+        if let Err(e) = filled {
+            d.destroy_buffer(buffer, None);
+            d.free_memory(memory, None);
+            return Err(VkError::Vk("staging", e));
+        }
+        staging.push(Staging { buffer, memory });
+        Ok(buffer)
+    }
+}
+
 impl<'g> VkBackend<'g> {
     pub fn new(gpu: &'g Gpu) -> Self {
         VkBackend {
             gpu,
             images: HashMap::new(),
+            placed: HashMap::new(),
+            tex: TexState::default(),
             draw: super::draw::DrawState::new(gpu),
             stats: ReplayStats::default(),
             logged: HashSet::new(),
@@ -186,7 +286,11 @@ impl<'g> VkBackend<'g> {
             .filter(|c| matches!(c, Command::Draw { .. } | Command::DrawIndexed { .. }))
             .count();
         self.draw.begin(draws);
+        self.tex.submission += 1;
         let r = gpu.submit_once(|d, cb| {
+            if draws > 0 {
+                self.sync_textures(d, cb, &mut staging);
+            }
             for list in lists {
                 self.stats.lists += 1;
                 self.draw.reset_list();
@@ -233,7 +337,7 @@ impl<'g> VkBackend<'g> {
 
     pub(super) fn image(&mut self, d: &Device, cb: vk::CommandBuffer, res: usize) -> Option<Img> {
         // SAFETY: `res` was recorded by a list method from a live resource of ours.
-        let (desc, _) = unsafe { info_of(res as *mut _) }?;
+        let (desc, address) = unsafe { info_of(res as *mut _) }?;
         if let Some(Some(t)) = self.images.get(&res) {
             if t.desc == desc {
                 return Some(t.img());
@@ -241,13 +345,22 @@ impl<'g> VkBackend<'g> {
         }
         if let Some(Some(old)) = self.images.remove(&res) {
             self.draw.forget_image(res);
+            // the descriptors that held its views are written again
+            self.tex.dirty_from = 0;
             // SAFETY: the GPU is idle between submissions; this one has not used it yet.
             unsafe { self.destroy(old) };
         }
-        let made = self.make_image(d, cb, desc);
+        let made = self.make_image(d, cb, desc, address);
         let out = made.as_ref().map(TitleImage::img);
         self.images.insert(res, made);
         out
+    }
+
+    /// Marks the image of `res` as written by the GPU (a target, a clear or copy destination).
+    pub(super) fn own(&mut self, res: usize) {
+        if let Some(Some(t)) = self.images.get_mut(&res) {
+            t.gpu_owned = true;
+        }
     }
 
     /// The description of the image made for `res`, if there is one.
@@ -255,13 +368,18 @@ impl<'g> VkBackend<'g> {
         self.images.get(&res)?.as_ref().map(|t| t.desc)
     }
 
-    fn make_image(
+    pub(super) fn make_image(
         &self,
         d: &Device,
         cb: vk::CommandBuffer,
         desc: ResourceDesc,
+        address: u64,
     ) -> Option<TitleImage> {
-        if desc.dimension != TEXTURE2D {
+        if desc.dimension == TEXTURE1D {
+            log_once("no image for a 1D texture".into());
+            return None;
+        }
+        if desc.dimension != TEXTURE2D && desc.dimension != TEXTURE3D {
             log_once(format!(
                 "no image for resource dimension {}",
                 desc.dimension
@@ -272,6 +390,17 @@ impl<'g> VkBackend<'g> {
             log_once(format!("no Vulkan format for DXGI format {}", desc.format));
             return None;
         };
+        if info.compressed && !self.gpu.caps.bc {
+            log_once("no image in a BC format: the device lacks textureCompressionBC".into());
+            return None;
+        }
+        if desc.sample_count > 1 {
+            log_once(format!(
+                "no image for a multisampled texture ({} samples)",
+                desc.sample_count
+            ));
+            return None;
+        }
         let (Ok(w), h) = (u32::try_from(desc.width), desc.height) else {
             return None;
         };
@@ -286,16 +415,29 @@ impl<'g> VkBackend<'g> {
         } else if desc.flags & format::FLAG_RENDER_TARGET != 0 {
             usage |= vk::ImageUsageFlags::COLOR_ATTACHMENT;
         }
+        let n = u32::from(desc.depth_or_array_size).max(1);
+        let volume = desc.dimension == TEXTURE3D;
+        // views may reinterpret the format (typeless, sRGB); 2D arrays of 6 layers or a
+        // multiple may be cubes
+        let mut flags = vk::ImageCreateFlags::MUTABLE_FORMAT;
+        if !volume && n % 6 == 0 && u64::from(h) == desc.width {
+            flags |= vk::ImageCreateFlags::CUBE_COMPATIBLE;
+        }
         let ci = vk::ImageCreateInfo::default()
-            .image_type(vk::ImageType::TYPE_2D)
+            .flags(flags)
+            .image_type(if volume {
+                vk::ImageType::TYPE_3D
+            } else {
+                vk::ImageType::TYPE_2D
+            })
             .format(info.format)
             .extent(vk::Extent3D {
                 width: w,
                 height: h,
-                depth: 1,
+                depth: if volume { n } else { 1 },
             })
-            .mip_levels(u32::from(desc.mip_levels).max(1))
-            .array_layers(u32::from(desc.depth_or_array_size).max(1))
+            .mip_levels(mip_count(&desc))
+            .array_layers(if volume { 1 } else { n })
             .samples(vk::SampleCountFlags::TYPE_1)
             .tiling(vk::ImageTiling::OPTIMAL)
             .usage(usage)
@@ -355,18 +497,35 @@ impl<'g> VkBackend<'g> {
                 &[],
                 &b,
             );
+            let layout = match Layout::new(&desc) {
+                Ok(l) => Some(l),
+                Err(e) => {
+                    log_once(format!("no host layout for {desc:?}: {e}"));
+                    None
+                }
+            };
             Some(TitleImage {
                 image,
                 memory,
                 desc,
                 info,
+                address,
+                layout,
+                gpu_owned: false,
+                uploaded: None,
+                uploads: 0,
+                seen: 0,
+                views: HashMap::new(),
             })
         }
     }
 
     /// # Safety
     /// The GPU no longer uses the image.
-    unsafe fn destroy(&self, t: TitleImage) {
+    pub(super) unsafe fn destroy(&self, t: TitleImage) {
+        for v in t.views.values() {
+            self.gpu.device.destroy_image_view(*v, None);
+        }
         self.gpu.device.destroy_image(t.image, None);
         self.gpu.device.free_memory(t.memory, None);
     }
@@ -382,53 +541,7 @@ impl<'g> VkBackend<'g> {
     }
 
     fn staging(&self, data: &[u8], staging: &mut Vec<Staging>) -> Result<vk::Buffer> {
-        let g = self.gpu;
-        let d = &g.device;
-        // SAFETY: handles are destroyed in `execute` or right here on failure.
-        unsafe {
-            let buffer = vk_try(
-                "vkCreateBuffer",
-                d.create_buffer(
-                    &vk::BufferCreateInfo::default()
-                        .size(data.len().max(1) as u64)
-                        .usage(vk::BufferUsageFlags::TRANSFER_SRC),
-                    None,
-                ),
-            )?;
-            let req = d.get_buffer_memory_requirements(buffer);
-            let flags =
-                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
-            let Some(ty) = g.memory_type(req.memory_type_bits, flags) else {
-                d.destroy_buffer(buffer, None);
-                return Err(VkError::NoMemoryType);
-            };
-            let memory = match d.allocate_memory(
-                &vk::MemoryAllocateInfo::default()
-                    .allocation_size(req.size)
-                    .memory_type_index(ty),
-                None,
-            ) {
-                Ok(m) => m,
-                Err(e) => {
-                    d.destroy_buffer(buffer, None);
-                    return Err(VkError::Vk("vkAllocateMemory", e));
-                }
-            };
-            let filled = d
-                .bind_buffer_memory(buffer, memory, 0)
-                .and_then(|_| d.map_memory(memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty()))
-                .map(|p| {
-                    std::ptr::copy_nonoverlapping(data.as_ptr(), p.cast::<u8>(), data.len());
-                    d.unmap_memory(memory);
-                });
-            if let Err(e) = filled {
-                d.destroy_buffer(buffer, None);
-                d.free_memory(memory, None);
-                return Err(VkError::Vk("staging", e));
-            }
-            staging.push(Staging { buffer, memory });
-            Ok(buffer)
-        }
+        stage_bytes(self.gpu, data, staging)
     }
 
     fn record(
@@ -490,6 +603,7 @@ impl<'g> VkBackend<'g> {
                 let Some(img) = self.image(d, cb, v.resource) else {
                     return self.skip(c, "the resource has no image");
                 };
+                self.own(v.resource);
                 let desc = (v.described != 0).then_some(v.desc);
                 let (mip, layer, n) = view_range(img, desc, false);
                 if !covers(rects, mip_size(img.width, mip), mip_size(img.height, mip)) {
@@ -520,6 +634,7 @@ impl<'g> VkBackend<'g> {
                 let Some(img) = self.image(d, cb, v.resource) else {
                     return self.skip(c, "the resource has no image");
                 };
+                self.own(v.resource);
                 let mut aspect = vk::ImageAspectFlags::empty();
                 if flags & 1 != 0 {
                     aspect |= vk::ImageAspectFlags::DEPTH;
@@ -579,7 +694,7 @@ impl<'g> VkBackend<'g> {
                 };
                 self.stats.copies += 1;
             }
-            C::CopyResource { dst, src, .. } => self.copy_resource(d, cb, c, *dst, *src),
+            C::CopyResource { dst, src, .. } => self.copy_resource(d, cb, staging, c, *dst, *src),
             C::CopyTextureRegion {
                 dst,
                 x,
@@ -625,6 +740,7 @@ impl<'g> VkBackend<'g> {
         &mut self,
         d: &Device,
         cb: vk::CommandBuffer,
+        staging: &mut Vec<Staging>,
         c: &Command,
         dst: usize,
         src: usize,
@@ -661,6 +777,11 @@ impl<'g> VkBackend<'g> {
         let (Some(di), Some(si)) = (self.image(d, cb, dst), self.image(d, cb, src)) else {
             return self.skip(c, "the resource has no image");
         };
+        if di.depth > 1 || si.depth > 1 {
+            return self.skip(c, "a 3D texture copy");
+        }
+        self.host_to_image(d, cb, staging, src);
+        self.own(dst);
         let regions: Vec<vk::ImageCopy> = (0..si.mips)
             .map(|m| {
                 let layers = vk::ImageSubresourceLayers {
@@ -716,6 +837,10 @@ impl<'g> VkBackend<'g> {
         let Some(di) = self.image(d, cb, dres) else {
             return self.skip(c, "the destination has no image");
         };
+        if di.depth > 1 {
+            return self.skip(c, "a 3D texture copy");
+        }
+        self.own(dres);
         let (dmip, dlayer) = (dsub % di.mips, dsub / di.mips);
         if dlayer >= di.layers {
             return self.skip(c, "subresource out of range");
@@ -742,6 +867,7 @@ impl<'g> VkBackend<'g> {
                 ..
             } => {
                 if di.info.aspect != vk::ImageAspectFlags::COLOR
+                    || di.info.compressed
                     || source_box.is_some_and(|b| b[0] != 0 || b[1] != 0 || b[2] != 0)
                 {
                     return self.skip(c, "depth upload or offset source box");
@@ -806,6 +932,7 @@ impl<'g> VkBackend<'g> {
                 let Some(si) = self.image(d, cb, sres) else {
                     return self.skip(c, "the source has no image");
                 };
+                self.host_to_image(d, cb, staging, sres);
                 let (smip, slayer) = (ssub % si.mips, ssub / si.mips);
                 let (sw, sh) = (mip_size(si.width, smip), mip_size(si.height, smip));
                 let b = source_box.unwrap_or([0, 0, 0, sw, sh, 1]);
@@ -814,7 +941,10 @@ impl<'g> VkBackend<'g> {
                     && b[4] <= sh
                     && x + w <= mip_size(di.width, dmip)
                     && y + h <= mip_size(di.height, dmip);
+                let blocks = [x, y, b[0], b[1]].iter().any(|v| v % 4 != 0);
                 if slayer >= si.layers
+                    || si.depth > 1
+                    || (di.info.compressed && blocks)
                     || si.info.bytes != di.info.bytes
                     || si.info.aspect != di.info.aspect
                     || w == 0
@@ -950,6 +1080,12 @@ impl Drop for VkBackend<'_> {
                     self.destroy(t);
                 }
             }
+            for (_, t) in std::mem::take(&mut self.placed) {
+                if let Some(t) = t {
+                    self.destroy(t);
+                }
+            }
+            self.tex.destroy(&self.gpu.device);
         }
     }
 }
@@ -978,12 +1114,17 @@ pub(super) mod tests {
             layout: 0,
             flags,
         };
+        resource_at(0x1000, desc)
+    }
+
+    /// A resource of description `desc` over the memory at `address`.
+    pub(in crate::backend::vk) fn resource_at(address: u64, desc: ResourceDesc) -> usize {
         let mut out: *mut c_void = std::ptr::null_mut();
         // SAFETY: `desc` and `out` are valid for the call.
         let hr = unsafe {
             create_at_address(
                 std::ptr::null_mut(),
-                0x1000,
+                address,
                 &desc,
                 0,
                 std::ptr::null(),

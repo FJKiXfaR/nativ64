@@ -1,11 +1,12 @@
 //! Graphics pipelines from the title's pipeline objects (chunk 10a, `docs/shaders.md`,
 //! Chunk 10 design): the VS and PS translated as a linked pair (`io::translate_pair`; a missing
-//! PS is a depth-only pipeline), the fixed state read by `pipeline_state`, the formats from the
+//! PS is a depth-only pipeline; the pair's static samplers are the immutable samplers of set 1
+//! and pick the pipeline layout, chunk 10b), the fixed state read by `pipeline_state`, the formats from the
 //! description, and dynamic rendering (no render pass).
 //!
 //! A pipeline is built at the first draw that uses it and cached by its serial with its outcome:
 //! `Built`, or `Failed(reason)` logged once, after which its draws are skipped. A pipeline is
-//! refused (with the reason) when it has a stage other than VS and PS, needs images (10b), reads
+//! refused (with the reason) when it has a stage other than VS and PS, reads
 //! an address the backend cannot translate, uses a logic op, dual-source blending, conservative
 //! rasterization, multisampling, a patch or adjacency topology, an instance step rate above 1,
 //! or a format with no Vulkan mapping. Set `NATIV64_SHADER_VALIDATE` to have every module run
@@ -21,7 +22,9 @@
 //! flipped, which keeps the D3D screen orientation); an element whose format has no vertex
 //! mapping fails the pipeline.
 
+use super::bindless::{Bindless, Layouts};
 use super::format::{self, FormatInfo, FLAG_DEPTH_STENCIL, FLAG_RENDER_TARGET};
+use super::sampler::SamplerCache;
 use super::{log_once, Gpu};
 use crate::d3d12::pipeline::{GraphicsState, PipelineData};
 use crate::d3d12::pipeline_state::{fixed_state, Blend, FixedState, StencilFace};
@@ -35,6 +38,8 @@ use std::collections::HashMap;
 #[derive(Clone)]
 pub struct Built {
     pub pipeline: vk::Pipeline,
+    /// The pipeline layout and the set of static samplers to bind at set 1, if any.
+    pub layouts: Layouts,
     /// The layout rows of both stages, to fill the root block.
     pub rows: Vec<RootLayout>,
     /// Per render target slot: its DXGI format (0: no target) and Vulkan format.
@@ -68,11 +73,16 @@ impl<'g> Pipelines<'g> {
     }
 
     /// The outcome for `pd`, building it the first time.
-    pub fn get(&mut self, layout: vk::PipelineLayout, pd: &PipelineData) -> &Outcome {
+    pub fn get(
+        &mut self,
+        bindless: &mut Bindless<'_>,
+        samplers: &mut SamplerCache<'_>,
+        pd: &PipelineData,
+    ) -> &Outcome {
         let gpu = self.gpu;
         self.map
             .entry(pd.serial)
-            .or_insert_with(|| match build(gpu, layout, pd) {
+            .or_insert_with(|| match build(gpu, bindless, samplers, pd) {
                 Ok(b) => Outcome::Built(b),
                 Err(why) => {
                     log_once(format!("pipeline {} is not replayed: {why}", pd.serial));
@@ -341,7 +351,12 @@ fn color_formats(g: &GraphicsState) -> Result<Vec<(u32, vk::Format)>, String> {
         .collect()
 }
 
-fn build(gpu: &Gpu, layout: vk::PipelineLayout, pd: &PipelineData) -> Result<Built, String> {
+fn build(
+    gpu: &Gpu,
+    bindless: &mut Bindless<'_>,
+    samplers: &mut SamplerCache<'_>,
+    pd: &PipelineData,
+) -> Result<Built, String> {
     let g = pd
         .graphics
         .as_ref()
@@ -372,13 +387,12 @@ fn build(gpu: &Gpu, layout: vk::PipelineLayout, pd: &PipelineData) -> Result<Bui
         ),
     };
     for t in std::iter::once(&tv).chain(tp.iter()) {
-        if t.images {
-            return Err("a stage that reads images or samplers (chunk 10b)".into());
-        }
         if t.memory_addresses {
             return Err("a stage that reads memory through an address it loaded".into());
         }
     }
+    // the pair's static samplers: both stages carry the whole list
+    let layouts = bindless.layouts(&tv.samplers, samplers)?;
     let vio = io::stage_io(&vs, &[], None).ok_or("the vertex stage has no I/O")?;
     let input = vertex_input(g, &vio)?;
     let color = color_formats(g)?;
@@ -518,7 +532,7 @@ fn build(gpu: &Gpu, layout: vk::PipelineLayout, pd: &PipelineData) -> Result<Bui
             .depth_stencil_state(&ds)
             .color_blend_state(&cb)
             .dynamic_state(&dy)
-            .layout(layout)
+            .layout(layouts.layout)
             .push_next(&mut rendering);
         let made = d.create_graphics_pipelines(vk::PipelineCache::null(), &[info], None);
         d.destroy_shader_module(vm, None);
@@ -531,6 +545,7 @@ fn build(gpu: &Gpu, layout: vk::PipelineLayout, pd: &PipelineData) -> Result<Bui
         };
         Ok(Built {
             pipeline,
+            layouts,
             rows,
             color,
             depth,

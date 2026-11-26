@@ -380,15 +380,73 @@ pub fn translate_stage(
     spirv::translate_io(&func, &st, &io).map_err(StageError::Spirv)
 }
 
-/// Translates a VS+PS pair with the locations they share.
+/// Translates a VS+PS pair with the locations they share. The static samplers are one list
+/// for the pair (set 1): the VS's keep their bindings, the PS's are deduplicated against them
+/// and renumbered after them; both results carry the whole list.
 pub fn translate_pair(
     vs: &ParsedShader,
     ps: &ParsedShader,
     targets: &[u32],
 ) -> Result<(Translated, Translated), StageError> {
     let l = link(vs, ps);
-    Ok((
-        translate_stage(vs, targets, Some(&l))?,
-        translate_stage(ps, targets, Some(&l))?,
-    ))
+    let mut v = translate_stage(vs, targets, Some(&l))?;
+    let mut p = translate_stage(ps, targets, Some(&l))?;
+    let mut shared = v.samplers.clone();
+    let renumber: Vec<u32> = p
+        .samplers
+        .iter()
+        .map(|d| {
+            let k = shared.iter().position(|s| s == d).unwrap_or_else(|| {
+                shared.push(*d);
+                shared.len() - 1
+            });
+            k as u32
+        })
+        .collect();
+    if renumber.iter().enumerate().any(|(i, &k)| k as usize != i) {
+        renumber_static_samplers(&mut p.words, &renumber);
+    }
+    v.samplers = shared.clone();
+    p.samplers = shared;
+    Ok((v, p))
+}
+
+/// Rewrites the `Binding` of every variable in descriptor set 1 (the static samplers) from `k`
+/// to `map[k]`.
+fn renumber_static_samplers(words: &mut [u32], map: &[u32]) {
+    const OP_DECORATE: u32 = 71;
+    const BINDING: u32 = 33;
+    const DESCRIPTOR_SET: u32 = 34;
+    let instructions = |words: &[u32]| {
+        let mut at = 5;
+        let mut out = Vec::new();
+        while at < words.len() {
+            let n = (words[at] >> 16) as usize;
+            if n == 0 {
+                break;
+            }
+            out.push((at, words[at] & 0xffff, n));
+            at += n;
+        }
+        out
+    };
+    let list = instructions(words);
+    let in_set1: Vec<u32> = list
+        .iter()
+        .filter(|&&(at, op, n)| {
+            op == OP_DECORATE && n >= 4 && words[at + 2] == DESCRIPTOR_SET && words[at + 3] == 1
+        })
+        .map(|&(at, _, _)| words[at + 1])
+        .collect();
+    for (at, op, n) in list {
+        if op == OP_DECORATE
+            && n >= 4
+            && words[at + 2] == BINDING
+            && in_set1.contains(&words[at + 1])
+        {
+            if let Some(&k) = map.get(words[at + 3] as usize) {
+                words[at + 3] = k;
+            }
+        }
+    }
 }

@@ -16,7 +16,9 @@ mod pipeline;
 mod present;
 mod replay;
 mod rootblock;
+mod sampler;
 mod swapchain;
+mod textures;
 
 use ash::vk;
 use std::collections::HashSet;

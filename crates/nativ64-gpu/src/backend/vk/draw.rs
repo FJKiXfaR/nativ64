@@ -24,6 +24,7 @@ use super::gpumem::GpuMemory;
 use super::pipeline::{dynamic_topology, is_strip, Outcome, Pipelines};
 use super::replay::{global_barrier, mip_size, view_range, Img, VkBackend};
 use super::rootblock::{self, RootArgs};
+use super::sampler::SamplerCache;
 use super::{log_once, Gpu};
 use crate::d3d12::command::{Command, IndexView, Rect, VertexView};
 use crate::d3d12::descriptor::{depth_stencil_view, render_target_view};
@@ -149,7 +150,7 @@ pub(super) struct DrawState<'g> {
     pub(super) list: ListState,
     pub(super) mem: GpuMemory<'g>,
     /// `Some(None)`: tried and failed.
-    bindless: Option<Option<Bindless<'g>>>,
+    pub(super) bindless: Option<Option<Bindless<'g>>>,
     views: Option<ViewTable<'g>>,
     views_ready: bool,
     pipelines: Pipelines<'g>,
@@ -158,6 +159,8 @@ pub(super) struct DrawState<'g> {
     /// The submission's root blocks: the buffer and the bytes used.
     arena: Option<(HostBuf<'g>, usize)>,
     arena_size: usize,
+    /// The samplers of heap views and of static sampler sets (dropped after the layouts).
+    pub(super) samplers: SamplerCache<'g>,
 }
 
 impl<'g> DrawState<'g> {
@@ -174,6 +177,7 @@ impl<'g> DrawState<'g> {
             open: None,
             arena: None,
             arena_size: 0,
+            samplers: SamplerCache::new(gpu),
         }
     }
 
@@ -221,7 +225,7 @@ impl<'g> DrawState<'g> {
         }
     }
 
-    fn bindless(&mut self) -> Option<&Bindless<'g>> {
+    pub(super) fn bindless(&mut self) -> Option<&Bindless<'g>> {
         if self.bindless.is_none() {
             self.bindless = Some(match Bindless::new(self.gpu) {
                 Ok(b) => Some(b),
@@ -388,14 +392,19 @@ impl<'g> VkBackend<'g> {
         let Some(pd) = (unsafe { pipeline_data(ptr) }) else {
             return skip(Skip::Pipeline("the bound object is not a pipeline".into()));
         };
-        let Some(bl) = self.draw.bindless() else {
+        if self.draw.bindless().is_none() {
+            return skip(Skip::State("no bindless descriptor set".into()));
+        }
+        let draw = &mut self.draw;
+        let Some(Some(bl)) = draw.bindless.as_mut() else {
             return skip(Skip::State("no bindless descriptor set".into()));
         };
-        let (layout, set) = (bl.layout, bl.set);
-        let built = match self.draw.pipelines.get(layout, pd) {
+        let set = bl.set;
+        let built = match draw.pipelines.get(bl, &mut draw.samplers, pd) {
             Outcome::Built(b) => b.clone(),
             Outcome::Failed(w) => return skip(Skip::Pipeline(w.clone())),
         };
+        let layout = built.layouts.layout;
 
         // Targets: the images of the bound views, in the formats the pipeline was made for.
         // Making an image records a barrier, which cannot happen inside a rendering instance.
@@ -438,6 +447,7 @@ impl<'g> VkBackend<'g> {
             let Some(img) = self.image(d, cb, v.resource) else {
                 return skip(Skip::Target("a render target has no image".into()));
             };
+            self.own(v.resource);
             if img.info.format != built.color[i].1 {
                 return skip(Skip::Target(format!(
                     "render target {i} is {:?}, the pipeline was made for {:?}",
@@ -457,6 +467,7 @@ impl<'g> VkBackend<'g> {
             let Some(img) = self.image(d, cb, v.resource) else {
                 return skip(Skip::Target("the depth target has no image".into()));
             };
+            self.own(v.resource);
             if img.info.format != info.format {
                 return skip(Skip::Target("the depth target's format differs".into()));
             }
@@ -621,7 +632,11 @@ impl<'g> VkBackend<'g> {
         // the submission completes (imports are only dropped between submissions).
         unsafe {
             d.cmd_bind_pipeline(cb, gfx, built.pipeline);
-            d.cmd_bind_descriptor_sets(cb, gfx, layout, 0, &[set], &[]);
+            let sets: Vec<vk::DescriptorSet> = [Some(set), built.layouts.set1]
+                .into_iter()
+                .flatten()
+                .collect();
+            d.cmd_bind_descriptor_sets(cb, gfx, layout, 0, &sets, &[]);
             d.cmd_push_constants(
                 cb,
                 layout,
@@ -700,7 +715,7 @@ pub(super) mod tests {
     use crate::shader::spirv::tests::stage;
     use nativ64::api_ms_win_core_memory as table;
 
-    const BLUE: [u8; 4] = [0, 0, 255, 255];
+    pub(in crate::backend::vk) const BLUE: [u8; 4] = [0, 0, 255, 255];
 
     /// Committed, writable title memory holding `bytes` (never freed by the test).
     pub(in crate::backend::vk) fn title_memory(bytes: &[u8]) -> u64 {
@@ -717,14 +732,19 @@ pub(super) mod tests {
         a as u64
     }
 
-    fn floats(v: &[f32]) -> Vec<u8> {
+    pub(in crate::backend::vk) fn floats(v: &[f32]) -> Vec<u8> {
         v.iter().flat_map(|f| f.to_le_bytes()).collect()
     }
 
     /// A subobject stream: VS, PS, blend, sample mask, rasterizer (culling none), depth-stencil
     /// (everything off), an optional one-element input layout (`POSITION`, `format`, slot 0),
     /// triangle topology and one render target in format 28.
-    fn stream(vs: &[u8], ps: &[u8], input: Option<u32>, depth: bool) -> Vec<u8> {
+    pub(in crate::backend::vk) fn stream(
+        vs: &[u8],
+        ps: &[u8],
+        input: Option<u32>,
+        depth: bool,
+    ) -> Vec<u8> {
         let mut s = Vec::new();
         let mut sub = |kind: u32, len: usize| {
             let at = s.len();
@@ -781,7 +801,12 @@ pub(super) mod tests {
     }
 
     /// As [`pipeline`], with a depth format of 40 and the depth test (less) on when `depth`.
-    fn pipeline_with(vs: Vec<u8>, ps: Vec<u8>, input: Option<u32>, depth: bool) -> usize {
+    pub(in crate::backend::vk) fn pipeline_with(
+        vs: Vec<u8>,
+        ps: Vec<u8>,
+        input: Option<u32>,
+        depth: bool,
+    ) -> usize {
         let (vs, ps): (&'static [u8], &'static [u8]) = (Vec::leak(vs), Vec::leak(ps));
         let s = Vec::leak(stream(vs, ps, input, depth));
         let desc = [s.len(), s.as_ptr() as usize];
@@ -792,7 +817,7 @@ pub(super) mod tests {
         out as usize
     }
 
-    fn state(pipe: usize, target: u64) -> Vec<Command> {
+    pub(in crate::backend::vk) fn state(pipe: usize, target: u64) -> Vec<Command> {
         vec![
             Command::SetPipeline { pipeline: pipe },
             Command::RenderTargets {
@@ -805,7 +830,7 @@ pub(super) mod tests {
         ]
     }
 
-    fn clear(handle: u64, color: [f32; 4]) -> Vec<Command> {
+    pub(in crate::backend::vk) fn clear(handle: u64, color: [f32; 4]) -> Vec<Command> {
         vec![
             Command::ClearRenderTarget {
                 handle,
@@ -816,7 +841,7 @@ pub(super) mod tests {
         ]
     }
 
-    fn constants(slot: u32, rgba: [f32; 4]) -> Command {
+    pub(in crate::backend::vk) fn constants(slot: u32, rgba: [f32; 4]) -> Command {
         Command::RootConstants {
             compute: false,
             slot,
@@ -825,7 +850,7 @@ pub(super) mod tests {
         }
     }
 
-    fn draw(vertices: u32) -> Command {
+    pub(in crate::backend::vk) fn draw(vertices: u32) -> Command {
         Command::Draw {
             vertices,
             instances: 1,
@@ -834,13 +859,17 @@ pub(super) mod tests {
         }
     }
 
-    fn pixel(r: &super::super::replay::Readback, x: usize, y: usize) -> [u8; 4] {
+    pub(in crate::backend::vk) fn pixel(
+        r: &super::super::replay::Readback,
+        x: usize,
+        y: usize,
+    ) -> [u8; 4] {
         let at = 4 * (y * r.width as usize + x);
         r.bytes[at..at + 4].try_into().unwrap()
     }
 
     /// The full-screen triangle as clip-space `float4`s.
-    const TRIANGLE: [f32; 12] = [
+    pub(in crate::backend::vk) const TRIANGLE: [f32; 12] = [
         -1.0, -1.0, 0.0, 1.0, 3.0, -1.0, 0.0, 1.0, -1.0, 3.0, 0.0, 1.0,
     ];
 
@@ -989,7 +1018,7 @@ pub(super) mod tests {
         let mut list = clear(handle, [0.0, 0.0, 1.0, 1.0]);
         // no pipeline at all
         list.push(draw(3));
-        // a pipeline that reads a texture
+        // a pipeline that reads a texture through a descriptor table nobody set
         list.extend(state(images, handle));
         list.extend([root(verts), draw(3)]);
         // a root descriptor that is not GPU memory
@@ -1019,7 +1048,7 @@ pub(super) mod tests {
                 s.draw_skips.target,
                 s.draw_skips.state
             ),
-            (2, 1, 1, 1)
+            (1, 2, 1, 1)
         );
         let r = b.read_back(target).unwrap();
         assert!(r.bytes.chunks(4).all(|p| p == BLUE), "nothing was drawn");

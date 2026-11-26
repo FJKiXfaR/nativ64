@@ -1,7 +1,8 @@
 //! DXGI formats to Vulkan formats, for the images the replay creates. Typeless formats take
 //! the usual typed reading (UNORM, or float for 32-bit channels); a depth-stencil resource
-//! takes the depth format of its size. Block-compressed and integer formats are not mapped
-//! yet: a resource in one of them has no image and its commands are skipped.
+//! takes the depth format of its size. Block-compressed formats (BC1 to BC7) are mapped (the
+//! device must have `textureCompressionBC`); integer formats are not yet: a resource in one has
+//! no image and its commands are skipped.
 
 use ash::vk;
 
@@ -10,8 +11,11 @@ use ash::vk;
 pub struct FormatInfo {
     pub format: vk::Format,
     pub aspect: vk::ImageAspectFlags,
-    /// Bytes per texel (not meaningful for depth-stencil copies).
+    /// Bytes per texel (not meaningful for depth-stencil copies); per 4 x 4 block when
+    /// `compressed`.
     pub bytes: u32,
+    /// A block-compressed format (BC1 to BC7).
+    pub compressed: bool,
 }
 
 const COLOR: vk::ImageAspectFlags = vk::ImageAspectFlags::COLOR;
@@ -30,6 +34,16 @@ fn info(format: vk::Format, aspect: vk::ImageAspectFlags, bytes: u32) -> Option<
         format,
         aspect,
         bytes,
+        compressed: false,
+    })
+}
+
+fn block(format: vk::Format, bytes: u32) -> Option<FormatInfo> {
+    Some(FormatInfo {
+        format,
+        aspect: COLOR,
+        bytes,
+        compressed: true,
     })
 }
 
@@ -61,6 +75,20 @@ pub fn lookup(dxgi: u32, flags: u32) -> Option<FormatInfo> {
         60 | 61 => info(F::R8_UNORM, COLOR, 1),
         87 | 90 => info(F::B8G8R8A8_UNORM, COLOR, 4),
         91 => info(F::B8G8R8A8_SRGB, COLOR, 4),
+        70 | 71 => block(F::BC1_RGBA_UNORM_BLOCK, 8),
+        72 => block(F::BC1_RGBA_SRGB_BLOCK, 8),
+        73 | 74 => block(F::BC2_UNORM_BLOCK, 16),
+        75 => block(F::BC2_SRGB_BLOCK, 16),
+        76 | 77 => block(F::BC3_UNORM_BLOCK, 16),
+        78 => block(F::BC3_SRGB_BLOCK, 16),
+        79 | 80 => block(F::BC4_UNORM_BLOCK, 8),
+        81 => block(F::BC4_SNORM_BLOCK, 8),
+        82 | 83 => block(F::BC5_UNORM_BLOCK, 16),
+        84 => block(F::BC5_SNORM_BLOCK, 16),
+        94 | 95 => block(F::BC6H_UFLOAT_BLOCK, 16),
+        96 => block(F::BC6H_SFLOAT_BLOCK, 16),
+        97 | 98 => block(F::BC7_UNORM_BLOCK, 16),
+        99 => block(F::BC7_SRGB_BLOCK, 16),
         _ => None,
     }
 }
@@ -132,7 +160,13 @@ mod tests {
             vk::Format::D32_SFLOAT
         );
         assert_eq!(lookup(39, 0).unwrap().format, vk::Format::R32_SFLOAT);
-        assert!(lookup(71, 0).is_none(), "BC1 is not mapped");
+        let bc1 = lookup(71, 0).unwrap();
+        assert_eq!(
+            (bc1.format, bc1.bytes),
+            (vk::Format::BC1_RGBA_UNORM_BLOCK, 8)
+        );
+        assert!(bc1.compressed);
+        assert_eq!(lookup(99, 0).unwrap().format, vk::Format::BC7_SRGB_BLOCK);
     }
 
     #[test]

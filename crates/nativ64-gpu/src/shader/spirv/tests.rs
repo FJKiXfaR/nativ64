@@ -2094,21 +2094,55 @@ pub(crate) mod stage {
         )
     }
 
-    /// A pixel program that samples a texture: the draw needs images.
-    pub(crate) fn draw_ps_sampling_a_texture() -> Vec<u8> {
-        let lines = ps_after(&TEX_CONST_SAMPLER, &[SAMPLE_2D]);
+    /// The T# from a table in user SGPR 12 (+ 0x20) and the S# as four constants in s16..s19.
+    const TABLE_12_TEX_CONST_SAMPLER: [&str; 6] = [
+        "s_mov_b32 s13, 0",
+        "s_load_dwordx8 s[0:7], s[12:13], 0x20",
+        "s_movk_i32 s16, 0x400",
+        "s_mov_b32 s17, 0xc00000",
+        "s_mov_b32 s18, 0x18f00000",
+        "s_mov_b32 s19, 0",
+    ];
+
+    /// As above, the S# loaded from the same table (+ 0x40).
+    const TABLE_12_TEX_LOADED_SAMPLER: [&str; 3] = [
+        "s_mov_b32 s13, 0",
+        "s_load_dwordx8 s[0:7], s[12:13], 0x20",
+        "s_load_dwordx4 s[16:19], s[12:13], 0x40",
+    ];
+
+    const SAMPLE_2D_S16: &str =
+        "image_sample v[4:7], v[2:3], s[0:7], s[16:19] dmask:0xf dim:SQ_RSRC_IMG_2D";
+
+    fn draw_ps_sampling(pre: &[&'static str]) -> Vec<u8> {
+        let lines = ps_after(pre, &[SAMPLE_2D_S16]);
         blob_bytes(
             false,
             &prog(&lines),
             sigs(),
             sig(&[("SV_Target", 0, 64, 0, 0xf)]),
             |p, e| {
-                one_table(p);
+                put32(p, 0x210, 3); // a descriptor table
+                put32(p, 0x218, 1);
+                p[0x220] = 12; // in user SGPR 12 (the vertex programs above use s8 and s9)
+                p[0x221] = 1; // root parameter 1
                 put32(p, e + 0x124, 0);
                 put32(p, e + 0x134, 0);
                 put32(p, e + 0x14c, u32::MAX);
             },
         )
+    }
+
+    /// A pixel program that samples a texture at (1.0, 0.5): its T# is at table + 0x20 and its
+    /// S# is a constant (trilinear, 4x anisotropic, wrap), as in ps c1d5a4b8. The table is
+    /// root parameter 1, user SGPR 12.
+    pub(crate) fn draw_ps_sampling_a_texture() -> Vec<u8> {
+        draw_ps_sampling(&TABLE_12_TEX_CONST_SAMPLER)
+    }
+
+    /// As [`draw_ps_sampling_a_texture`], the S# a heap sampler at table + 0x40.
+    pub(crate) fn draw_ps_sampling_a_heap_sampler() -> Vec<u8> {
+        draw_ps_sampling(&TABLE_12_TEX_LOADED_SAMPLER)
     }
 
     const VS_CODE: [&str; 6] = [
@@ -2627,6 +2661,44 @@ pub(crate) mod stage {
         let (chunk, op) = refused(&vs_with(&lines, one_table));
         assert_eq!(chunk, 9);
         assert!(op.contains("vertex stage"), "{op}");
+    }
+
+    #[test]
+    fn a_pair_shares_one_deduplicated_list_of_static_samplers() {
+        let lz = "image_sample_lz v[4:7], v[2:3], s[0:7], s[12:15] dmask:0xf dim:SQ_RSRC_IMG_2D";
+        let vs_with_sampler = |s12: &'static str| {
+            let mut l = TEX_CONST_SAMPLER.to_vec();
+            l[2] = s12;
+            l.extend(VREGS);
+            l.push(lz);
+            l.extend(VS_EXPORT);
+            vs_with(&l, one_table)
+        };
+        let ps = ps_tables(&ps_after(&TEX_CONST_SAMPLER, &[SAMPLE_2D]));
+        // different samplers: the VS's is binding 0, the PS's is renumbered to 1
+        let vs = vs_with_sampler("s_movk_i32 s12, 0x500");
+        let (v, p) = io::translate_pair(&vs, &ps, &[]).unwrap();
+        assert_eq!(v.samplers.len(), 2);
+        assert_eq!(p.samplers, v.samplers);
+        assert_eq!(
+            v.samplers[1],
+            SamplerDesc::from_words([0x400, 0xc0_0000, 0x18f0_0000, 0])
+        );
+        validate(&v.words);
+        validate(&p.words);
+        assert_eq!(count(&v.words, BINDING, &[0]), 2);
+        assert_eq!(count(&p.words, BINDING, &[0]), 1, "only the textures");
+        assert_eq!(
+            count(&p.words, BINDING, &[1]),
+            1,
+            "the PS's sampler is renumbered"
+        );
+        // the same sampler in both: one entry, no renumbering
+        let vs = vs_with_sampler("s_movk_i32 s12, 0x400");
+        let (v, p) = io::translate_pair(&vs, &ps, &[]).unwrap();
+        assert_eq!(v.samplers.len(), 1);
+        assert_eq!(p.samplers, v.samplers);
+        assert_eq!(count(&p.words, BINDING, &[0]), 2);
     }
 
     #[test]

@@ -1052,6 +1052,136 @@ it says otherwise.
    * Real validation of the title's frame 2 (pipeline 56) against the console's first screen is
      **not done** in this step (the title was not run); the synthetic draws above are the
      evidence so far.
+   **Chunk 10b design** (Opus, 2026-11-26, from the 10a run and the blobs) **[seen]**: the log
+   names pipelines by serial, so serial 50546 (refused "topology type 19") and 50547 (refused
+   "images") are trace pipelines 50545 and 50546. Trace 50546's ps c1d5a4b8 is a textured,
+   vertex-coloured quad: `s_load_dwordx8` of a T# at table SGPR + 0x20 (SRV row: table dword 8,
+   register 277), a constant S# (`0x400, 0xc00000, 0x18f00000, 0`), `image_sample` 2D, times
+   COLOR0. 19 is not a topology type: it is the console's `D3D_PRIMITIVE_TOPOLOGY` **QUADS**
+   (VIctory `crates/victory-gpu/src/draw.rs:2023-2026`: 17 rectangles, 18 line loop, 19 quads,
+   20 quad strip); vs d2a23874 calls a fetch shader (`s_swappc_b64`).
+   * **Images of title resources**: `VkBackend::images` stays the one map from resource to
+     `TitleImage` (`replay.rs`). Each `TitleImage` gains an owner: **GPU** once it has been a
+     render or depth attachment, a clear, copy or resolve destination, or an unordered-access
+     target (its host memory is stale from then on and is never read again); **host**
+     otherwise. Images get `MUTABLE_FORMAT` (views may reinterpret the format: typeless,
+     sRGB) and `CUBE_COMPATIBLE` when 2D with a multiple of 6 layers; 3D resources get 3D
+     images (1D refused by name). A host image is uploaded at the first submission that
+     samples it, then again at a later one only if its content changed: an FNV/xx-style
+     64-bit hash of its whole host memory (the console layout's size) is taken at the first
+     sampled use in each submission and compared with the last upload's (counted: bytes
+     hashed, uploads, in `ReplayStats`; VIctory tracks pages with write guards instead, its
+     `watch.rs`: our upgrade path if the hash shows up in a profile). Upload: `texture::Layout`
+     from the resource's description, `detile` of every mip and array slice of plane 0 into a
+     staging buffer laid out linearly (BC formats by blocks), `vkCmdCopyBufferToImage` per
+     subresource, then a global barrier; the image stays in `GENERAL`. A format or layout
+     `texture/` does not handle (planar, depth planes, MSAA) is refused with a log and the
+     view stays empty.
+   * **Texture views into `textures[]`** (set 0 binding 0, `bindless.rs`): at the same point
+     as buffer records, an SRV (`View::Shader`) of a texture gets a `VkImageView` written at its
+     registry index: view type from the description's dimension (2D, 2D array, cube, cube
+     array, 3D; none = the resource's own), format from the description (`format::lookup`),
+     mip and layer ranges, `Shader4ComponentMapping` → `VkComponentMapping` (forced 0 / 1
+     included). The view record stays kind 0 (shaders do not read records for images). Views
+     cached by (image, description) and destroyed with the image. A `View::Placed` SRV
+     (memory with a resource description, device slot 70) gets an image of its own keyed by
+     (address, description words), host-owned; when its range overlaps a GPU-owned image log
+     once (not merged). UAV images (binding 1) stay for 10c. **Holes**: every registry index
+     a stage could read through binding 0 that holds no texture (never written, a buffer, a
+     failed view) gets a 1x1 zero RGBA8 2D view, so no shader reads an unwritten descriptor
+     (written for new indices at each update; an index read through a cube or 3D variable
+     still mismatches: log the view type mismatches you can detect, nothing more).
+   * **Samplers**: static (Code) samplers are immutable samplers of set 1; `translate_pair`
+     keeps one deduplicated list for the pair (the PS's indices renumbered after the VS's) and
+     the pipeline layout becomes set 0 + set 1 + push constant (set 1 layout cached by its
+     sampler list). Heap samplers: `View::Sampler` (the 13-word D3D12 description) and
+     `View::ConsoleSampler` (its first words in the same order, console tuning ignored, log
+     the words once) become `VkSampler`s written at their registry index in binding 2, cached
+     by description. `SamplerDesc` / D3D12 description → `VkSamplerCreateInfo`: filters, mip
+     mode, address modes (mirror once needs 1.2 core `samplerMirrorClampToEdge`: check), LOD
+     bias / min / max, anisotropy (only when the feature is on), compare op, border colour
+     (transparent black, opaque black, opaque white; another colour → the nearest with a
+     log). The `images` flag of `Translated` no longer fails a pipeline; a stage that needs
+     what 10b does not build (storage images, a texture or sampler type `translate` refuses)
+     still fails by name.
+   * **Console topologies**: `topology()` (`backend/vk/pipeline.rs:182`) and the stream's
+     topology subobject (`d3d12/pipeline.rs:441`): log the raw value of trace pipeline 50545
+     (serial 50546) and the topology its list sets, to find where 19 comes from (a console
+     topology *type*, or a `D3D_PRIMITIVE_TOPOLOGY` in that field). QUADS (19) draw as triangle
+     lists through index expansion: `Draw(n, first)` → a generated index buffer of `n / 4`
+     quads `(0 1 2, 0 2 3)` (host-visible, cached by count, `first` as vertex offset);
+     `DrawIndexed` of quads → the indices read from title memory (translated), rewritten into a
+     per-submission buffer. Rectangles (17), line loop, quad strip: refused by name (not seen).
+   * **Loose ends from 10a**: (1) VUID-vkCmdDraw-pStrides-04913: a pipeline with no vertex
+     input binding does not declare the dynamic stride state and binds no vertex buffer;
+     (2) the GPU memory miss `0x10b00000 (+0xae00000) does not fit an import of
+     0x10b00000..0x12600000`: find whether the run grew by a later commit (commits are not
+     recorded as changes) or the range is past the allocation; if growth, a translate that
+     runs past its import re-reads the committed run and re-imports it when bigger, the old
+     import kept alive until the submission is done; (3) the description form of
+     `d3d12/pipeline.rs` reads 8 bytes too far (stream output 32 bytes, not 40): fix and test
+     against `pipeline_state.rs`' offsets.
+   * Tests (lavapipe, `NATIV64_GPU=llvmpipe` too): detile + upload of a tiled RGBA8 texture
+     (non-linear swizzle mode) with 2 mips, sampled by a synthetic PS (loaded T# + constant S#
+     like ps c1d5a4b8) into a target, read back per pixel; the same with a BC1 texture; a host
+     texture re-uploaded after its memory changes and not re-uploaded when it does not
+     (counters); a render target drawn in one list and sampled in the next (GPU-owned, not
+     overwritten from host); a heap sampler (`View::Sampler`) with clamp vs wrap seen in the
+     read-back; a hole read as zero; a quad `Draw` and an indexed quad draw covering the
+     target; the pair's static samplers deduplicated and renumbered.
+   * Real validation of 10b: the title's frames 4+ (`NATIV64_DUMP_FRAMES`) should show trace
+     pipeline 50546's textured quads; compare with the console's first screen.
+   **As built (chunk 10b, part 1)** (`backend/vk/{textures,sampler}.rs`, `replay.rs`,
+   `bindless.rs`, `pipeline.rs`, `shader/io.rs`; textures and samplers, not the quad draws nor the
+   loose ends, which are part 2; the design above stands, with what is said here).
+   * Ownership (`TitleImage`): host until a render or depth target, a clear or a copy destination
+     (`VkBackend::own`), then GPU for good. Images are `MUTABLE_FORMAT` (and `CUBE_COMPATIBLE`
+     when square with a multiple of 6 layers), 3D resources get 3D images (`Img::depth`; 3D
+     copies are skipped), 1D and multisampled ones none (logged). BC1 to BC7 map to Vulkan
+     (`textureCompressionBC`, enabled when present; copies into or out of buffers of BC images are
+     skipped). `mip_levels` 0 means the whole chain (it was read as 1).
+   * `sync_textures` runs at the start of every submission with a draw (not at the first sampled
+     use: which texture a draw reads is not known, so every texture that has a view is looked at):
+     registry entries since the last time are classified, each texture gets its image and, if
+     the host owns it, one hash per submission (`ReplayStats::hashed`, 4-lane multiplicative, over
+     `Layout::size` bytes, only when the memory is committed in the memory table) and an upload
+     when it changed (`uploads`; per-image counter too): `detile` of every mip and slice of the
+     one colour plane into one staging buffer, one copy per subresource, one global barrier.
+     Depth and planar formats are not uploaded. A copy from a host image uploads it first
+     (not in the design). Descriptors: binding 0 gets the view of each texture SRV (`texture_view`,
+     cached on the image: 2D, array, cube, cube array, 3D, the mapping, mip and layer ranges, the
+     view's format by `format::lookup`; a depth image is viewed as depth with its own format),
+     a 1x1 zero RGBA8 view everywhere else; binding 2 gets a sampler per heap sampler view and a
+     default (bilinear, repeat) one everywhere else. All are written again when an image is
+     replaced. `View::Placed` SRVs make an image of their own (host-owned, same upload), the
+     address read from view words 10 and 11 **[unverified]**; an overlap with a GPU-owned image
+     is only logged.
+   * Samplers (`sampler.rs`): `Spec` from `SamplerDesc` and from the D3D12 description (the first
+     13 words of `View::ConsoleSampler`, logged once), one `VkSampler` per spec. Approximated and
+     logged: min / max reduction (average), a border colour not one of three (nearest), the
+     hardware's table border colour (transparent); the hardware's half-border and mirror-once
+     address modes map to `MIRROR_CLAMP_TO_EDGE` or `CLAMP_TO_BORDER` **[unverified]**
+     (mirror-once is clamp-to-edge when the device lacks it); anisotropy only with the feature;
+     a comparison sampler only from a D3D12 description.
+   * Static samplers: `translate_pair` returns one list for both stages (the PS's renumbered by
+     rewriting the `Binding` decorations of set 1); `Bindless::layouts` makes, per list, a set
+     layout of immutable samplers, one set from a pool and a pipeline layout (set 0, set 1, push
+     constant; at most 16 samplers), cached by list. `Built` carries them and a draw binds set 1.
+     The `images` refusal is gone from `pipeline.rs`.
+   * Not in the design: a draw whose root signature has a descriptor table or heap argument
+     the list never set now fails (`memory` skip) instead of leaving a null table, which the
+     shader would read at address 0 (`rootblock::fill`).
+   * Unverified: the console sampler's word order beyond the first 13; the sRGB and typeless
+     view reinterpretations on real hardware; view type mismatches (a cube read through the 2D
+     variable) cannot be detected, so none is logged; the cost of hashing every texture with a
+     view in every submission has not been measured on the title.
+   * Tests (lavapipe too): detile of a tiled 2-mip texture checked texel by texel through
+     copies, upload counters (unchanged: none, changed: one); the view's mapping, mip range and a
+     sampler view read as a texture (hole = zero); a render target drawn in one list, sampled in
+     the next, not overwritten from host; heap sampler wrap vs clamp; a BC1 texture; a placed
+     view; the pair's samplers deduplicated and renumbered (shader level); layouts of static
+     samplers cached by list; BC formats; sampler specs. Run: all pass (a real GPU and
+     `NATIV64_GPU=llvmpipe`). The real validation of 10b is not done.
 11. **Widening, driven by the corpus report**: f16 and `v_pk_*`, remaining VOP3, MIMG
     gather/compare/derivatives, FLAT/SCRATCH stores and atomics, ray queries, merged stages if a
     title uses them (none in this corpus: its stages are VS, PS, CS, mesh only).

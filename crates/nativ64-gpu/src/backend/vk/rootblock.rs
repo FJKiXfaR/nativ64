@@ -14,7 +14,8 @@
 //! translated handle in `user_data[n]`, the full address in `table_base[n]`), 5 and 6 the
 //! resource and sampler heaps (their start, as a table: **[unverified]**, no blob with a heap
 //! row has run), 4 static samplers (nothing). Rows of both stages are merged (one root
-//! signature). An argument the title never set reads as 0.
+//! signature). A constant or root descriptor the title never set reads as 0; a table or heap
+//! never set fails the draw (`FillError::Memory`: a shader would read at address 0).
 
 use crate::d3d12::command::Command;
 use crate::d3d12::descriptor::DescriptorHeapData;
@@ -185,6 +186,10 @@ pub fn fill(
                     5 => (args.resource_heap, "the resource heap"),
                     _ => (args.sampler_heap, "the sampler heap"),
                 };
+                // a shader reads through the table: an unset one would be a read at address 0
+                if from == 0 {
+                    return Err(FillError::Memory(format!("{what} is not set")));
+                }
                 let a = tr(from, what)?;
                 user(&mut b, n, a as u32);
                 b[TABLE_BASE + 8 * n..TABLE_BASE + 8 * n + 8].copy_from_slice(&a.to_le_bytes());
@@ -283,7 +288,12 @@ mod tests {
             compute: false,
             signature: 1,
         });
-        let b = fill(&rows, &args, 0, &mut tr).unwrap();
+        // (the descriptor and the constants read as 0, but a table that is not set fails)
+        let Err(FillError::Memory(e)) = fill(&rows, &args, 0, &mut tr) else {
+            panic!()
+        };
+        assert!(e.contains("not set"), "{e}");
+        let b = fill(&rows[..2], &args, 0, &mut tr).unwrap();
         assert_eq!(u32_at(&b, 4 * 8), 0);
     }
 

@@ -4,8 +4,9 @@
 //! * `Bindless`: one set layout (set 0: binding 0 sampled images, 1 storage images, 2 samplers,
 //!   each `UPDATE_AFTER_BIND | PARTIALLY_BOUND` and sized by what the device allows, at most
 //!   `1 << 20`), one pool, one set and the pipeline layout (that set and an 8-byte push constant,
-//!   the device address of the draw's root block). 10a writes no image: a stage that reads one is
-//!   skipped before it gets here.
+//!   the device address of the draw's root block). Chunk 10b writes bindings 0 and 2 (`textures.rs`)
+//!   and adds, per list of static samplers a pipeline pair uses, a set 1 of immutable samplers
+//!   and the pipeline layout with it (`Bindless::layouts`).
 //! * `ViewTable`: one 32-byte record per descriptor-registry index (`descriptor::VIEWS`),
 //!   `{u32 kind, u32 dxgi format, u64 address, u32 size, u32 stride, u32 0, u32 0}`, in a
 //!   host-visible, device-addressable buffer that grows by doubling. Kind 1 is a buffer (the
@@ -17,10 +18,13 @@
 //! next submission.
 
 use super::gpumem::GpuMemory;
+use super::sampler::{SamplerCache, Spec};
 use super::{log_once, vk_try, Gpu, Result, VkError};
 use crate::d3d12::descriptor::View;
 use crate::d3d12::resource::info_of_checked;
+use crate::shader::resource::SamplerDesc;
 use ash::vk;
+use std::collections::HashMap;
 
 /// Descriptors per binding the bindless set is sized for, at most.
 const MAX_BINDLESS: u32 = 1 << 20;
@@ -133,13 +137,37 @@ impl Drop for HostBuf<'_> {
     }
 }
 
-/// The bindless set and the pipeline layout every draw uses.
+/// Sets of immutable samplers a pool holds room for.
+const STATIC_SETS: u32 = 512;
+/// Samplers in one such set, at most.
+const STATIC_SAMPLERS: u32 = 16;
+
+/// The pipeline layout of one list of static samplers: set 0, set 1 (when the list is not
+/// empty) and the push constant.
+#[derive(Clone, Copy)]
+pub struct Layouts {
+    pub layout: vk::PipelineLayout,
+    pub set1: Option<vk::DescriptorSet>,
+}
+
+struct StaticSet {
+    set_layout: vk::DescriptorSetLayout,
+    layouts: Layouts,
+}
+
+/// The bindless set and the pipeline layouts draws use.
 pub struct Bindless<'g> {
     gpu: &'g Gpu,
     set_layout: vk::DescriptorSetLayout,
     pool: vk::DescriptorPool,
+    /// Pool of the sets of static samplers (made at the first one).
+    pool1: vk::DescriptorPool,
     pub set: vk::DescriptorSet,
+    /// The layout without static samplers.
     pub layout: vk::PipelineLayout,
+    /// Descriptors per binding: registry indices from here on cannot be written.
+    pub count: u32,
+    statics: HashMap<Vec<SamplerDesc>, StaticSet>,
 }
 
 impl<'g> Bindless<'g> {
@@ -202,8 +230,11 @@ impl<'g> Bindless<'g> {
                 gpu,
                 set_layout,
                 pool: vk::DescriptorPool::null(),
+                pool1: vk::DescriptorPool::null(),
                 set: vk::DescriptorSet::null(),
                 layout: vk::PipelineLayout::null(),
+                count: n,
+                statics: HashMap::new(),
             };
             let sizes: Vec<_> = kinds
                 .iter()
@@ -244,6 +275,107 @@ impl<'g> Bindless<'g> {
             Ok(this)
         }
     }
+
+    /// The pipeline layout for `samplers` (the pair's static samplers, set 1 binding k being
+    /// `samplers[k]`) and the set to bind at set 1, made on first use.
+    pub fn layouts(
+        &mut self,
+        samplers: &[SamplerDesc],
+        cache: &mut SamplerCache<'_>,
+    ) -> std::result::Result<Layouts, String> {
+        if samplers.is_empty() {
+            return Ok(Layouts {
+                layout: self.layout,
+                set1: None,
+            });
+        }
+        if let Some(s) = self.statics.get(samplers) {
+            return Ok(s.layouts);
+        }
+        if samplers.len() > STATIC_SAMPLERS as usize {
+            return Err(format!("{} static samplers", samplers.len()));
+        }
+        let handles = samplers
+            .iter()
+            .map(|d| cache.get(Spec::from_static(d)).ok_or("a static sampler"))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let d = &self.gpu.device;
+        // SAFETY: objects made here are destroyed on each error path or owned by `statics`.
+        unsafe {
+            if self.pool1 == vk::DescriptorPool::null() {
+                let size = [vk::DescriptorPoolSize::default()
+                    .ty(vk::DescriptorType::SAMPLER)
+                    .descriptor_count(STATIC_SETS * STATIC_SAMPLERS)];
+                self.pool1 = d
+                    .create_descriptor_pool(
+                        &vk::DescriptorPoolCreateInfo::default()
+                            .max_sets(STATIC_SETS)
+                            .pool_sizes(&size),
+                        None,
+                    )
+                    .map_err(|e| format!("vkCreateDescriptorPool: {e}"))?;
+            }
+            let each: Vec<[vk::Sampler; 1]> = handles.iter().map(|&h| [h]).collect();
+            let bindings: Vec<_> = each
+                .iter()
+                .enumerate()
+                .map(|(k, h)| {
+                    vk::DescriptorSetLayoutBinding::default()
+                        .binding(k as u32)
+                        .descriptor_type(vk::DescriptorType::SAMPLER)
+                        .stage_flags(vk::ShaderStageFlags::ALL)
+                        .immutable_samplers(h)
+                })
+                .collect();
+            let set_layout = d
+                .create_descriptor_set_layout(
+                    &vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings),
+                    None,
+                )
+                .map_err(|e| format!("vkCreateDescriptorSetLayout: {e}"))?;
+            let both = [self.set_layout, set_layout];
+            let set = d.allocate_descriptor_sets(
+                &vk::DescriptorSetAllocateInfo::default()
+                    .descriptor_pool(self.pool1)
+                    .set_layouts(&both[1..]),
+            );
+            let set = match set {
+                Ok(s) => s[0],
+                Err(e) => {
+                    d.destroy_descriptor_set_layout(set_layout, None);
+                    return Err(format!("vkAllocateDescriptorSets (static samplers): {e}"));
+                }
+            };
+            let push = [vk::PushConstantRange::default()
+                .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
+                .offset(0)
+                .size(8)];
+            let layout = match d.create_pipeline_layout(
+                &vk::PipelineLayoutCreateInfo::default()
+                    .set_layouts(&both)
+                    .push_constant_ranges(&push),
+                None,
+            ) {
+                Ok(l) => l,
+                Err(e) => {
+                    d.destroy_descriptor_set_layout(set_layout, None);
+                    return Err(format!("vkCreatePipelineLayout: {e}"));
+                }
+            };
+            let layouts = Layouts {
+                layout,
+                set1: Some(set),
+            };
+            self.statics.insert(
+                samplers.to_vec(),
+                StaticSet {
+                    set_layout,
+                    layouts,
+                },
+            );
+            Ok(layouts)
+        }
+    }
 }
 
 impl Drop for Bindless<'_> {
@@ -251,6 +383,11 @@ impl Drop for Bindless<'_> {
         let d = &self.gpu.device;
         // SAFETY: created by `new` on this device, the queue idle; null handles are no-ops.
         unsafe {
+            for s in self.statics.values() {
+                d.destroy_pipeline_layout(s.layouts.layout, None);
+                d.destroy_descriptor_set_layout(s.set_layout, None);
+            }
+            d.destroy_descriptor_pool(self.pool1, None);
             d.destroy_pipeline_layout(self.layout, None);
             d.destroy_descriptor_pool(self.pool, None);
             d.destroy_descriptor_set_layout(self.set_layout, None);
@@ -525,5 +662,24 @@ mod tests {
         assert!(table.retry.contains(&index_of(lost)));
         let r = table.buf.read(index_of(srv) * RECORD, RECORD);
         assert_eq!(u64_at(&r, 8), first + 32);
+    }
+
+    #[test]
+    fn layouts_of_static_samplers_are_cached_by_list() {
+        let Some(g) = gpu_or_skip() else { return };
+        let mut bl = Bindless::new(&g).unwrap();
+        let mut cache = SamplerCache::new(&g);
+        let a = SamplerDesc::from_words([0x400, 0x00c0_0000, 0x18f0_0000, 0]);
+        let b = SamplerDesc::from_words([0x401, 0x00c0_0000, 0x0, 0]);
+        let none = bl.layouts(&[], &mut cache).unwrap();
+        assert_eq!((none.layout, none.set1), (bl.layout, None));
+        let one = bl.layouts(&[a], &mut cache).unwrap();
+        assert!(one.set1.is_some());
+        assert_ne!(one.layout, bl.layout);
+        let again = bl.layouts(&[a], &mut cache).unwrap();
+        assert_eq!((again.layout, again.set1), (one.layout, one.set1));
+        let two = bl.layouts(&[a, b], &mut cache).unwrap();
+        assert_ne!(two.layout, one.layout);
+        assert!(bl.layouts(&[a; 17], &mut cache).is_err());
     }
 }

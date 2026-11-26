@@ -27,6 +27,19 @@ pub struct Gpu {
     pub(super) entry: Entry,
     name: String,
     pub(super) instance: Instance,
+    /// Sampler and texture features optional in Vulkan (chunk 10b).
+    pub(super) caps: Caps,
+}
+
+/// Optional features the images and samplers of the replay use when they are there.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct Caps {
+    /// `samplerAnisotropy`: the largest ratio the device filters with (None: off).
+    pub max_anisotropy: Option<f32>,
+    /// `samplerMirrorClampToEdge` (core 1.2).
+    pub mirror_clamp: bool,
+    /// `textureCompressionBC`.
+    pub bc: bool,
 }
 
 /// The features of a device we look at, as the 1.0 struct and the 1.1 to 1.3 ones.
@@ -164,7 +177,21 @@ impl Gpu {
                         device.get_device_queue(queue_family, 0),
                     )
                 };
+                // SAFETY: valid handles of this instance.
+                let (have, limits) = unsafe {
+                    (
+                        Features::query(&instance, phys),
+                        instance.get_physical_device_properties(phys).limits,
+                    )
+                };
+                let caps = Caps {
+                    max_anisotropy: (have.core.sampler_anisotropy != 0)
+                        .then_some(limits.max_sampler_anisotropy),
+                    mirror_clamp: have.f12.sampler_mirror_clamp_to_edge != 0,
+                    bc: have.core.texture_compression_bc != 0,
+                };
                 Ok(Gpu {
+                    caps,
                     device,
                     ext_host,
                     queue: Mutex::new(queue),
@@ -261,7 +288,8 @@ impl Gpu {
             .sample_rate_shading(have_f.core.sample_rate_shading != 0)
             .fill_mode_non_solid(have_f.core.fill_mode_non_solid != 0)
             .depth_bounds(have_f.core.depth_bounds != 0)
-            .sampler_anisotropy(have_f.core.sampler_anisotropy != 0);
+            .sampler_anisotropy(have_f.core.sampler_anisotropy != 0)
+            .texture_compression_bc(have_f.core.texture_compression_bc != 0);
         let mut f11 = vk::PhysicalDeviceVulkan11Features::default().shader_draw_parameters(true);
         let mut f12 = vk::PhysicalDeviceVulkan12Features::default()
             .buffer_device_address(true)
@@ -272,7 +300,8 @@ impl Gpu {
             .descriptor_binding_sampled_image_update_after_bind(true)
             .descriptor_binding_storage_image_update_after_bind(true)
             .shader_sampled_image_array_non_uniform_indexing(true)
-            .shader_storage_image_array_non_uniform_indexing(true);
+            .shader_storage_image_array_non_uniform_indexing(true)
+            .sampler_mirror_clamp_to_edge(have_f.f12.sampler_mirror_clamp_to_edge != 0);
         let mut f13 = vk::PhysicalDeviceVulkan13Features::default()
             .dynamic_rendering(true)
             .synchronization2(true)
