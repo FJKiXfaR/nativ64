@@ -16,6 +16,8 @@ pub struct FrameTrace {
     pub indirect: u32,
     pub clears: u32,
     pub copies: u32,
+    /// What the replay did with the draws (`drawn=N skips=...`), when a backend reports it.
+    pub replay: Option<String>,
     /// Ids (creation order) of the pipelines the draws and dispatches used; `None` is a
     /// pipeline object this process did not create.
     pub pipelines: BTreeSet<Option<usize>>,
@@ -78,8 +80,9 @@ impl FrameTrace {
             .iter()
             .map(|p| p.map_or("?".to_string(), |p| p.to_string()))
             .collect();
+        let replay = self.replay.as_deref().map_or(String::new(), |r| format!(" {r}"));
         format!(
-            "frame {n}: draw={} idx={} mesh={} disp={} ind={} clear={} copy={} pipes=[{}]",
+            "frame {n}: draw={} idx={} mesh={} disp={} ind={} clear={} copy={} pipes=[{}]{replay}",
             self.draw,
             self.draw_indexed,
             self.dispatch_mesh,
@@ -112,9 +115,13 @@ pub fn execute(lists: &[Vec<Command>]) {
     with_tracer(|t| t.execute(lists));
 }
 
-/// A frame was presented: prints its line when wanted, flushes `pipelines.txt`.
-pub fn present() {
-    with_tracer(Tracer::present);
+/// A frame was presented: prints its line when wanted, flushes `pipelines.txt`. `replay` is
+/// appended to the line (what the backend did with the frame's draws).
+pub fn present(replay: Option<String>) {
+    with_tracer(|t| {
+        t.frame.replay = replay;
+        t.present();
+    });
 }
 
 impl Tracer {
@@ -182,5 +189,7 @@ mod tests {
             t.line(1),
             "frame 1: draw=1 idx=0 mesh=0 disp=1 ind=0 clear=0 copy=1 pipes=[?]"
         );
+        t.replay = Some("drawn=1 skips=0".into());
+        assert!(t.line(1).ends_with("pipes=[?] drawn=1 skips=0"));
     }
 }

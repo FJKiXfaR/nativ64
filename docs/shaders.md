@@ -591,7 +591,7 @@ record's LDS size (compute later).
 - **Dump**: `NATIV64_DUMP_SHADERS=dir` writes each pipeline's blobs at creation
   (`<hash>.<stage>.dxbc`) plus `pipelines.txt` (pipeline id, stage hashes, root signature,
   formats, `first_frame=N` and `draws=M` (draws and dispatches), rewritten at most twice a
-  second and at presents); `NATIV64_TRACE_DRAWS=1` prints one line per presented frame (frames
+  second and at presents); `NATIV64_TRACE_DRAWS=1` prints one line per presented frame (Vulkan: plus `drawn=` and `skips=` of that frame; frames
   1..120, then every 60th: draws by kind, clears, copies, pipeline ids); `nativ64-shader` (a bin
   of `nativ64-gpu`) prints a blob's parts, stage data, layout and disassembly, and translates it.
 

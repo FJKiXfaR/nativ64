@@ -43,12 +43,12 @@ impl Backend for NullBackend {
     }
     fn present(&mut self, _: usize, _: Option<Rect>) {
         self.presents += 1;
-        trace::present();
+        trace::present(None);
     }
 }
 
 /// The Vulkan replay on a device that lives for the whole run, presenting to the title's window.
-struct VulkanBackend(vk::VkBackend<'static>);
+struct VulkanBackend(vk::VkBackend<'static>, vk::ReplayStats);
 
 // SAFETY: the replay is only used under the `CURRENT` mutex; its Vulkan handles are plain ids
 // and function tables, and the queue is behind its own mutex.
@@ -73,7 +73,17 @@ impl Backend for VulkanBackend {
                 size,
             })
         });
-        trace::present();
+        let (now, before) = (self.0.stats, self.1);
+        self.1 = now;
+        let (a, b) = (now.draw_skips, before.draw_skips);
+        trace::present(Some(format!(
+            "drawn={} skips=pipe:{},mem:{},target:{},state:{}",
+            now.drawn - before.drawn,
+            a.pipeline - b.pipeline,
+            a.memory - b.memory,
+            a.target - b.target,
+            a.state - b.state
+        )));
         self.0.present(resource, rect, window);
     }
 }
@@ -115,7 +125,7 @@ fn select() -> (Box<dyn Backend>, bool) {
             if let Some(d) = dump {
                 b.set_dump_dir(d);
             }
-            (Box::new(VulkanBackend(b)), false)
+            (Box::new(VulkanBackend(b, Default::default())), false)
         }
         Err(e) => {
             eprintln!("nativ64-gpu: no Vulkan ({e}); null backend");
