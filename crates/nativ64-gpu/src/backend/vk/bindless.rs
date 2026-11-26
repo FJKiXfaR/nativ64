@@ -484,9 +484,35 @@ fn buffer_view(view: &View) -> Option<(u32, u64, u64, u32)> {
                 None => (0, base, rd.width, 0),
             }
         }
+        // A buffer SRV of memory without a resource object (device slot 70): the resource
+        // description's width is its size, the view description's words 10 and 11 its address
+        // (as `textures::classify` reads them for images).
+        View::Placed(false, rd, vd) if rd[0] == BUFFER_DIMENSION => {
+            let address = u64::from(vd[10]) | u64::from(vd[11]) << 32;
+            if address == 0 {
+                return None;
+            }
+            let width = u64::from(rd[4]) | u64::from(rd[5]) << 32;
+            let (first, stride, raw) = (
+                u64::from(vd[3]) | u64::from(vd[4]) << 32,
+                vd[6],
+                vd[7] & 1 != 0,
+            );
+            let elem = if raw { 4 } else { u64::from(stride.max(1)) };
+            let skip = first.saturating_mul(elem).min(width);
+            (
+                vd[0],
+                address + skip,
+                width - skip,
+                if raw { 0 } else { stride },
+            )
+        }
         _ => return None,
     })
 }
+
+/// `D3D12_RESOURCE_DIMENSION_BUFFER`.
+const BUFFER_DIMENSION: u32 = 1;
 
 /// The view records in a buffer, indexed like the descriptor registry.
 pub struct ViewTable<'g> {
@@ -592,6 +618,49 @@ mod tests {
 
     fn u64_at(b: &[u8], at: usize) -> u64 {
         u64::from_le_bytes(b[at..at + 8].try_into().unwrap())
+    }
+
+    #[test]
+    fn a_placed_buffer_view_is_a_buffer_record() {
+        // From the title's trace: a 128-byte buffer, stride 32, at 0x10b7de20.
+        let rd = [1, 0, 0, 0, 128, 0, 1, 0x10001, 0, 1, 0, 1, 0, 0];
+        let vd = [
+            39,
+            1,
+            0x1688,
+            0,
+            0,
+            0,
+            32,
+            0,
+            1,
+            21974,
+            0x10b7_de20,
+            0,
+            22,
+            0,
+            0,
+            0,
+        ];
+        assert_eq!(
+            buffer_view(&View::Placed(false, rd, vd)),
+            Some((39, 0x10b7_de20, 128, 32))
+        );
+        // first element 1 of 32 bytes
+        let mut skip = vd;
+        skip[3] = 1;
+        assert_eq!(
+            buffer_view(&View::Placed(false, rd, skip)),
+            Some((39, 0x10b7_de40, 96, 32))
+        );
+        // a texture, an unordered view and an address of 0 are not buffer records
+        let mut tex = rd;
+        tex[0] = 3;
+        assert_eq!(buffer_view(&View::Placed(false, tex, vd)), None);
+        assert_eq!(buffer_view(&View::Placed(true, rd, vd)), None);
+        let mut none = vd;
+        (none[10], none[11]) = (0, 0);
+        assert_eq!(buffer_view(&View::Placed(false, rd, none)), None);
     }
 
     #[test]
