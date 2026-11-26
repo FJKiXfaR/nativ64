@@ -85,6 +85,8 @@ pub struct GraphicsState {
     pub sample_count: u32,
     pub sample_quality: u32,
     pub input_layout: Vec<InputElement>,
+    /// `raw` is a subobject stream (`CreatePipelineState`), not a graphics description.
+    pub stream: bool,
     pub raw: Vec<u8>,
 }
 
@@ -100,6 +102,9 @@ pub struct PipelineData {
     pub stages: Vec<Stage>,
     /// `Some` for graphics pipelines.
     pub graphics: Option<GraphicsState>,
+    /// Unique among the pipelines made: a backend caches by it (an object's address can be
+    /// reused after a release).
+    pub serial: u64,
 }
 const _: () = assert!(std::mem::offset_of!(PipelineData, packet) == 8);
 
@@ -225,8 +230,11 @@ fn data(
         root,
         stages,
         graphics,
+        serial: NEXT_SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
     }
 }
+
+static NEXT_SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 /// An error result with `*out` cleared.
 unsafe fn fail(out: *mut *mut c_void) -> HRESULT {
@@ -268,6 +276,7 @@ pub unsafe extern "win64" fn create_graphics(
             u64_at(raw, gfx::INPUT_LAYOUT),
             u32_at(raw, gfx::INPUT_LAYOUT + 8),
         ),
+        stream: false,
         raw: raw.to_vec(),
     };
     make(data(root_of(u64_at(raw, 0)), stages, Some(state)), iid, out)
@@ -355,7 +364,7 @@ pub unsafe extern "win64" fn set_debug_flags_x(_this: *mut c_void, _flags: u32) 
 }
 
 /// A stream subobject type's size (type included), and the stage it is if it is a shader.
-fn subobject(kind: u32) -> Option<(usize, Option<&'static str>)> {
+pub(super) fn subobject(kind: u32) -> Option<(usize, Option<&'static str>)> {
     let shader = |name| Some((24, Some(name)));
     match kind {
         1 => shader("vertex"),
@@ -448,6 +457,7 @@ pub unsafe extern "win64" fn create_stream(
         return fail(out);
     }
     let graphics = is_graphics.then(|| GraphicsState {
+        stream: true,
         raw: s.to_vec(),
         ..state
     });
