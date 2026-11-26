@@ -69,6 +69,19 @@ fn wrexec_writes_the_sgpr_then_exec() {
 }
 
 #[test]
+fn a_chain_of_far_jumps_resolves_in_one_pass() {
+    // s_getpc_b64 s[0:1] ; s_add_u32 s0, s0, 12 ; s_addc_u32 s1, s1, 0 ; s_setpc_b64 s[0:1],
+    // twenty times (more than the per-build loop allows), then s_endpgm
+    let mut w = Vec::new();
+    for _ in 0..20 {
+        w.extend([0xbe801f00, 0x80008c00, 0x82018001, 0xbe802000]);
+    }
+    w.push(0xbf810000);
+    let f = ir(&w);
+    assert!(f.blocks.iter().any(|b| matches!(b.term, Term::End)));
+}
+
+#[test]
 fn if_else_through_execz_gets_a_phi() {
     let f = ir(&[
         0x7c020300, // v_cmp_lt_f32 vcc, v0, v1

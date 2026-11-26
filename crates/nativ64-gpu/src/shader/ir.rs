@@ -1346,6 +1346,146 @@ fn opens_with_fetch_call(code: &[u8], entry: usize, wave32: bool) -> bool {
         )
 }
 
+/// The scalar registers known to hold a constant or a code address at one instruction.
+type Known = BTreeMap<Reg, Src>;
+
+/// Resolves the jumps through a folded `CodeLo` / `CodeHi` pair of everything reachable from
+/// `entry` in one forward pass: a worklist over instructions that carries the known scalar
+/// values (the folds of `fold`) and keeps, at a join, the values every path agrees on. This
+/// replaces one full rebuild per jump; a jump whose target is not known here is left to the
+/// per-build loop of `build`.
+fn resolve_jumps(
+    code: &[u8],
+    entry: usize,
+    wave32: bool,
+    resolved: &mut BTreeMap<usize, Resolved>,
+) {
+    let mut ins: HashMap<usize, Known> = HashMap::new();
+    ins.insert(entry, Known::new());
+    let mut work = vec![entry];
+    let mut jumps: BTreeMap<usize, usize> = BTreeMap::new();
+    while let Some(at) = work.pop() {
+        let Some(mut st) = ins.get(&at).cloned() else {
+            continue;
+        };
+        let Ok(i) = gfx10::decode_wave(code, at, wave32) else {
+            continue;
+        };
+        let next = at + i.len;
+        let mut succs: Vec<usize> = Vec::new();
+        let target = i
+            .branch_target()
+            .filter(|t| *t >= 0 && (*t as usize) < code.len() && t % 4 == 0)
+            .map(|t| t as usize);
+        if i.is_endpgm() {
+        } else if i.is_branch() {
+            succs.extend(target);
+        } else if i.is_cbranch() {
+            succs.extend(target);
+            succs.push(next);
+        } else if i.is_indirect() {
+            if resolved.get(&at) == Some(&Resolved::Call) {
+                st.clear();
+                succs.push(next);
+            } else if i.name() == "s_setpc_b64" {
+                // the last visit has the final state: an earlier one may have known more
+                jumps.remove(&at);
+                let pair = match &i.operands[..] {
+                    [Operand::Reg { code, count: 2 }] => {
+                        match (
+                            operand_dword(*code, 0, false, at),
+                            operand_dword(*code, 1, false, at),
+                        ) {
+                            (Ok(Rd::Reg(lo)), Ok(Rd::Reg(hi))) => Some([lo, hi]),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                };
+                if let Some([lo, hi]) = pair {
+                    if let (Some(Src::CodeLo(t)), Some(Src::CodeHi)) = (st.get(&lo), st.get(&hi)) {
+                        let t = *t as usize;
+                        if t < code.len() && t.is_multiple_of(4) {
+                            jumps.insert(at, t);
+                            succs.push(t);
+                        }
+                    }
+                }
+            }
+        } else {
+            match lower(&i) {
+                Ok(Some(l)) => {
+                    apply_known(&i, &l, &mut st, code);
+                    succs.push(next);
+                }
+                Ok(None) => succs.push(next),
+                Err(_) => {}
+            }
+        }
+        for t in succs {
+            let changed = match ins.get_mut(&t) {
+                None => {
+                    ins.insert(t, st.clone());
+                    true
+                }
+                Some(old) => {
+                    let n = old.len();
+                    old.retain(|r, v| st.get(r) == Some(v));
+                    old.len() != n
+                }
+            };
+            if changed {
+                work.push(t);
+            }
+        }
+    }
+    for (at, t) in jumps {
+        resolved.entry(at).or_insert(Resolved::Jump(t));
+    }
+}
+
+/// The effect of `i` on the known values: a fold, else its destinations become unknown.
+fn apply_known(i: &Instr, l: &Lowered, st: &mut Known, code: &[u8]) {
+    if l.dsts.is_empty() {
+        return;
+    }
+    let srcs: Vec<Vec<Src>> = l
+        .srcs
+        .iter()
+        .map(|s| {
+            s.iter()
+                .map(|r| match r {
+                    Rd::Const(c) => Src::Const(*c),
+                    Rd::Reg(Reg::Null) => Src::Const(0),
+                    Rd::Reg(r) => st.get(r).copied().unwrap_or(Src::Undef),
+                })
+                .collect()
+        })
+        .collect();
+    let scc_in = l
+        .imps
+        .contains(&Reg::Scc)
+        .then(|| st.get(&Reg::Scc).copied().unwrap_or(Src::Undef));
+    if let Some(fd) = fold(i, &srcs, scc_in, code) {
+        let explicit: Vec<Reg> = l.dsts.iter().copied().filter(|r| *r != Reg::Scc).collect();
+        let wants_scc = l.dsts.contains(&Reg::Scc);
+        if fd.vals.len() == explicit.len() && (!wants_scc || fd.scc.is_some()) {
+            for (r, v) in explicit.iter().zip(&fd.vals) {
+                if *r != Reg::Null {
+                    st.insert(*r, *v);
+                }
+            }
+            if let Some(s) = fd.scc.filter(|_| wants_scc) {
+                st.insert(Reg::Scc, s);
+            }
+            return;
+        }
+    }
+    for r in &l.dsts {
+        st.remove(r);
+    }
+}
+
 /// Follows the code from `entry` and builds its SSA IR.
 ///
 /// `s_setpc_b64` of a folded `CodeLo` / `CodeHi` pair is a direct jump, followed as such. When
@@ -1357,6 +1497,7 @@ pub fn build(code: &[u8], entry: usize, wave32: bool, regs: &EntryRegs) -> Resul
     if regs.fetch.is_some() && opens_with_fetch_call(code, entry, wave32) {
         resolved.insert(entry, Resolved::Call);
     }
+    resolve_jumps(code, entry, wave32, &mut resolved);
     for _ in 0..MAX_JUMPS {
         let prog = gfx10::follow_with(code, entry, wave32, &resolved)?;
         for &at in &prog.indirect {
