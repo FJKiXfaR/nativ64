@@ -84,6 +84,9 @@ compilers build around it (`clzero; add rax,0x40; cmp rax,b; jb`, and `mov rax,a
 cmp a,b; jb`) are done whole in one trap, leaving registers and flags as their last pass would.
 The same handler emulates SSE4a `extrq` / `insertq` (register forms, immediate or fields in a register) on the
 saved XMM registers; the title uses them unconditionally. `monitorx` / `mwaitx` are accepted as no-ops.
+`clwb` (`66 0f ae /6`), `clflushopt` (`66 0f ae /7`) and `clflush` (`0f ae /7`) are cache write-back
+hints with nothing a program can observe on coherent x86 caches, so they are skipped like no-ops
+(the title uses them before handing CPU-written memory to the GPU, which reads the same memory).
 Other Zen-only instructions are reported as faults, not emulated, until a title needs them.
 
 ## Not done yet

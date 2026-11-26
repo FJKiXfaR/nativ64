@@ -475,6 +475,57 @@ pub(crate) unsafe fn emulate_clzero(
     true
 }
 
+/// Emulates the cache write-back hints the console CPU has and this host may lack: `clwb`
+/// (`66 0f ae /6`), `clflushopt` (`66 0f ae /7`) and `clflush` (`0f ae /7`). All three are
+/// hints: x86 caches are coherent, so writing a line back or dropping it leaves no state a
+/// program can observe. The title uses them to hand CPU-written data to the GPU, which reads the
+/// same memory here, so doing nothing is exact enough for now; it may need a real flush once
+/// CPU writes land in device-local memory.
+///
+/// Returns the instruction's length, `None` when `code` is not one of them. Only memory forms
+/// are hints: `66 0f ae /6` with `modrm >> 6 == 3` is not `clwb`, and without the `66` prefix
+/// `/6` is `xsaveopt`, which is not ours to skip.
+///
+/// # Safety
+/// `code` points at the faulting instruction, readable for as many bytes as it is long; `fwd` is
+/// how many bytes are readable from it.
+pub(crate) unsafe fn emulate_cache_hint(code: *const u8, fwd: usize) -> Option<usize> {
+    let b = |i: usize| unsafe { code.add(i).read() };
+    let prefixed = fwd > 0 && b(0) == 0x66;
+    let mut at = usize::from(prefixed);
+    if fwd > at && b(at) & 0xf0 == 0x40 {
+        at += 1;
+    }
+    if fwd < at + 3 || b(at) != 0x0f || b(at + 1) != 0xae {
+        return None;
+    }
+    let modrm = b(at + 2);
+    let reg = (modrm >> 3) & 7;
+    // /6 with 66 is CLWB (without it, XSAVEOPT); /7 is CLFLUSH(OPT), the 66 form being the
+    // "optimized" one. Only a memory operand is a hint.
+    if modrm >> 6 == 3 || !matches!((prefixed, reg), (true, 6 | 7) | (false, 7)) {
+        return None;
+    }
+    let rm = modrm & 7;
+    let mut len = at + 3;
+    let sib = rm == 4;
+    if sib {
+        if fwd < len + 1 {
+            return None;
+        }
+        len += 1;
+    }
+    let disp = match modrm >> 6 {
+        0 if rm == 5 => 4,
+        0 if sib && b(len - 1) & 7 == 5 => 4,
+        1 => 1,
+        2 => 4,
+        _ => 0,
+    };
+    len += disp;
+    (len <= fwd).then_some(len)
+}
+
 /// Emulates the AMD-only SSE4a `extrq` / `insertq` (register forms: `66 0f 78 /0 ib ib`,
 /// `66 0f 79`, `f2 0f 78 ib ib`, `f2 0f 79`, optional REX) on the saved XMM registers, as the
 /// vendor manual defines them; returns the instruction's length, `None` for anything else.
@@ -568,6 +619,14 @@ unsafe fn emulate_cpu_gap(uc: *mut libc::ucontext_t) -> bool {
         g[libc::REG_RIP as usize] = (rip + 3) as i64;
         return true;
     }
+    // Cache write-back hints: `clwb` (`66 0f ae /6`) and `clflushopt` (`66 0f ae /7`), plus
+    // `clflush` (`0f ae /7`) for a host without it. Hints only, so they are no-ops here.
+    let off = rip as usize & 0xfff;
+    let fwd = 0x1000 - off;
+    if let Some(len) = emulate_cache_hint(rip as *const u8, fwd) {
+        g[libc::REG_RIP as usize] = (rip + len as u64) as i64;
+        return true;
+    }
     // SSE4a `extrq` / `insertq` (the console CPU is AMD; Intel hosts lack them).
     let fp = (*uc).uc_mcontext.fpregs;
     if !fp.is_null() && matches!(*code, 0x66 | 0xf2) {
@@ -579,8 +638,7 @@ unsafe fn emulate_cpu_gap(uc: *mut libc::ucontext_t) -> bool {
         }
     }
     // Stay inside the page of the faulting instruction: the neighbouring one may be unmapped.
-    let off = rip as usize & 0xfff;
-    if !emulate_clzero(&mut regs, rip as *const u8, off, 0x1000 - off) {
+    if !emulate_clzero(&mut regs, rip as *const u8, off, fwd) {
         return false;
     }
     for (r, i) in regs.gpr.iter().zip(GREG) {
@@ -796,6 +854,86 @@ mod tests {
             for i in 0..4096 {
                 let inside = (64..64 + 256).contains(&i);
                 assert_eq!(*data.add(i) == 0, inside, "byte {i}");
+            }
+        }
+    }
+
+    #[test]
+    fn cache_hint_lengths() {
+        // (bytes, length): CLWB with the console's own register form and every displacement
+        // shape, CLFLUSHOPT, CLFLUSH.
+        let cases: [(&[u8], usize); 8] = [
+            (&[0x66, 0x41, 0x0f, 0xae, 0x31], 5), // clwb [r9] - the title's own encoding
+            (&[0x66, 0x0f, 0xae, 0x30], 4),       // clwb [rax]
+            (&[0x66, 0x0f, 0xae, 0x70, 0x40], 5), // clwb [rax+0x40]
+            (&[0x66, 0x0f, 0xae, 0x7c, 0x24, 0x18], 6), // clwb [rsp+0x18] (SIB, disp8)
+            (&[0x66, 0x0f, 0xae, 0x3d, 0, 0, 0, 0], 8), // clwb [rip+0] (disp32)
+            (&[0x66, 0x0f, 0xae, 0x3c, 0x25, 0, 0, 0, 0], 9), // clwb [disp32] (SIB base 5)
+            (&[0x66, 0x0f, 0xae, 0x38], 4),       // clflushopt [rax]
+            (&[0x0f, 0xae, 0x78, 0x08], 4),       // clflush [rax+8]
+        ];
+        for (bytes, len) in cases {
+            assert_eq!(
+                unsafe { emulate_cache_hint(bytes.as_ptr(), bytes.len()) },
+                Some(len),
+                "{bytes:x?}"
+            );
+        }
+    }
+
+    #[test]
+    fn not_cache_hints() {
+        // Not `/7` (or `/6` with 66): `fxsave`, `xsaveopt`, `ldmxcsr`, `clwb` register form,
+        // another opcode, and an instruction that runs past what is readable.
+        for bytes in [
+            &[0x0f, 0xae, 0x00][..],             // fxsave [rax]
+            &[0x0f, 0xae, 0x30][..],             // xsaveopt [rax]
+            &[0x0f, 0xae, 0x10][..],             // ldmxcsr [rax]
+            &[0x66, 0x0f, 0xae, 0xf0][..],       // clwb xmm/register form is not a thing
+            &[0x0f, 0x01, 0xfc][..],             // clzero
+            &[0x66, 0x0f, 0xae][..],             // truncated
+            &[0x66, 0x0f, 0xae, 0x7c, 0x24][..], // truncated SIB/disp
+        ] {
+            assert_eq!(
+                unsafe { emulate_cache_hint(bytes.as_ptr(), bytes.len()) },
+                None,
+                "{bytes:x?}"
+            );
+        }
+    }
+
+    #[test]
+    fn cpu_without_clwb_runs_real_instruction() {
+        // cpuid leaf 7 EBX bit 24: CLWB. Present: the CPU never traps, nothing to test.
+        let has = std::arch::x86_64::__cpuid_count(7, 0).ebx & (1 << 24) != 0;
+        if has {
+            return;
+        }
+        let _g = GUEST.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            let page = libc::mmap(
+                std::ptr::null_mut(),
+                8192,
+                libc::PROT_READ | libc::PROT_WRITE | libc::PROT_EXEC,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                -1,
+                0,
+            ) as *mut u8;
+            assert_ne!(page as isize, -1);
+            // mov rax, rdi; clwb [rax]; mov eax,42; ret
+            let code: [u8; 13] = [
+                0x48, 0x89, 0xf8, 0x66, 0x0f, 0xae, 0x30, 0xb8, 0x2a, 0, 0, 0, 0xc3,
+            ];
+            std::ptr::copy_nonoverlapping(code.as_ptr(), page, code.len());
+            let data = page.add(4096);
+            std::ptr::write_bytes(data, 0xff, 64);
+            install(page as u64, 4096);
+            setup_thread();
+            let f: extern "C" fn(*mut u8) -> u32 = std::mem::transmute(page);
+            assert_eq!(f(data), 42);
+            // A write-back hint leaves memory as it was.
+            for i in 0..64 {
+                assert_eq!(*data.add(i), 0xff, "byte {i}");
             }
         }
     }
