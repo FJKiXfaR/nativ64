@@ -238,8 +238,7 @@ win32! {
         set_error(e)
     }
 
-    // -----------------------------------------------------------------------------------
-    // Sockets (the host's, behind a Win32 handle; see the module comment).
+    // The sockets, on the host's descriptors (see the module comment).
 
     Native fn socket(af: i32, ty: i32, protocol: i32) -> u64 {
         if af != libc::AF_INET {
