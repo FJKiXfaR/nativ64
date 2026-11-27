@@ -239,6 +239,9 @@ pub struct VkBackend<'g> {
     pub(super) swapchains: HashMap<usize, Option<super::Swapchain<'g>>>,
     pub(super) dump: Option<std::path::PathBuf>,
     pub(super) frames: u64,
+    /// Set when a submission failed with a lost device: the device does not come back, so
+    /// replaying is pointless (and every later Vulkan call would fail the same way).
+    pub(super) device_lost: bool,
     /// Tests: the most device memory the images may hold (a failing allocation beyond it).
     #[cfg(test)]
     pub(super) budget: Option<u64>,
@@ -435,6 +438,7 @@ impl<'g> VkBackend<'g> {
             swapchains: HashMap::new(),
             dump: None,
             frames: 0,
+            device_lost: false,
             #[cfg(test)]
             budget: None,
             #[cfg(test)]
@@ -444,6 +448,10 @@ impl<'g> VkBackend<'g> {
 
     /// Replay `lists` in order and wait for the GPU to be idle.
     pub fn execute(&mut self, lists: &[Vec<Command>]) {
+        if self.device_lost {
+            log_once("not replaying: the Vulkan device was lost (the title keeps running)".into());
+            return;
+        }
         // A long synchronous replay must not look like a hang to the title's watchdog.
         let _poke = WatchdogPoke::start();
         let gpu = self.gpu;
@@ -539,7 +547,16 @@ impl<'g> VkBackend<'g> {
             super::profile::stop(super::profile::Phase::Replay, replay_started);
         });
         if let Err(e) = r {
-            log_once(format!("replay submission failed: {e}"));
+            let lost = format!("{e}").contains("device has been lost");
+            log_once(format!(
+                "replay submission failed: {e} ({lists_seen} lists, {commands_seen} commands, \
+                 {} draws, {} dispatches)",
+                self.stats.drawn - drawn0,
+                self.stats.dispatched - dispatched0
+            ));
+            if lost {
+                self.device_lost = true;
+            }
         }
         self.draw.end();
         free_staging(gpu, staging);
