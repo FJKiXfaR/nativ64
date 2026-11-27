@@ -115,6 +115,35 @@ pub(super) struct Staging {
     memory: vk::DeviceMemory,
 }
 
+fn status_mib(key: &str) -> u64 {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|t| {
+            t.lines()
+                .find_map(|l| l.strip_prefix(key)?.trim().trim_end_matches("kB").trim().parse::<u64>().ok())
+        })
+        .unwrap_or(0)
+        >> 10
+}
+
+/// The host memory of the process, for the memory line: anonymous and shared (memfd) resident
+/// sizes, the pool's pages held by the title against what its file really holds, and what
+/// returning the allocator's free pages to the system gave back (`malloc_trim`).
+fn host_memory_note() -> String {
+    let before = status_mib("RssAnon:");
+    // SAFETY: plain glibc call; nothing else reads the arenas' free memory.
+    unsafe { libc::malloc_trim(0) };
+    let after = status_mib("RssAnon:");
+    let (held, file) = crate::xmem::pool_usage();
+    format!(
+        "host: anon {after} MiB (trim freed {} MiB), shmem {} MiB, xmem pages {} MiB, xmem file {} MiB",
+        before.saturating_sub(after),
+        status_mib("RssShmem:"),
+        held >> 20,
+        file >> 20
+    )
+}
+
 /// Frees staging buffers whose submission has completed (or failed before using them).
 fn free_staging(gpu: &Gpu, staging: Vec<Staging>) {
     for s in staging {
@@ -683,6 +712,7 @@ impl<'g> VkBackend<'g> {
     /// A line of memory counters (every 600 frames, and with `NATIV64_PROFILE`).
     pub(super) fn memory_line(&mut self) -> String {
         self.refresh_stats();
+        let host = host_memory_note();
         let keys = self.tex.placed_keys();
         let addresses = keys
             .iter()
@@ -692,7 +722,7 @@ impl<'g> VkBackend<'g> {
         let s = &self.stats;
         format!(
             "nativ64-gpu: frame {}: images {} ({} MiB), placed {} ({} MiB), arena {} KiB, \
-             released {}, evictions {}, wanted {}, placed keys {} over {} addresses",
+             released {}, evictions {}, wanted {}, placed keys {} over {} addresses; {host}",
             self.frames,
             s.images,
             s.image_bytes >> 20,

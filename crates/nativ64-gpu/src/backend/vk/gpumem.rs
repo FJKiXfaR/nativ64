@@ -75,6 +75,7 @@ pub struct GpuMemory<'g> {
 impl<'g> GpuMemory<'g> {
     pub fn new(gpu: &'g Gpu) -> Self {
         table::watch_gpu_changes();
+        crate::xmem::return_big_blocks_to_the_host();
         GpuMemory {
             gpu,
             imports: BTreeMap::new(),

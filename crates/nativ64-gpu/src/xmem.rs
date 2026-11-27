@@ -316,6 +316,18 @@ pub fn is_pool_backed(address: usize) -> bool {
     p.views.contains_key(&(address & !(PHYSICAL_PAGE - 1)))
 }
 
+/// The pool: bytes of the pages the title holds, and bytes the memfd really holds (`st_blocks`,
+/// holes excluded). The second stays above the first only while freed pages are not punched.
+pub fn pool_usage() -> (u64, u64) {
+    let p = pool().lock().unwrap_or_else(|e| e.into_inner());
+    let held = (p.in_use * PHYSICAL_PAGE) as u64;
+    let Some(fd) = p.fd else { return (held, 0) };
+    // SAFETY: fstat on the pool's own descriptor into a zeroed struct.
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    let ok = unsafe { libc::fstat(fd, &mut st) } == 0;
+    (held, if ok { st.st_blocks as u64 * 512 } else { 0 })
+}
+
 /// Takes `n` page frame numbers from the pool (all or none); `None` when there is no room or the
 /// file cannot grow.
 fn take_physical_pages(n: usize) -> Option<Vec<usize>> {
@@ -366,10 +378,26 @@ pub const GPU_ALLOC_ATTRIBUTES: u64 = 0x0080_0000 | CLASS_GPU;
 /// free(ptr, attributes), .. }`. Zero until the base registers it.
 static HOOKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+/// The title's heap (`malloc`, and the default `XMemAlloc`) is glibc's, whose mmap threshold
+/// grows to 32 MiB as big blocks are freed: later big blocks then come from the arenas and a
+/// free leaves them in the process. Fixed thresholds (which also stop the growth) make every
+/// block of 1 MiB or more its own mapping, `munmap`ped by `free`, and the arenas' free tops
+/// trimmed from 8 MiB.
+pub fn return_big_blocks_to_the_host() {
+    const M_TRIM_THRESHOLD: libc::c_int = -1;
+    const M_MMAP_THRESHOLD: libc::c_int = -3;
+    // SAFETY: plain glibc tunables.
+    unsafe {
+        libc::mallopt(M_MMAP_THRESHOLD, 1 << 20);
+        libc::mallopt(M_TRIM_THRESHOLD, 8 << 20);
+    }
+}
+
 /// Registers the address of the title's `__XMemAllocationHooks__` table; `XMemAlloc` and
 /// `XMemFree` go through its functions from then on.
 pub fn set_allocation_hooks(table: usize) {
     HOOKS.store(table, Ordering::Release);
+    return_big_blocks_to_the_host();
 }
 
 /// `XMemAlloc`: through the title's allocation hook when it has one, else the default allocator.
@@ -501,7 +529,9 @@ nativ64::win32! {
         }
     }
 
-    // Frees pages by number; views still mapped stay readable (they now see zeros).
+    // Frees pages by number: the file range is punched out (the memory goes back to the host)
+    // and the views still mapped become fresh zero memory of their own, which no longer
+    // reaches the file; the GPU backend is told, to drop what it imported over them.
     Native fn XMemFreePhysicalPages(n: usize, pages: *const usize) -> i32 {
         if pages.is_null() {
             return 0;
@@ -510,9 +540,22 @@ nativ64::win32! {
         for &number in std::slice::from_raw_parts(pages, n) {
             let Some(slot) = live_slot(&p, number) else { continue };
             p.live.remove(&slot);
-            p.views.retain(|_, s| *s != slot);
             p.free.push(slot);
             p.in_use -= 1;
+            let views: Vec<usize> = p.views.iter().filter(|(_, s)| **s == slot).map(|(a, _)| *a).collect();
+            for a in views {
+                p.views.remove(&a);
+                let protect = view_protect(a);
+                libc::mmap(
+                    a as *mut c_void,
+                    PHYSICAL_PAGE,
+                    host_prot(protect),
+                    libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_FIXED,
+                    -1,
+                    0,
+                );
+                nativ64::api_ms_win_core_memory::note_change(a, PHYSICAL_PAGE);
+            }
             if let Some(fd) = p.fd {
                 // Reused slots start zeroed.
                 libc::fallocate(
@@ -796,6 +839,41 @@ mod tests {
         );
         assert_eq!(XMemMapPhysicalPages(base, m, pages.as_ptr()), base);
         (base as usize, pages)
+    }
+
+    /// True when the pool file holds data in the slot's range (`SEEK_DATA`), whatever other
+    /// tests do with other slots.
+    fn slot_has_data(number: usize) -> bool {
+        let p = pool().lock().unwrap_or_else(|e| e.into_inner());
+        let slot = live_slot(&p, number).expect("live slot");
+        let at = (slot * PHYSICAL_PAGE) as libc::off_t;
+        // SAFETY: plain lseek on the pool's own descriptor.
+        let data = unsafe { libc::lseek(p.fd.unwrap(), at, libc::SEEK_DATA) };
+        data >= 0 && data < at + PHYSICAL_PAGE as libc::off_t
+    }
+
+    #[test]
+    fn freed_physical_pages_leave_the_file_and_their_views_become_private_zeros() {
+        unsafe {
+            let (base, pages) = region_with_pages(4, 4);
+            std::ptr::write_bytes(base as *mut u8, 0xab, 4 * PHYSICAL_PAGE);
+            assert!(pages.iter().all(|&n| slot_has_data(n)));
+            assert_eq!(XMemFreePhysicalPages(2, pages.as_ptr()), 1);
+            assert!(!is_pool_backed(base) && !is_pool_backed(base + PHYSICAL_PAGE));
+            assert!(is_pool_backed(base + 2 * PHYSICAL_PAGE));
+            assert_eq!((base as *const u8).read(), 0, "a freed view reads zero");
+            assert_eq!(((base + 2 * PHYSICAL_PAGE) as *const u8).read(), 0xab);
+            assert!(slot_has_data(pages[2]) && slot_has_data(pages[3]));
+            // a write through a freed view stays private: it never reaches the file, and a
+            // slot taken again starts empty
+            std::ptr::write_bytes(base as *mut u8, 0xcd, 2 * PHYSICAL_PAGE);
+            let mut again = 2usize;
+            let mut more = [0usize; 2];
+            assert_eq!(XMemAllocatePhysicalPages(0, &mut again, more.as_mut_ptr()), 1);
+            assert!(more.iter().all(|&n| !slot_has_data(n)), "reused slots start empty");
+            XMemFreePhysicalPages(2, more.as_ptr());
+            XMemFreePhysicalPages(2, pages[2..].as_ptr());
+        }
     }
 
     #[test]
