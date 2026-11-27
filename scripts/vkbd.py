@@ -29,7 +29,9 @@ UI_SET_EVBIT = 0x40045564
 UI_SET_KEYBIT = 0x40045565
 UI_DEV_CREATE = 0x5501
 UI_DEV_DESTROY = 0x5502
-EV_SYN, EV_KEY = 0, 1
+EV_SYN, EV_KEY, EV_REL = 0, 1, 2
+REL_X, REL_Y = 0, 1
+BTN_LEFT = 0x110
 KEYS = {
     "a": 28,          # Enter
     "space": 57,      # Space (also A)
@@ -50,6 +52,8 @@ KEYS = {
 def create():
     fd = os.open("/dev/uinput", os.O_RDWR | os.O_NONBLOCK)
     fcntl.ioctl(fd, UI_SET_EVBIT, EV_KEY)
+    fcntl.ioctl(fd, UI_SET_EVBIT, EV_REL)
+    fcntl.ioctl(fd, UI_SET_KEYBIT, BTN_LEFT)
     for code in set(KEYS.values()):
         fcntl.ioctl(fd, UI_SET_KEYBIT, code)
     # struct uinput_setup: input_id (4 x u16), name[80], ff_effect_max (u32) = 92 bytes
@@ -85,6 +89,19 @@ def main():
         for arg in text.split():
             if arg.startswith("w") and arg[1:].replace(".", "", 1).isdigit():
                 time.sleep(float(arg[1:]))
+            elif arg.startswith("move"):
+                dx, dy = arg[4:].split(",")
+                emit(fd, EV_REL, REL_X, int(dx))
+                emit(fd, EV_REL, REL_Y, int(dy))
+                emit(fd, EV_SYN, 0, 0)
+                time.sleep(0.2)
+            elif arg == "click":
+                emit(fd, EV_KEY, BTN_LEFT, 1)
+                emit(fd, EV_SYN, 0, 0)
+                time.sleep(0.1)
+                emit(fd, EV_KEY, BTN_LEFT, 0)
+                emit(fd, EV_SYN, 0, 0)
+                time.sleep(0.2)
             elif arg in KEYS:
                 tap(fd, KEYS[arg])
             else:
