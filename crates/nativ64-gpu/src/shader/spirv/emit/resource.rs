@@ -1165,9 +1165,6 @@ impl<'a> Tr<'a> {
         // a `buffer_*_format_*` op has no format of its own: the descriptor's (a runtime value
         // in the view record) names it, so the components are only known per candidate format
         let runtime = m.format == 0 && !address_used;
-        if runtime && !load {
-            return refuse(&format!("{} (the descriptor's format)", i.name()));
-        }
         let (bits, num) = if runtime {
             (Vec::new(), BufNum::Uint)
         } else {
@@ -1247,6 +1244,65 @@ impl<'a> Tr<'a> {
             None
         };
         if !load {
+            if let Some(fmt) = runtime_fmt {
+                // one predicated store per candidate format: the bytes a store covers depend
+                // on the format, so each candidate writes its own range
+                let tb = self.g.t_bool();
+                let tu = self.g.t_u32();
+                for &(dxgi, cbits, cnum) in KNOWN_FORMATS {
+                    if cbits.len() < n {
+                        continue;
+                    }
+                    let bytes: u32 = cbits[..n].iter().map(|b| b / 8).sum();
+                    let dwords = bytes.div_ceil(4) as usize;
+                    let mut words = vec![self.g.k(0); dwords];
+                    let mut bit = 0u32;
+                    for (j, &b) in cbits.iter().take(n).enumerate() {
+                        let Some(&d) = c.srcs[0].get(j) else {
+                            return bad("a buffer store with too few data dwords");
+                        };
+                        let d = self.bits_of(d);
+                        let raw = self.pack_component(d, b, cnum);
+                        let shift = bit % 32;
+                        let at = (bit / 32) as usize;
+                        let raw = if shift == 0 {
+                            raw
+                        } else {
+                            let sh = self.g.k(shift);
+                            self.g.op(Op::ShiftLeftLogical, tu, &[raw, sh])
+                        };
+                        words[at] = self.g.op(Op::BitwiseOr, tu, &[words[at], raw]);
+                        bit += b;
+                    }
+                    let want = self.g.k(dxgi);
+                    let is = self.g.op(Op::IEqual, tb, &[fmt, want]);
+                    for (k, &w) in words.iter().enumerate() {
+                        let kk = k as u32;
+                        let a = self.add_k64(base, u64::from(4 * kk));
+                        let end = self.add_k64(off, u64::from(4 * (kk + 1)));
+                        let in_range = self.g.op(Op::ULessThanEqual, tb, &[end, buf.size]);
+                        let ok = self.and(in_range, Some(is));
+                        let ok = self.and(ok, c.active);
+                        let whole = 4 * (kk + 1) <= bytes;
+                        if whole {
+                            self.guarded(Some(ok), |t| {
+                                t.bda_store_u32(a, w);
+                                Ok(())
+                            })?;
+                        } else {
+                            let old = self.guarded_load(a, ok)?;
+                            let kept = self.g.k(u32::MAX << (8 * (bytes - 4 * kk)));
+                            let old = self.g.op(Op::BitwiseAnd, tu, &[old, kept]);
+                            let merged = self.g.op(Op::BitwiseOr, tu, &[old, w]);
+                            self.guarded(Some(ok), |t| {
+                                t.bda_store_u32(a, merged);
+                                Ok(())
+                            })?;
+                        }
+                    }
+                }
+                return Ok(Some(Vec::new()));
+            }
             // pack the components, then write whole dwords (the last one merges with memory
             // when the store does not cover it)
             let mut words = vec![self.g.k(0); dwords as usize];
