@@ -463,6 +463,40 @@ pub(in crate::shader::spirv) fn analyze(
     // a descriptor operand still resolves by its slot. A phi nothing reads cannot be one: the
     // title's programs keep dead phis of half-built descriptors.
     let numeric = |s: &Src| matches!(s, Src::Val(v) if numbers.contains(v));
+    // the values that reach a descriptor operand: a phi of loaded words is only refused when
+    // it (or a phi it feeds) is used as a descriptor
+    let mut descriptors: HashSet<Val> = HashSet::new();
+    for blk in &f.blocks {
+        for i in &blk.insts {
+            let n = i.srcs.len();
+            for (j, s) in i.srcs.iter().enumerate() {
+                if descriptor_operand(i, j, n) {
+                    for x in s {
+                        if let Src::Val(v) = x {
+                            descriptors.insert(*v);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    loop {
+        let before = descriptors.len();
+        for blk in &f.blocks {
+            for p in &blk.phis {
+                if descriptors.contains(&p.dst) {
+                    for (_, s) in &p.args {
+                        if let Src::Val(v) = s {
+                            descriptors.insert(*v);
+                        }
+                    }
+                }
+            }
+        }
+        if descriptors.len() == before {
+            break;
+        }
+    }
     let mut used: HashSet<Val> = HashSet::new();
     for blk in &f.blocks {
         for i in &blk.insts {
@@ -489,7 +523,8 @@ pub(in crate::shader::spirv) fn analyze(
     }
     for blk in &f.blocks {
         for p in &blk.phis {
-            if a.loaded.contains(&p.dst) || !used.contains(&p.dst) {
+            if a.loaded.contains(&p.dst) || !used.contains(&p.dst) || !descriptors.contains(&p.dst)
+            {
                 continue;
             }
             let sources = |f: &dyn Fn(&Src) -> bool| p.args.iter().any(|(_, s)| f(s));
