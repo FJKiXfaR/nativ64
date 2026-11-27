@@ -97,7 +97,7 @@ unsafe fn release(p: *mut c_void) -> bool {
 }
 
 /// `HeapAlloc`/`LocalAlloc`: flags are checked, then a header block is malloc'ed.
-unsafe fn heap_alloc(flags: u32, size: usize, known: u32) -> *mut c_void {
+pub(crate) unsafe fn heap_alloc(flags: u32, size: usize, known: u32) -> *mut c_void {
     if flags & !known != 0 {
         return fail(ERROR_INVALID_FLAGS);
     }

@@ -225,6 +225,201 @@ unsafe fn lc_map_string(
     out.len() as i32
 }
 
+const FORMAT_MESSAGE_ALLOCATE_BUFFER: u32 = 0x100;
+const FORMAT_MESSAGE_IGNORE_INSERTS: u32 = 0x200;
+const FORMAT_MESSAGE_FROM_STRING: u32 = 0x400;
+const FORMAT_MESSAGE_FROM_HMODULE: u32 = 0x800;
+const FORMAT_MESSAGE_FROM_SYSTEM: u32 = 0x1000;
+const FORMAT_MESSAGE_ARGUMENT_ARRAY: u32 = 0x2000;
+const ERROR_NOT_ENOUGH_MEMORY: u32 = 8;
+
+/// The text of a system message this process can name: the common Win32 errors, otherwise a
+/// generic line with the number (there is no message table on the host).
+fn system_message(message_id: u32) -> String {
+    match message_id {
+        0 => "The operation completed successfully.".to_string(),
+        2 => "The system cannot find the file specified.".to_string(),
+        3 => "The system cannot find the path specified.".to_string(),
+        5 => "Access is denied.".to_string(),
+        6 => "The handle is invalid.".to_string(),
+        8 => "Not enough memory resources are available to process this command.".to_string(),
+        87 => "The parameter is incorrect.".to_string(),
+        122 => "The data area passed to a system call is too small.".to_string(),
+        183 => "Cannot create a file when that file already exists.".to_string(),
+        1004 => "Invalid flags.".to_string(),
+        n => format!("Unknown error {n}."),
+    }
+}
+
+/// Reads a NUL-terminated narrow string.
+unsafe fn read_cstr(p: *const u8) -> String {
+    let mut v = Vec::new();
+    if p.is_null() {
+        return String::new();
+    }
+    loop {
+        let b = unsafe { *p.add(v.len()) };
+        if b == 0 {
+            break;
+        }
+        v.push(b);
+    }
+    String::from_utf8_lossy(&v).into_owned()
+}
+
+/// Expands `%1`..`%9` inserts (`%%` is a literal `%`); strings come from the va_list slots.
+unsafe fn expand_inserts(template: &str, args: *const u64) -> String {
+    let mut out = String::new();
+    let mut chars = template.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '%' {
+            out.push(c);
+            continue;
+        }
+        match chars.peek() {
+            Some('%') => {
+                chars.next();
+                out.push('%');
+            }
+            Some(d) if d.is_ascii_digit() && *d != '0' => {
+                let n = d.to_digit(10).unwrap() as usize;
+                chars.next();
+                if args.is_null() {
+                    continue;
+                }
+                let p = unsafe { args.add(n - 1).read_unaligned() } as *const u16;
+                if p.is_null() {
+                    continue;
+                }
+                let mut v = Vec::new();
+                loop {
+                    let u = unsafe { p.add(v.len()).read_unaligned() };
+                    if u == 0 {
+                        break;
+                    }
+                    v.push(u);
+                }
+                out.push_str(&String::from_utf16_lossy(&v));
+            }
+            _ => out.push('%'),
+        }
+    }
+    out
+}
+
+/// `FormatMessageW`/`FormatMessageA`: FROM_STRING with `%n` inserts, FROM_SYSTEM/FROM_HMODULE
+/// with a small built-in message table, and ALLOCATE_BUFFER through `HeapAlloc`.
+unsafe fn format_message(
+    flags: u32,
+    source: *const std::ffi::c_void,
+    message_id: u32,
+    buffer: *mut std::ffi::c_void,
+    size: u32,
+    args: *const u64,
+    wide: bool,
+) -> u32 {
+    let from_string = flags & FORMAT_MESSAGE_FROM_STRING != 0;
+    let from_module = flags & FORMAT_MESSAGE_FROM_HMODULE != 0;
+    let from_system = flags & FORMAT_MESSAGE_FROM_SYSTEM != 0;
+    if [from_string, from_module, from_system]
+        .iter()
+        .filter(|f| **f)
+        .count()
+        > 1
+    {
+        set_last_error(ERROR_INVALID_FLAGS);
+        return 0;
+    }
+    let template = if from_string {
+        if wide {
+            unsafe { read_wstr(source as *const u16) }.unwrap_or_default()
+        } else {
+            unsafe { read_cstr(source as *const u8) }
+        }
+    } else if from_module || from_system {
+        system_message(message_id)
+    } else {
+        set_last_error(ERROR_INVALID_PARAMETER);
+        return 0;
+    };
+    let text = if flags & FORMAT_MESSAGE_IGNORE_INSERTS != 0 {
+        // Inserts are left alone, but a doubled percent is still one percent.
+        template.replace("%%", "%")
+    } else if from_string && args.is_null() {
+        template
+    } else {
+        unsafe { expand_inserts(&template, args) }
+    };
+    let _ = FORMAT_MESSAGE_ARGUMENT_ARRAY;
+    if wide {
+        let units: Vec<u16> = text.encode_utf16().collect();
+        let need = units.len() as u32 + 1;
+        if flags & FORMAT_MESSAGE_ALLOCATE_BUFFER != 0 {
+            let bytes = need as usize * 2;
+            let p = unsafe { crate::api_ms_win_core_heap::heap_alloc(0, bytes, 0) } as *mut u16;
+            if p.is_null() {
+                set_last_error(ERROR_NOT_ENOUGH_MEMORY);
+                return 0;
+            }
+            for (i, u) in units.iter().enumerate() {
+                unsafe { p.add(i).write_unaligned(*u) };
+            }
+            unsafe { p.add(units.len()).write(0) };
+            unsafe { (buffer as *mut *mut u16).write_unaligned(p) };
+            return units.len() as u32;
+        }
+        if buffer.is_null() || size == 0 {
+            set_last_error(ERROR_INVALID_PARAMETER);
+            return 0;
+        }
+        if size < need {
+            set_last_error(ERROR_INSUFFICIENT_BUFFER);
+            return 0;
+        }
+        let b = buffer as *mut u16;
+        for (i, u) in units.iter().enumerate() {
+            unsafe { b.add(i).write_unaligned(*u) };
+        }
+        unsafe { b.add(units.len()).write(0) };
+        units.len() as u32
+    } else {
+        let mut bytes: Vec<u8> = text
+            .chars()
+            .map(|c| {
+                if c as u32 <= 0xff {
+                    c as u32 as u8
+                } else {
+                    b'?'
+                }
+            })
+            .collect();
+        let need = bytes.len() as u32 + 1;
+        if flags & FORMAT_MESSAGE_ALLOCATE_BUFFER != 0 {
+            let p =
+                unsafe { crate::api_ms_win_core_heap::heap_alloc(0, need as usize, 0) } as *mut u8;
+            if p.is_null() {
+                set_last_error(ERROR_NOT_ENOUGH_MEMORY);
+                return 0;
+            }
+            bytes.push(0);
+            unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len()) };
+            unsafe { (buffer as *mut *mut u8).write_unaligned(p) };
+            return bytes.len() as u32 - 1;
+        }
+        if buffer.is_null() || size == 0 {
+            set_last_error(ERROR_INVALID_PARAMETER);
+            return 0;
+        }
+        if size < need {
+            set_last_error(ERROR_INSUFFICIENT_BUFFER);
+            return 0;
+        }
+        bytes.push(0);
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer as *mut u8, bytes.len()) };
+        bytes.len() as u32 - 1
+    }
+}
+
 win32! {
     module "api-ms-win-core-localization" => "kernel32";
     // The user's locale name, e.g. `en-US`.
@@ -281,6 +476,15 @@ win32! {
         unsafe { lc_map_string(locale, flags, src, cch_src, dst, cch_dst) }
     }
 
+
+    Native fn FormatMessageW(flags: u32, source: *const c_void, message_id: u32, _lang: u32,
+                             buffer: *mut c_void, size: u32, args: *const u64) -> u32 {
+        unsafe { format_message(flags, source, message_id, buffer, size, args, true) }
+    }
+    Native fn FormatMessageA(flags: u32, source: *const c_void, message_id: u32, _lang: u32,
+                             buffer: *mut c_void, size: u32, args: *const u64) -> u32 {
+        unsafe { format_message(flags, source, message_id, buffer, size, args, false) }
+    }
 }
 
 #[cfg(test)]
@@ -471,6 +675,122 @@ mod tests {
                 0
             );
             assert_eq!(GetLastError(), ERROR_INVALID_FLAGS);
+        }
+    }
+
+    #[test]
+    fn format_message_from_string() {
+        let w = |s: &str| s.encode_utf16().chain([0]).collect::<Vec<u16>>();
+        let arg = w("world");
+        unsafe {
+            let template = w("Hello %1! 100%%");
+            let args = [arg.as_ptr() as u64, 0u64];
+            let mut out = [0u16; 64];
+            // `%1` becomes "world" and `%%` a literal percent.
+            let n = FormatMessageW(
+                FORMAT_MESSAGE_FROM_STRING,
+                template.as_ptr().cast(),
+                0,
+                0,
+                out.as_mut_ptr().cast(),
+                out.len() as u32,
+                args.as_ptr(),
+            );
+            assert_eq!(n, 17);
+            assert_eq!(String::from_utf16_lossy(&out[..17]), "Hello world! 100%");
+            // IGNORE_INSERTS leaves the template alone.
+            let n = FormatMessageW(
+                FORMAT_MESSAGE_FROM_STRING | FORMAT_MESSAGE_IGNORE_INSERTS,
+                template.as_ptr().cast(),
+                0,
+                0,
+                out.as_mut_ptr().cast(),
+                out.len() as u32,
+                std::ptr::null(),
+            );
+            assert_eq!(
+                String::from_utf16_lossy(&out[..n as usize]),
+                "Hello %1! 100%"
+            );
+            // ALLOCATE_BUFFER returns a LocalAlloc block.
+            let mut p: *mut u16 = std::ptr::null_mut();
+            let n = FormatMessageW(
+                FORMAT_MESSAGE_FROM_STRING | FORMAT_MESSAGE_ALLOCATE_BUFFER,
+                template.as_ptr().cast(),
+                0,
+                0,
+                (&mut p as *mut *mut u16).cast(),
+                0,
+                args.as_ptr(),
+            );
+            assert_eq!(n, 17);
+            assert_eq!(
+                String::from_utf16_lossy(std::slice::from_raw_parts(p, 17)),
+                "Hello world! 100%"
+            );
+            assert_eq!(
+                crate::api_ms_win_core_heap::LocalFree(p.cast()),
+                std::ptr::null_mut()
+            );
+        }
+    }
+
+    #[test]
+    fn format_message_system_and_errors() {
+        let w = |s: &str| s.encode_utf16().chain([0]).collect::<Vec<u16>>();
+        unsafe {
+            let mut out = [0u16; 96];
+            let n = FormatMessageW(
+                FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                std::ptr::null(),
+                2,
+                0,
+                out.as_mut_ptr().cast(),
+                out.len() as u32,
+                std::ptr::null(),
+            );
+            assert!(n > 0);
+            assert!(String::from_utf16_lossy(&out[..n as usize]).contains("cannot find the file"));
+            // A tiny buffer fails and says how, and the ANSI variant maps to bytes.
+            assert_eq!(
+                FormatMessageW(
+                    FORMAT_MESSAGE_FROM_SYSTEM,
+                    std::ptr::null(),
+                    5,
+                    0,
+                    out.as_mut_ptr().cast(),
+                    4,
+                    std::ptr::null()
+                ),
+                0
+            );
+            assert_eq!(GetLastError(), ERROR_INSUFFICIENT_BUFFER);
+            let mut a = [0u8; 64];
+            let n = FormatMessageA(
+                FORMAT_MESSAGE_FROM_SYSTEM,
+                std::ptr::null(),
+                5,
+                0,
+                a.as_mut_ptr().cast(),
+                a.len() as u32,
+                std::ptr::null(),
+            );
+            assert_eq!(n, 17);
+            assert_eq!(&a[..n as usize], b"Access is denied.");
+            // FROM_STRING with the ANSI template.
+            let template = b"file %1".to_vec();
+            let arg = w("x.txt");
+            let args = [arg.as_ptr() as u64];
+            let n = FormatMessageA(
+                FORMAT_MESSAGE_FROM_STRING,
+                template.as_ptr().cast(),
+                0,
+                0,
+                a.as_mut_ptr().cast(),
+                a.len() as u32,
+                args.as_ptr(),
+            );
+            assert_eq!(&a[..n as usize], b"file x.txt");
         }
     }
 }
