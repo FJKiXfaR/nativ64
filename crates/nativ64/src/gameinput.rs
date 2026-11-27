@@ -626,6 +626,29 @@ static KEYBOARD_DEVICE: LazyLock<usize> = LazyLock::new(|| {
     device as usize
 });
 
+/// Whether the keyboard device is announced (`NATIV64_KEYBOARD_DEVICE=1`): with it there the
+/// title moves its menus onto the keyboard reading, whose keys it reads in a way not matched
+/// yet, so the pad-only path stays the default until that is understood.
+static KEYBOARD_FORCE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+fn keyboard_announced() -> bool {
+    // 0: the environment decides (once), 1: forced on by a test, 2: forced off
+    match KEYBOARD_FORCE.load(std::sync::atomic::Ordering::Relaxed) {
+        1 => return true,
+        2 => return false,
+        _ => {}
+    }
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        std::env::var("NATIV64_KEYBOARD_DEVICE").is_ok_and(|v| v != "0" && !v.is_empty())
+    })
+}
+
+/// Forces the keyboard device on or off (tests; the environment decides in a run).
+pub fn set_keyboard_announced(on: bool) {
+    KEYBOARD_FORCE.store(if on { 1 } else { 2 }, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// The virtual keyboard, as the pointer titles get.
 pub fn keyboard_device() -> *mut c_void {
     *KEYBOARD_DEVICE as *mut c_void
@@ -1071,7 +1094,9 @@ fn selects_pad(kinds: u32, device: *mut c_void) -> bool {
 
 /// Whether a query for `kinds` on `device` (NULL: any) reaches the virtual keyboard.
 fn selects_keyboard(kinds: u32, device: *mut c_void) -> bool {
-    kinds & KIND_KEYBOARD != 0 && (device.is_null() || device == keyboard_device())
+    keyboard_announced()
+        && kinds & KIND_KEYBOARD != 0
+        && (device.is_null() || device == keyboard_device())
 }
 
 unsafe extern "win64" fn get_current_reading(
@@ -1087,6 +1112,15 @@ unsafe extern "win64" fn get_current_reading(
     let wanted = selects_pad(kinds, dev) || selects_keyboard(kinds, dev);
     if kinds & KIND_KEYBOARD != 0 {
         kb_log("current reading (keyboard)");
+    }
+    // every kind the title asks for (a mouse query, say, is a device we do not have)
+    if std::env::var_os("NATIV64_KB_LOG").is_some() {
+        static KINDS: std::sync::Mutex<Vec<u32>> = std::sync::Mutex::new(Vec::new());
+        let mut seen = KINDS.lock().unwrap_or_else(|e| e.into_inner());
+        if !seen.contains(&kinds) {
+            eprintln!("nativ64: kb current reading kinds {kinds:#x} (device {dev:p})");
+            seen.push(kinds);
+        }
     }
     hand(out, wanted.then_some(entry))
 }
@@ -1530,6 +1564,7 @@ mod tests {
     use crate::com::{E_NOINTERFACE, E_POINTER, IID_IUNKNOWN};
 
     fn create() -> (*mut Object, &'static Vtbl) {
+        announce_keyboard();
         let mut o: *mut Object = std::ptr::null_mut();
         assert_eq!(unsafe { GameInputCreate(&mut o) }, S_OK);
         assert!(!o.is_null());
@@ -1776,6 +1811,12 @@ mod tests {
             .push((token, ctx as usize, kind(reading)));
     }
 
+    /// The tests run with the keyboard device announced (the lookups and reading tests expect
+    /// it); a run leaves the environment to decide.
+    fn announce_keyboard() {
+        set_keyboard_announced(true);
+    }
+
     #[test]
     fn a_reading_callback_sees_each_change() {
         unsafe {
@@ -1968,6 +2009,7 @@ mod tests {
     #[test]
     fn lookups_and_dispatchers() {
         unsafe {
+            announce_keyboard();
             let (o, v) = create();
             let np = std::ptr::null_mut();
             let mut out: *mut c_void = 8 as *mut c_void;
