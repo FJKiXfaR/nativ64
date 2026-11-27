@@ -126,7 +126,24 @@ pub fn take_gpu_changes() -> Vec<(usize, usize)> {
     if !WATCHED.load(std::sync::atomic::Ordering::Relaxed) {
         return Vec::new();
     }
-    std::mem::take(&mut *CHANGES.lock().unwrap_or_else(|e| e.into_inner()))
+    let raw = std::mem::take(&mut *CHANGES.lock().unwrap_or_else(|e| e.into_inner()));
+    if raw.len() <= 1 {
+        return raw;
+    }
+    // A bulk map/decommit records one range per page; merge them so the GPU side matches a few
+    // ranges instead of tens of thousands (its per-import overlap test is linear in them).
+    let mut sorted = raw;
+    sorted.sort_unstable();
+    let mut merged: Vec<(usize, usize)> = Vec::with_capacity(sorted.len());
+    for (at, len) in sorted {
+        match merged.last_mut() {
+            Some((start, n)) if at <= start.saturating_add(*n) => {
+                *n = (*n).max(at.saturating_add(len) - *start);
+            }
+            _ => merged.push((at, len)),
+        }
+    }
+    merged
 }
 
 fn align_up(v: usize, a: usize) -> usize {

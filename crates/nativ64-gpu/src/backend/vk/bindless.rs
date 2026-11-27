@@ -575,12 +575,17 @@ impl<'g> ViewTable<'g> {
         if changed.is_empty() {
             return;
         }
+        let reset_started = std::time::Instant::now();
         // A heavy churn of ranges: start over rather than search each record against all of them.
-        if changed.len() > 1024 {
+        if changed.len() > 1 << 20 {
             self.written = 0;
             self.retry.clear();
             self.spans.clear();
             self.dirty.clear();
+            eprintln!(
+                "nativ64-gpu: view table: full reset over {} ranges",
+                changed.len()
+            );
             return;
         }
         let mut ranges = changed.to_vec();
@@ -615,6 +620,15 @@ impl<'g> ViewTable<'g> {
         }
         // The views that could not translate stay in `retry`: the memory they named may be
         // committed now.
+        if reset_started.elapsed().as_millis() >= 5 {
+            eprintln!(
+                "nativ64-gpu: view table reset: {} ms ({} ranges, {} spans, {} dirty)",
+                reset_started.elapsed().as_millis(),
+                changed.len(),
+                self.spans.len(),
+                self.dirty.len()
+            );
+        }
     }
 
     fn grow(&mut self, need: usize) -> Result<()> {
@@ -660,10 +674,9 @@ impl<'g> ViewTable<'g> {
         // the records whose memory changed, then the ones not translated before, then the new
         // views
         let dirty = std::mem::take(&mut self.dirty);
+        let dirty_len = dirty.len();
         for index in dirty {
-            let v = crate::d3d12::descriptor::views_from(index)
-                .into_iter()
-                .next();
+            let v = crate::d3d12::descriptor::view_at(index);
             match v.as_ref().map_or(Rec::None, |v| record_of(v, mem)) {
                 Rec::Buffer(r) => self.write_record(index, &r),
                 Rec::Retry => {
@@ -688,9 +701,7 @@ impl<'g> ViewTable<'g> {
         };
         let again_len = again.len();
         for index in again {
-            let v = crate::d3d12::descriptor::views_from(index)
-                .into_iter()
-                .next();
+            let v = crate::d3d12::descriptor::view_at(index);
             match v.as_ref().map_or(Rec::None, |v| record_of(v, mem)) {
                 Rec::Buffer(r) => self.write_record(index, &r),
                 Rec::Retry => self.retry.push(index),
@@ -718,7 +729,7 @@ impl<'g> ViewTable<'g> {
         let total = started.elapsed();
         if total.as_millis() >= 10 {
             eprintln!(
-                "nativ64-gpu: view table update: {total:?} (fetch {fetch_done:?}, {} views from {first}, {} retried)",
+                "nativ64-gpu: view table update: {total:?} (fetch {fetch_done:?}, {} views from {first}, {dirty_len} dirty, {} retried)",
                 views.len(),
                 again_len
             );
