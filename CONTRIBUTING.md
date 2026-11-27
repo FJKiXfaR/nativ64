@@ -3,12 +3,38 @@
 Thanks for helping. Everything happens on GitHub: issues for questions and claims, pull
 requests for code.
 
+## Review rules (read first)
+
+nativ64 ships no game files and never will. Users own and dump their own copy. Maintainers
+check **every** pull request for the points below (the legal ones first); if one is broken we will ask you to
+remove the content and to squash it out of the branch history (a later commit that deletes
+it is not enough) before merging. A pull request that keeps it is closed.
+
+- **Never name the game, its publisher or its executable**, in code, docs, tests, commit
+  messages, issues, pull requests or comments. Write "the title".
+- **Never commit** game files, console system files, dumps, extracted shader blobs,
+  textures, audio, logs, screenshots or crash reports that contain game data or game
+  strings. This covers issue and pull request attachments too. The only exception is the
+  aggregate coverage chart in `docs/`.
+- **Clean room.** No code copied from proprietary SDKs or leaked sources, and none from GPL
+  or LGPL projects, Wine included: this project is MIT OR Apache-2.0. Read them for facts
+  (behaviour, layouts, error codes), then write your own code and tests. Code from
+  permissively licensed projects is fine when credited in the file and in `THIRD_PARTY.md`.
+- Reimplement from public documentation and observed behaviour.
+- **Pure native only.** No Wine, Proton, DXVK, vkd3d or vkd3d-proton, dxil-spirv, or any
+  shim or dependency built over them. Reference projects are read for facts only.
+- **Memory discipline.** RAM and VRAM frugality from the start: every cache has a bound
+  or a retirement, no CPU copy is kept once uploaded, staging memory is freed or reused,
+  and GPU imports and images are released when the title frees their memory. A pull
+  request that touches memory paths says how memory was measured.
+
 ## Pick something
 
 1. Open the import map (`docs/import-map.md` explains how to draw it) or browse the
    issues labelled `good first issue`.
-2. Comment on the issue, or open one, naming the functions you take, so two people
-   don't write the same thing.
+2. **Claim before implementing**: comment on the issue, or open one, naming the functions
+   you take, so two people don't write the same thing. Unclaimed work may be taken by
+   someone else after a few days of silence.
 3. Prefer a coherent group (say, `api-ms-win-crt-string` `strncpy_s`/`strcpy_s`/`strcat_s`)
    over scattered functions.
 
@@ -38,15 +64,11 @@ cargo test
 
 CI runs the same checks.
 
-## Rules
+## Other rules
 
-- **Never commit game files, console system files, or anything extracted or derived from
-  them** (dumps, import lists, logs, screenshots of the game). The only exception is the
-  aggregate coverage chart in `docs/`. Pull requests containing such files are closed.
-- Reimplement from public documentation and observed behaviour. Do not paste code from
-  leaked or proprietary sources. Code from other open-source projects is welcome when
-  its license allows it: credit it in the file.
 - English for code, comments, commits and issues.
+- Bug reports: attach logs only after removing anything that comes from the game (paths
+  inside its package, strings, resource names). When in doubt, describe it instead.
 
 By contributing, you agree that your work is licensed under MIT or Apache-2.0, like the
 rest of the project.

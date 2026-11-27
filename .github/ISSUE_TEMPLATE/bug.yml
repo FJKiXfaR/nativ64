@@ -23,6 +23,19 @@ body:
       description: Minimal reproduction (a test case is ideal). Never attach game files or anything extracted from them.
     validations:
       required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant output only. Remove anything that comes from the game (strings, file or resource names, paths inside its package) and never attach dumps, screenshots or files from it. Do not name the game or its publisher: say "the title".
+      render: text
+  - type: checkboxes
+    id: legal
+    attributes:
+      label: Legal
+      options:
+        - label: This report contains no game files, no game data or strings, and no name of the game, its publisher or its executable
+          required: true
   - type: input
     id: env
     attributes:
