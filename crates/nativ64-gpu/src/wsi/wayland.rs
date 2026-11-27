@@ -10,7 +10,7 @@
 //! The one exception is `xdg_wm_base`, which lives on its own event queue served by a small
 //! helper thread (`ping_loop`): the compositor's `ping` must be answered even while the title
 //! does not poll for a long time (loading), or the window is flagged "not responding". The
-//! helper reads the shared socket with the usual `prepare_read` / `poll` (100 ms timeout, so it
+//! helper polls the shared socket without holding a read intent (20 ms timeout, so it
 //! sees the stop flag) and dispatches only its own queue; everything created from `xdg_wm_base`
 //! (`xdg_surface`, `xdg_toplevel`) is still put on the main queue. Events it reads for the main
 //! queue just wait there for the next `poll_events`. The thread is joined when the backend drops.
@@ -189,33 +189,60 @@ impl Drop for PingThread {
     }
 }
 
+/// How long the ping thread sleeps in `poll` before it re-checks its queue and the stop flag.
+/// Short, because another thread (the title's pump, the Vulkan WSI) may read the shared socket
+/// and park the `ping` in our queue without waking our `poll`.
+const PING_POLL_MS: i32 = 20;
+
+/// Wait until `fd` is readable or `timeout_ms` elapsed, WITHOUT holding a libwayland read intent
+/// (a held intent makes every other reader of the connection wait for us).
+fn wait_readable(fd: std::os::fd::RawFd, timeout_ms: i32) -> bool {
+    let mut p = libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    // SAFETY: one valid pollfd for the duration of the call.
+    unsafe { libc::poll(&mut p, 1, timeout_ms) > 0 }
+}
+
+/// One turn of the ping thread: answer what is queued, then read the socket if it has data.
+/// Returns false when the connection is gone.
+fn ping_step(conn: &Connection, queue: &mut EventQueue<Ping>, st: &mut Ping) -> bool {
+    if queue.dispatch_pending(st).is_err() || flush(conn).is_err() {
+        return false;
+    }
+    let Some(guard) = queue.prepare_read() else {
+        // Events are pending in libwayland's own queue: let them be dispatched.
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        return true;
+    };
+    // Poll before committing: the intent is only held for the instant of the read, so a busy
+    // title thread can never be stuck behind us, nor we behind it for long.
+    if !wait_readable(guard.connection_fd().as_raw_fd(), 0) {
+        drop(guard);
+        let fd = conn.backend().poll_fd().as_raw_fd();
+        wait_readable(fd, PING_POLL_MS);
+        return true;
+    }
+    match guard.read() {
+        Err(wayland_client::backend::WaylandError::Io(e))
+            if e.kind() == std::io::ErrorKind::WouldBlock =>
+        {
+            true
+        }
+        Err(_) => false,
+        Ok(_) => true,
+    }
+}
+
 /// Serve `queue` (the `xdg_wm_base` queue) until `stop` is set or the connection fails.
 fn ping_loop(conn: Connection, mut queue: EventQueue<Ping>, stop: Arc<AtomicBool>) {
     let mut st = Ping;
     while !stop.load(Ordering::Relaxed) {
-        if queue.dispatch_pending(&mut st).is_err() || flush(&conn).is_err() {
+        if !ping_step(&conn, &mut queue, &mut st) {
+            eprintln!("nativ64-gpu: wayland: ping thread stopped (connection lost)");
             return;
-        }
-        let Some(guard) = queue.prepare_read() else {
-            // Events are pending in libwayland's own queue: let them be dispatched.
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            continue;
-        };
-        let mut p = libc::pollfd {
-            fd: guard.connection_fd().as_raw_fd(),
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        // SAFETY: one valid pollfd; the guard keeps the fd alive.
-        if unsafe { libc::poll(&mut p, 1, 100) } > 0 {
-            match guard.read() {
-                Err(wayland_client::backend::WaylandError::Io(e))
-                    if e.kind() == std::io::ErrorKind::WouldBlock => {}
-                Err(_) => return,
-                Ok(_) => {}
-            }
-        } else {
-            drop(guard);
         }
     }
 }
@@ -733,6 +760,22 @@ mod tests {
         assert!(!apply_key(&mut set, 28, false), "release of a key not held");
         assert!(apply_key(&mut set, 57, false));
         assert_eq!(keys_mask(&set), 0);
+    }
+
+    #[test]
+    fn wait_readable_reports_data_and_times_out() {
+        let mut fds = [0i32; 2];
+        // SAFETY: a valid two-int array for pipe(2).
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        assert!(!wait_readable(fds[0], 0));
+        // SAFETY: writing one byte from a valid buffer to the pipe's write end.
+        assert_eq!(unsafe { libc::write(fds[1], b"x".as_ptr().cast(), 1) }, 1);
+        assert!(wait_readable(fds[0], 0));
+        // SAFETY: closing the two fds this test opened.
+        unsafe {
+            libc::close(fds[0]);
+            libc::close(fds[1]);
+        }
     }
 
     #[test]
