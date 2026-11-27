@@ -323,7 +323,11 @@ pub fn type_masks(f: &Func) -> Masks {
     uniform_masks(f, &mut m);
     for blk in &f.blocks {
         for inst in &blk.insts {
-            if let Some(name) = cross_lane_use(f, &m, inst) {
+            if let Some(name) = cross_lane_use(&m, inst) {
+                // `v_readfirstlane` of a value every lane holds is a copy.
+                if uniform_readfirstlane(f, &m, inst) {
+                    continue;
+                }
                 m.cross_lane.push(CrossLane {
                     at: inst.instr.at,
                     name,
@@ -430,63 +434,10 @@ fn uniform_masks(f: &Func, m: &mut Masks) {
     }
 }
 
-/// The name under which `inst` crosses lanes, when it does.
-pub fn cross_lane_use(f: &Func, m: &Masks, inst: &Inst) -> Option<String> {
-    let i = &inst.instr;
-    let n = i.name();
-    if i.dpp.is_some() {
-        return Some(format!("{} (dpp)", n));
-    }
-    // `v_readfirstlane_b32` of a value that is already the same in every lane reads it: no
-    // cross-lane move happens (`structure/tests.rs`, chunk 7b partial). A per-lane source still
-    // crosses lanes.
-    if n.starts_with("v_readfirstlane") {
-        let src = inst.srcs.first().and_then(|d| d.first()).copied();
-        match src {
-            Some(Src::Const(_) | Src::Undef) => return None,
-            Some(Src::Val(v)) if wave_uniform(f, m, v, &mut std::collections::HashSet::new()) => {
-                return None
-            }
-            _ => {}
-        }
-    }
-    if cross_lane_by_nature(i) {
-        return Some(i.name().to_string());
-    }
-    let reads_mask = inst.srcs.iter().flatten().any(|s| m.is_mask_src(s));
-    if !reads_mask {
-        return None;
-    }
-    if let Some(op) = mask_op(i) {
-        // fine when it types: every input is a mask, a constant or a scalar bit
-        return if mask_srcs(inst, op).all(|s| m.bit_src_ok(&s)) {
-            None
-        } else {
-            Some(i.name().to_string())
-        };
-    }
-    if is_vector(i) && takes_lane_mask(i.name()) {
-        let n = inst.srcs.len();
-        let others = inst.srcs[..n.saturating_sub(1)]
-            .iter()
-            .flatten()
-            .any(|s| m.is_mask_src(s));
-        if !others {
-            return None;
-        }
-    }
-    Some(i.name().to_string())
-}
-
-/// Whether `v` is the same in every lane: a scalar, a constant, or a vector value computed
-/// from such values by ALU instructions (and by earlier readlanes, which broadcast).
-pub fn wave_uniform(
-    f: &Func,
-    m: &Masks,
-    v: Val,
-    seen: &mut std::collections::HashSet<Val>,
-) -> bool {
+/// Whether the VGPR value `v` is the same in every lane over the active lanes (the strict test of the wave survey).
+pub fn wave_uniform(f: &Func, m: &Masks, v: Val, seen: &mut HashSet<Val>) -> bool {
     use crate::shader::gfx10::Enc;
+    use crate::shader::ir::{Reg, Src, ValDef};
     if !seen.insert(v) {
         return true;
     }
@@ -497,7 +448,7 @@ pub fn wave_uniform(
     if !matches!(info.reg, Reg::V(_)) {
         return matches!(info.reg, Reg::S(_) | Reg::T(_) | Reg::M0);
     }
-    let src_ok = |s: &Src, seen: &mut std::collections::HashSet<Val>| match s {
+    let src_ok = |s: &Src, seen: &mut HashSet<_>| match s {
         Src::Val(x) => wave_uniform(f, m, *x, seen),
         _ => true,
     };
@@ -529,6 +480,51 @@ pub fn wave_uniform(
             inst.srcs.iter().flatten().all(|s| src_ok(s, seen))
         }
     }
+}
+
+/// A `v_readfirstlane` whose source is the same in every lane: a plain copy, no lane exchange.
+fn uniform_readfirstlane(f: &Func, m: &Masks, inst: &Inst) -> bool {
+    inst.instr.name().starts_with("v_readfirstlane")
+        && inst.instr.dpp.is_none()
+        && match inst.srcs.first().and_then(|v| v.first()) {
+            Some(Src::Val(v)) => wave_uniform(f, m, *v, &mut HashSet::new()),
+            Some(_) => true,
+            None => false,
+        }
+}
+
+/// The name under which `inst` crosses lanes, when it does.
+pub fn cross_lane_use(m: &Masks, inst: &Inst) -> Option<String> {
+    let i = &inst.instr;
+    if i.dpp.is_some() {
+        return Some(format!("{} (dpp)", i.name()));
+    }
+    if cross_lane_by_nature(i) {
+        return Some(i.name().to_string());
+    }
+    let reads_mask = inst.srcs.iter().flatten().any(|s| m.is_mask_src(s));
+    if !reads_mask {
+        return None;
+    }
+    if let Some(op) = mask_op(i) {
+        // fine when it types: every input is a mask, a constant or a scalar bit
+        return if mask_srcs(inst, op).all(|s| m.bit_src_ok(&s)) {
+            None
+        } else {
+            Some(i.name().to_string())
+        };
+    }
+    if is_vector(i) && takes_lane_mask(i.name()) {
+        let n = inst.srcs.len();
+        let others = inst.srcs[..n.saturating_sub(1)]
+            .iter()
+            .flatten()
+            .any(|s| m.is_mask_src(s));
+        if !others {
+            return None;
+        }
+    }
+    Some(i.name().to_string())
 }
 
 // ---------------------------------------------------------------------------------------

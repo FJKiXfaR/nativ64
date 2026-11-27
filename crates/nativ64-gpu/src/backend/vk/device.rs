@@ -32,6 +32,14 @@ pub struct Gpu {
     pub(super) caps: Caps,
     /// `VK_EXT_memory_budget` is enabled on the device.
     memory_budget: bool,
+    /// Command pool, buffer and fence `submit_once` reuses (created on first use).
+    submit: Mutex<Option<SubmitState>>,
+}
+
+struct SubmitState {
+    pool: vk::CommandPool,
+    cb: vk::CommandBuffer,
+    fence: vk::Fence,
 }
 
 /// Optional features the images and samplers of the replay use when they are there.
@@ -216,6 +224,7 @@ impl Gpu {
                     ext_host,
                     queue: Mutex::new(queue),
                     queue_family,
+                    submit: Mutex::new(None),
                     mem_props,
                     import_align,
                     phys,
@@ -378,61 +387,84 @@ impl Gpu {
     }
 
     /// Record one command buffer with `record`, submit it on the queue and wait on a fence.
+    ///
+    /// One pool, one command buffer and one fence are created on first use and reset for each
+    /// call; the `submit` mutex is held for the whole call, so threads take turns.
     pub fn submit_once<F: FnOnce(&Device, vk::CommandBuffer)>(&self, record: F) -> Result<()> {
         let d = &self.device;
-        // SAFETY: every object created here is destroyed before returning; the queue is used
-        // under its mutex; the command buffer has finished when the fence has signalled.
+        let mut slot = self.submit.lock().unwrap();
+        // SAFETY: the objects are owned by `self.submit` (destroyed in `Drop`), used only under
+        // its mutex; the previous command buffer has finished (every call waits on the fence).
         unsafe {
-            let pool = vk_try(
-                "vkCreateCommandPool",
-                d.create_command_pool(
-                    &vk::CommandPoolCreateInfo::default()
-                        .flags(vk::CommandPoolCreateFlags::TRANSIENT)
-                        .queue_family_index(self.queue_family),
-                    None,
+            if slot.is_none() {
+                let pool = vk_try(
+                    "vkCreateCommandPool",
+                    d.create_command_pool(
+                        &vk::CommandPoolCreateInfo::default().queue_family_index(self.queue_family),
+                        None,
+                    ),
+                )?;
+                let made = (|| {
+                    let cb = vk_try(
+                        "vkAllocateCommandBuffers",
+                        d.allocate_command_buffers(
+                            &vk::CommandBufferAllocateInfo::default()
+                                .command_pool(pool)
+                                .command_buffer_count(1),
+                        ),
+                    )?[0];
+                    let fence = vk_try(
+                        "vkCreateFence",
+                        d.create_fence(&vk::FenceCreateInfo::default(), None),
+                    )?;
+                    Ok::<_, VkError>((cb, fence))
+                })();
+                match made {
+                    Ok((cb, fence)) => *slot = Some(SubmitState { pool, cb, fence }),
+                    Err(e) => {
+                        d.destroy_command_pool(pool, None);
+                        return Err(e);
+                    }
+                }
+            }
+            let st = slot.as_ref().unwrap();
+            let (cb, fence) = (st.cb, st.fence);
+            vk_try(
+                "vkResetCommandPool",
+                d.reset_command_pool(st.pool, vk::CommandPoolResetFlags::empty()),
+            )?;
+            vk_try(
+                "vkBeginCommandBuffer",
+                d.begin_command_buffer(
+                    cb,
+                    &vk::CommandBufferBeginInfo::default()
+                        .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
                 ),
             )?;
-            let r = (|| {
-                let cb = vk_try(
-                    "vkAllocateCommandBuffers",
-                    d.allocate_command_buffers(
-                        &vk::CommandBufferAllocateInfo::default()
-                            .command_pool(pool)
-                            .command_buffer_count(1),
-                    ),
-                )?[0];
-                vk_try(
-                    "vkBeginCommandBuffer",
-                    d.begin_command_buffer(
-                        cb,
-                        &vk::CommandBufferBeginInfo::default()
-                            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
-                    ),
-                )?;
-                record(d, cb);
-                vk_try("vkEndCommandBuffer", d.end_command_buffer(cb))?;
-                let fence = vk_try(
-                    "vkCreateFence",
-                    d.create_fence(&vk::FenceCreateInfo::default(), None),
-                )?;
-                let cbs = [cb];
-                let sub = [vk::SubmitInfo::default().command_buffers(&cbs)];
-                let r = {
-                    let q = self.queue.lock().unwrap();
-                    vk_try("vkQueueSubmit", d.queue_submit(*q, &sub, fence))
-                }
-                .and_then(|_| {
-                    vk_try(
-                        "vkWaitForFences",
-                        d.wait_for_fences(&[fence], true, u64::MAX),
-                    )
-                });
-                d.destroy_fence(fence, None);
-                r
-            })();
-            d.destroy_command_pool(pool, None);
-            r
+            record(d, cb);
+            vk_try("vkEndCommandBuffer", d.end_command_buffer(cb))?;
+            let cbs = [cb];
+            let sub = [vk::SubmitInfo::default().command_buffers(&cbs)];
+            let submitted = {
+                let q = self.queue.lock().unwrap();
+                vk_try("vkQueueSubmit", d.queue_submit(*q, &sub, fence))
+            };
+            submitted?;
+            let waited = vk_try(
+                "vkWaitForFences",
+                d.wait_for_fences(&[fence], true, u64::MAX),
+            );
+            // The fence is unsignalled again for the next call, even after a failed wait.
+            vk_try("vkResetFences", d.reset_fences(&[fence]))?;
+            waited
         }
+    }
+
+    /// Handles of the reused submit objects (None before the first `submit_once`).
+    #[cfg(test)]
+    fn submit_handles(&self) -> Option<(vk::CommandPool, vk::CommandBuffer, vk::Fence)> {
+        let s = self.submit.lock().unwrap();
+        s.as_ref().map(|s| (s.pool, s.cb, s.fence))
     }
 
     /// How many bytes of images the device should keep alive: 80% of the device-local heap
@@ -493,6 +525,10 @@ impl Drop for Gpu {
         // SAFETY: objects borrowing the Gpu are gone (lifetimes); device before instance.
         unsafe {
             let _ = self.device.device_wait_idle();
+            if let Some(st) = self.submit.get_mut().unwrap().take() {
+                self.device.destroy_fence(st.fence, None);
+                self.device.destroy_command_pool(st.pool, None);
+            }
             self.device.destroy_device(None);
             self.instance.destroy_instance(None);
         }
@@ -538,5 +574,16 @@ mod tests {
         let mut ran = false;
         g.submit_once(|_, _| ran = true).unwrap();
         assert!(ran);
+    }
+
+    #[test]
+    fn submit_once_reuses_its_objects() {
+        let Some(g) = gpu_or_skip() else { return };
+        let mut n = 0;
+        g.submit_once(|_, _| n += 1).unwrap();
+        let first = g.submit_handles().unwrap();
+        g.submit_once(|_, _| n += 1).unwrap();
+        assert_eq!(n, 2);
+        assert_eq!(g.submit_handles().unwrap(), first);
     }
 }

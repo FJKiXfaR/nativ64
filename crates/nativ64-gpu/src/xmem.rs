@@ -125,6 +125,8 @@ struct PhysicalPool {
     /// Reverse table: host address of each 64 KiB page that views a pool slot (filled by the map
     /// calls and `alias_pages`, cleared on remap, unmap and free).
     views: std::collections::HashMap<usize, usize>,
+    /// Views each slot has now (entries only above zero: at most one per entry of `views`).
+    mapped: std::collections::HashMap<usize, u32>,
 }
 
 fn pool() -> &'static Mutex<PhysicalPool> {
@@ -181,7 +183,7 @@ fn map_physical(address: *mut c_void, n: usize, pages: *const usize) -> bool {
     }
     forget_views(&mut p, base, n);
     for (i, &s) in slots.iter().enumerate() {
-        p.views.insert(base + i * PHYSICAL_PAGE, s);
+        add_view(&mut p, base + i * PHYSICAL_PAGE, s);
     }
     let mut i = 0;
     while i < n {
@@ -220,8 +222,45 @@ fn view_protect(base: usize) -> u32 {
 /// Drops the reverse-table entries of `n` pages from `base`.
 fn forget_views(p: &mut PhysicalPool, base: usize, n: usize) {
     for i in 0..n {
-        p.views.remove(&(base + i * PHYSICAL_PAGE));
+        if let Some(s) = p.views.remove(&(base + i * PHYSICAL_PAGE)) {
+            if let Some(c) = p.mapped.get_mut(&s) {
+                *c -= 1;
+                if *c == 0 {
+                    p.mapped.remove(&s);
+                }
+            }
+        }
     }
+}
+
+/// Records that the page at `address` views `slot`.
+fn add_view(p: &mut PhysicalPool, address: usize, slot: usize) {
+    // a view replaced without `forget_views` first: drop the old slot's count
+    if let Some(old) = p.views.insert(address, slot) {
+        if let Some(c) = p.mapped.get_mut(&old) {
+            *c -= 1;
+            if *c == 0 {
+                p.mapped.remove(&old);
+            }
+        }
+    }
+    *p.mapped.entry(slot).or_insert(0) += 1;
+}
+
+/// Whether a physical page viewed in `start..end` is also viewed at another address (an
+/// alias made by `alias_pages` or a second map): writes through the other address do not
+/// show in a per-mapping write watch of this one.
+pub fn is_aliased(start: usize, end: usize) -> bool {
+    let p = pool().lock().unwrap_or_else(|e| e.into_inner());
+    if p.mapped.is_empty() {
+        return false;
+    }
+    let first = start & !(PHYSICAL_PAGE - 1);
+    (first..end).step_by(PHYSICAL_PAGE).any(|a| {
+        p.views
+            .get(&a)
+            .is_some_and(|s| p.mapped.get(s).copied().unwrap_or(0) > 1)
+    })
 }
 
 /// Makes the `pages` pages at `dst` a second view of the physical pages that `src` views, so
@@ -264,7 +303,7 @@ pub fn alias_pages(dst: usize, src: &[usize]) -> bool {
         if m == libc::MAP_FAILED {
             return false;
         }
-        p.views.insert(dst + i * PHYSICAL_PAGE, s);
+        add_view(&mut p, dst + i * PHYSICAL_PAGE, s);
     }
     true
 }
@@ -542,6 +581,7 @@ nativ64::win32! {
             p.live.remove(&slot);
             p.free.push(slot);
             p.in_use -= 1;
+            p.mapped.remove(&slot);
             let views: Vec<usize> = p.views.iter().filter(|(_, s)| **s == slot).map(|(a, _)| *a).collect();
             for a in views {
                 p.views.remove(&a);

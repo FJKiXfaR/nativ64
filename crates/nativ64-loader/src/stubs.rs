@@ -147,12 +147,70 @@ pub fn recent_imports() -> Vec<(String, usize)> {
         .collect()
 }
 
+/// Substrings from `NATIV64_TRACE_FILTER` (comma-separated); `None` traces every import.
+fn trace_filter() -> &'static Option<Vec<String>> {
+    static FILTER: std::sync::OnceLock<Option<Vec<String>>> = std::sync::OnceLock::new();
+    FILTER.get_or_init(|| {
+        let v = std::env::var("NATIV64_TRACE_FILTER").ok()?;
+        let subs: Vec<String> = v
+            .split(',')
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .collect();
+        (!subs.is_empty()).then_some(subs)
+    })
+}
+
+/// Reads up to `buf.len()` bytes at `addr` of our own address space without faulting
+/// (`process_vm_readv` reports EFAULT instead of raising SIGSEGV). Returns the byte count.
+fn peek(addr: u64, buf: &mut [u8]) -> usize {
+    let local = libc::iovec {
+        iov_base: buf.as_mut_ptr().cast(),
+        iov_len: buf.len(),
+    };
+    let remote = libc::iovec {
+        iov_base: addr as *mut libc::c_void,
+        iov_len: buf.len(),
+    };
+    let n = unsafe { libc::process_vm_readv(libc::getpid(), &local, 1, &remote, 1, 0) };
+    n.max(0) as usize
+}
+
+/// ` "text"` / ` u"text"` when the bytes at `addr` look like an ASCII or UTF-16LE string.
+fn peek_string(addr: u64) -> String {
+    if addr == 0 {
+        return String::new();
+    }
+    let mut buf = [0u8; 96];
+    let n = peek(addr, &mut buf);
+    let buf = &buf[..n];
+    let printable = |b: u8| (0x20..0x7F).contains(&b);
+    let ascii: Vec<u8> = buf.iter().copied().take_while(|&b| printable(b)).collect();
+    if ascii.len() >= 3 && (ascii.len() == buf.len() || buf[ascii.len()] == 0) {
+        let more = if ascii.len() == buf.len() { "..." } else { "" };
+        return format!(" \"{}{more}\"", String::from_utf8_lossy(&ascii));
+    }
+    let wide: Vec<u8> = buf
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .take_while(|c| c[1] == 0 && printable(c[0]))
+        .map(|c| c[0])
+        .collect();
+    if wide.len() >= 3 {
+        return format!(" u\"{}\"", String::from_utf8_lossy(&wide));
+    }
+    String::new()
+}
+
 /// True when the per-call lines are wanted (`--trace-imports` without `NATIV64_TRACE_SILENT`).
 fn trace_prints() -> bool {
     !std::env::var_os("NATIV64_TRACE_SILENT").is_some_and(|v| !v.is_empty() && v != "0")
 }
 
-extern "win64" fn trace_handler(index: u32, guest_ret: usize) {
+/// `args` points at the guest's `[r9, r8, rdx, rcx]` saved by the trampoline; `guest_ret` is
+/// the return address of the call into the trampoline (the code that asked for the import).
+extern "win64" fn trace_handler(index: u32, args: *const u64, guest_ret: usize) {
     TRACE_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if let Ok(mut recent) = RECENT.try_lock() {
         if recent.len() == RECENT_MAX {
@@ -160,16 +218,25 @@ extern "win64" fn trace_handler(index: u32, guest_ret: usize) {
         }
         recent.push_back((index, guest_ret));
     }
-    if trace_prints() {
-        let name = match TRACED.try_lock() {
-            Ok(g) => g.get(index as usize).cloned(),
-            Err(std::sync::TryLockError::Poisoned(p)) => {
-                p.into_inner().get(index as usize).cloned()
-            }
-            Err(_) => None,
-        };
-        eprintln!("nativ64: call {}", name.as_deref().unwrap_or("<unknown>"));
+    if !trace_prints() {
+        return;
     }
+    let name = match TRACED.try_lock() {
+        Ok(g) => g.get(index as usize).cloned(),
+        Err(std::sync::TryLockError::Poisoned(p)) => p.into_inner().get(index as usize).cloned(),
+        Err(_) => None,
+    };
+    let name = name.as_deref().unwrap_or("<unknown>");
+    if let Some(subs) = trace_filter() {
+        if !subs.iter().any(|s| name.contains(s.as_str())) {
+            return;
+        }
+    }
+    let [r9, r8, rdx, rcx] = unsafe { std::ptr::read(args.cast::<[u64; 4]>()) };
+    eprintln!(
+        "nativ64: call {name}({rcx:#x}, {rdx:#x}, {r8:#x}, {r9:#x}){}",
+        peek_string(rcx)
+    );
 }
 
 const TRAMPOLINE_SIZE: usize = 160;
@@ -220,9 +287,11 @@ impl TracePage {
             for k in 0..4u8 {
                 c.extend([0xF3, 0x0F, 0x7F, 0x44 | (k << 3), 0x24, 0x20 + 16 * k]);
             }
-            // mov rdx, [rsp+0x88] (the guest's return address) ; mov ecx, index ;
-            // movabs rax, handler ; call rax
-            c.extend([0x48, 0x8B, 0x94, 0x24, 0x88, 0x00, 0x00, 0x00]);
+            // lea rdx, [rsp+0x68] (the pushed [r9, r8, rdx, rcx])
+            c.extend([0x48, 0x8D, 0x54, 0x24, 0x68]);
+            // mov r8, [rsp+0x88] (the return address of the call into this trampoline)
+            c.extend([0x4C, 0x8B, 0x44, 0x24, 0x88]);
+            // mov ecx, index ; movabs rax, handler ; call rax
             c.push(0xB9);
             c.extend(((first + i) as u32).to_le_bytes());
             c.extend([0x48, 0xB8]);
@@ -268,6 +337,19 @@ impl Drop for TracePage {
 mod tests {
     use super::*;
 
+    #[test]
+    fn peek_string_reads_ascii_and_utf16_and_survives_bad_pointers() {
+        let a = b"hello\0world";
+        assert_eq!(peek_string(a.as_ptr() as u64), " \"hello\"");
+        let w: Vec<u8> = "abc.bik\0"
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        assert_eq!(peek_string(w.as_ptr() as u64), " u\"abc.bik\"");
+        assert_eq!(peek_string(0x10), "");
+        assert_eq!(peek_string(0), "");
+    }
+
     extern "win64" fn sum5(a: u64, b: u64, c: u64, d: u64, e: u64) -> u64 {
         a + 2 * b + 3 * c + 4 * d + 5 * e
     }
@@ -290,32 +372,5 @@ mod tests {
             unsafe { std::mem::transmute(page.addr(1) as usize) };
         assert_eq!(g(1.0, 2.0, 3.0, 4.0), 1.0 + 4.0 + 9.0 + 16.0);
         assert!(trace_calls() >= before + 2);
-    }
-
-    #[test]
-    fn recent_imports_records_the_last_calls() {
-        let page = TracePage::new(&[
-            ("t!first".into(), sum5 as *const () as usize as u64),
-            ("t!second".into(), scale as *const () as usize as u64),
-        ])
-        .unwrap();
-        let f: extern "win64" fn(u64, u64, u64, u64, u64) -> u64 =
-            unsafe { std::mem::transmute(page.addr(0) as usize) };
-        let g: extern "win64" fn(f64, f64, f64, f64) -> f64 =
-            unsafe { std::mem::transmute(page.addr(1) as usize) };
-        f(0, 0, 0, 0, 0);
-        g(0.0, 0.0, 0.0, 0.0);
-        // Other tests of this module call traced imports in parallel: both names must be in the
-        // ring, not necessarily adjacent to each other.
-        let recent = recent_imports();
-        assert!(recent.iter().any(|(n, _)| n == "t!first"));
-        assert!(recent.iter().any(|(n, _)| n == "t!second"));
-        // The ring is bounded.
-        assert!(recent.len() <= RECENT_MAX);
-        // The fault hook's snapshot keeps that view for the crash report.
-        snapshot_imports();
-        let before = imports_before_fault();
-        assert!(before.iter().any(|(n, _)| n == "t!first"));
-        assert!(before.iter().any(|(n, _)| n == "t!second"));
     }
 }

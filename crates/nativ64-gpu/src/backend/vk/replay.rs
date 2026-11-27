@@ -493,13 +493,12 @@ impl<'g> VkBackend<'g> {
             loop {
                 self.tex.staged = 0;
                 self.tex.more = false;
-                let mut pass = Vec::new();
                 let r = gpu.submit_once(|d, cb| {
                     let t = super::profile::start();
-                    self.sync_textures(d, cb, &mut pass);
+                    self.sync_textures(d, cb);
                     super::profile::stop(super::profile::Phase::SyncRec, t);
                 });
-                free_staging(gpu, pass);
+                self.tex.ring.end_submission(gpu);
                 if let Err(e) = &r {
                     log_once(format!("texture sync failed: {e}"));
                 }
@@ -525,7 +524,12 @@ impl<'g> VkBackend<'g> {
                     // A command that takes milliseconds names a replay hot spot (the frame
                     // budget of a fast frame here is a few tens of them).
                     let command_started = std::time::Instant::now();
+                    let tc = super::profile::start();
                     self.record(d, cb, c, &mut staging);
+                    super::profile::stop(super::profile::Phase::Cmds, tc);
+                    if matches!(c, Command::Dispatch { .. }) {
+                        super::profile::stop(super::profile::Phase::Disp, tc);
+                    }
                     let took = command_started.elapsed();
                     if took.as_millis() >= 2 {
                         let mut what = format!("{c:?}");
@@ -573,6 +577,7 @@ impl<'g> VkBackend<'g> {
                 (elapsed - sync_done).as_secs_f64()
             );
         }
+        self.tex.ring.end_submission(gpu);
         self.refresh_stats();
         super::profile::stop(super::profile::Phase::Record, tr);
     }
@@ -1093,7 +1098,7 @@ impl<'g> VkBackend<'g> {
                 };
                 self.stats.copies += 1;
             }
-            C::CopyResource { dst, src, .. } => self.copy_resource(d, cb, staging, c, *dst, *src),
+            C::CopyResource { dst, src, .. } => self.copy_resource(d, cb, c, *dst, *src),
             C::CopyTextureRegion {
                 dst,
                 x,
@@ -1296,7 +1301,6 @@ impl<'g> VkBackend<'g> {
         &mut self,
         d: &Device,
         cb: vk::CommandBuffer,
-        staging: &mut Vec<Staging>,
         c: &Command,
         dst: usize,
         src: usize,
@@ -1336,7 +1340,7 @@ impl<'g> VkBackend<'g> {
         if di.depth > 1 || si.depth > 1 {
             return self.skip(c, "a 3D texture copy");
         }
-        self.host_to_image(d, cb, staging, src);
+        self.host_to_image(d, cb, src);
         self.own(dst);
         let regions: Vec<vk::ImageCopy> = (0..si.mips)
             .map(|m| {
@@ -1488,7 +1492,7 @@ impl<'g> VkBackend<'g> {
                 let Some(si) = self.image(d, cb, sres) else {
                     return self.skip(c, "the source has no image");
                 };
-                self.host_to_image(d, cb, staging, sres);
+                self.host_to_image(d, cb, sres);
                 let (smip, slayer) = (ssub % si.mips, ssub / si.mips);
                 let (sw, sh) = (mip_size(si.width, smip), mip_size(si.height, smip));
                 let b = source_box.unwrap_or([0, 0, 0, sw, sh, 1]);
@@ -1679,6 +1683,7 @@ impl Drop for VkBackend<'_> {
                     self.destroy(t);
                 }
             }
+            self.tex.ring.destroy(self.gpu);
             self.tex.destroy(&self.gpu.device);
         }
     }

@@ -549,16 +549,6 @@ fn structure_stats(files: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Whether the VGPR value `v` is the same in every lane (see `wave_survey`).
-fn wave_uniform(
-    f: &shader::ir::Func,
-    m: &shader::structure::Masks,
-    v: shader::ir::Val,
-    seen: &mut std::collections::HashSet<shader::ir::Val>,
-) -> bool {
-    shader::structure::wave_uniform(f, m, v, seen)
-}
-
 /// The category of one cross-lane use (`wave_survey`).
 fn wave_category(
     f: &shader::ir::Func,
@@ -595,7 +585,7 @@ fn wave_category(
         let Some(Src::Val(v)) = src(0) else {
             return "readfirstlane_uniform".into();
         };
-        if wave_uniform(f, m, v, &mut Default::default()) {
+        if shader::structure::wave_uniform(f, m, v, &mut Default::default()) {
             return "readfirstlane_uniform".into();
         }
         let res = inst.dsts.first().map(|d| d.1);
@@ -731,7 +721,7 @@ fn wave_survey(files: &[String]) -> ExitCode {
             let mut has_whole = false;
             for (b, blk) in f.blocks.iter().enumerate() {
                 for (k, inst) in blk.insts.iter().enumerate() {
-                    if structure::cross_lane_use(&f, &m, inst).is_some() {
+                    if structure::cross_lane_use(&m, inst).is_some() {
                         *counts
                             .entry(wave_category(&f, &m, inst, &eq_cmps))
                             .or_default() += 1;
@@ -783,7 +773,7 @@ fn wave_survey(files: &[String]) -> ExitCode {
             let mut in_whole = 0;
             for blk in &f.blocks {
                 for inst in &blk.insts {
-                    if structure::cross_lane_use(&f, &m, inst).is_some()
+                    if structure::cross_lane_use(&m, inst).is_some()
                         && inside.contains(&inst.instr.at)
                     {
                         in_whole += 1;

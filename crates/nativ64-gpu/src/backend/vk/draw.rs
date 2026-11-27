@@ -216,13 +216,18 @@ impl<'g> DrawState<'g> {
     /// Returns whether the memory table reported a change (imports and cached addresses are
     /// stale then).
     pub(super) fn begin(&mut self, draws: usize) -> bool {
+        let t = super::profile::start();
         let changed = self.mem.sync();
         if changed {
-            let ranges = self.mem.changed();
             if let Some(v) = &mut self.views {
-                v.reset(ranges);
+                super::profile::count(
+                    super::profile::Count::Dropped,
+                    self.mem.dropped().len() as u64,
+                );
+                v.invalidate(self.mem.dropped());
             }
         }
+        super::profile::stop(super::profile::Phase::Begin, t);
         self.views_ready = false;
         self.arena_size = draws * rootblock::STRIDE;
         if let Some((_, used)) = &mut self.arena {
@@ -308,7 +313,9 @@ impl<'g> DrawState<'g> {
         let v = self.views.as_mut()?;
         if !self.views_ready {
             self.views_ready = true;
+            let t = super::profile::start();
             v.update(&mut self.mem);
+            super::profile::stop(super::profile::Phase::Views, t);
         }
         Some(v.address())
     }
@@ -708,7 +715,32 @@ impl<'g> VkBackend<'g> {
                 };
                 *n += 1;
                 log_once(format!("draw skipped: {why}"));
+                if crate::backend::trace::enabled() {
+                    // Under NATIV64_TRACE_DRAWS: each (pipeline, reason) once, with the
+                    // pipeline's serial and its stages' shader hashes.
+                    log_once(format!(
+                        "draw skipped: pipeline {}: {why}",
+                        self.describe_bound_pipeline()
+                    ));
+                }
             }
+        }
+    }
+
+    /// The bound pipeline's serial and stage hashes, for the skip trace.
+    fn describe_bound_pipeline(&self) -> String {
+        let ptr = self.draw.list.pipeline;
+        // SAFETY: the pointer was recorded from a live pipeline object of ours (or is 0).
+        match (ptr != 0).then(|| unsafe { pipeline_data(ptr) }).flatten() {
+            Some(pd) => {
+                let stages: Vec<String> = pd
+                    .stages
+                    .iter()
+                    .map(|s| format!("{}={:016x}", s.name, crate::shader::fnv1a64(&s.bytes)))
+                    .collect();
+                format!("#{} [{}]", pd.serial, stages.join(" "))
+            }
+            None => "none".into(),
         }
     }
 

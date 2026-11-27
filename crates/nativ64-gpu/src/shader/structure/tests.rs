@@ -428,3 +428,12 @@ fn an_andn2_that_feeds_a_normal_exit_is_no_discard() {
     ];
     assert!(st(&words).unwrap().demotes.is_empty());
 }
+
+#[test]
+fn readfirstlane_of_a_uniform_value_is_a_copy() {
+    // v_mov_b32 v0, s8 ; v_readfirstlane_b32 s1, v0 ; s_endpgm
+    let words = [0x7e000208, 0x7e020500, 0xbf810000];
+    let f = func(&words);
+    assert!(type_masks(&f).cross_lane.is_empty());
+    assert!(structure(&f).is_ok());
+}

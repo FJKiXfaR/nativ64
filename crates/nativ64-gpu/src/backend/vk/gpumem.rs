@@ -59,7 +59,21 @@ struct Import<'g> {
 /// pages of an import, so an import nobody reads any more only holds host memory.
 const IDLE_SUBMISSIONS: u64 = 300;
 /// Most bytes kept imported across submissions: past it, the least recently used imports go.
-const IMPORT_CAP: usize = 512 << 20;
+/// An import maps memory the title already has (no copy, no VRAM), but a cap below the working
+/// set of the view records made every submission drop dozens of windows and rewrite thousands
+/// of view records to import them again (tens of ms per frame). `NATIV64_IMPORT_CAP_MB`
+/// overrides it for measurement.
+const IMPORT_CAP: usize = 2048 << 20;
+
+fn import_cap() -> usize {
+    static CAP: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *CAP.get_or_init(|| {
+        std::env::var("NATIV64_IMPORT_CAP_MB")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .map_or(IMPORT_CAP, |mb| mb << 20)
+    })
+}
 
 pub struct GpuMemory<'g> {
     gpu: &'g Gpu,
@@ -70,6 +84,8 @@ pub struct GpuMemory<'g> {
     epoch: u64,
     /// The ranges the last `sync` saw changed (the placed images over them go too).
     changed: Vec<(usize, usize)>,
+    /// The `(start, end)` title ranges of the imports the last `sync` dropped.
+    dropped: Vec<(usize, usize)>,
 }
 
 impl<'g> GpuMemory<'g> {
@@ -82,7 +98,14 @@ impl<'g> GpuMemory<'g> {
             retired: Vec::new(),
             epoch: 0,
             changed: Vec::new(),
+            dropped: Vec::new(),
         }
+    }
+
+    /// The title ranges `(start, end)` of the imports the last `sync` dropped: what was
+    /// translated into them has another device address now.
+    pub fn dropped(&self) -> &[(usize, usize)] {
+        &self.dropped
     }
 
     /// The ranges the last `sync` saw changed.
@@ -101,7 +124,14 @@ impl<'g> GpuMemory<'g> {
     fn retire(&mut self, idle: u64, cap: usize) -> bool {
         let epoch = self.epoch;
         let before = self.imports.len();
-        self.imports.retain(|_, i| epoch - i.used <= idle);
+        let dropped = &mut self.dropped;
+        self.imports.retain(|&s, i| {
+            let keep = epoch - i.used <= idle;
+            if !keep {
+                dropped.push((s, i.end));
+            }
+            keep
+        });
         let mut bytes: usize = self.imports.values().map(|i| i.buffer.len).sum();
         if bytes > cap {
             let mut by_age: Vec<(u64, usize)> =
@@ -113,6 +143,7 @@ impl<'g> GpuMemory<'g> {
                 }
                 if let Some(i) = self.imports.remove(&s) {
                     bytes -= i.buffer.len;
+                    self.dropped.push((s, i.end));
                 }
             }
         }
@@ -135,6 +166,7 @@ impl<'g> GpuMemory<'g> {
     /// Called with the GPU idle. True when anything changed (device addresses may differ now).
     pub fn sync(&mut self) -> bool {
         self.retired.clear();
+        self.dropped.clear();
         self.epoch += 1;
         self.changed = table::take_gpu_changes();
         let mut any = !self.changed.is_empty();
@@ -143,15 +175,20 @@ impl<'g> GpuMemory<'g> {
             self.forget(&changes);
             self.changed = changes;
         }
-        any |= self.retire(IDLE_SUBMISSIONS, IMPORT_CAP);
+        any |= self.retire(IDLE_SUBMISSIONS, import_cap());
         any
     }
 
     pub fn forget(&mut self, changes: &[(usize, usize)]) {
+        let dropped = &mut self.dropped;
         self.imports.retain(|&start, i| {
-            !changes
+            let hit = changes
                 .iter()
-                .any(|&(a, n)| a < i.end && start < a.saturating_add(n))
+                .any(|&(a, n)| a < i.end && start < a.saturating_add(n));
+            if hit {
+                dropped.push((start, i.end));
+            }
+            !hit
         });
     }
 
@@ -194,7 +231,11 @@ impl<'g> GpuMemory<'g> {
             .filter(|(_, i)| i.end > start)
             .map(|(&s, _)| s)
             .collect();
-        let buffer = match self.gpu.import_host(start as *mut u8, run_end - start) {
+        let ti = crate::backend::vk::profile::start();
+        let imported = self.gpu.import_host(start as *mut u8, run_end - start);
+        crate::backend::vk::profile::stop(crate::backend::vk::profile::Phase::Import, ti);
+        crate::backend::vk::profile::count(crate::backend::vk::profile::Count::Imports, 1);
+        let buffer = match imported {
             Ok(b) => b,
             Err(e) => {
                 log_once(format!(

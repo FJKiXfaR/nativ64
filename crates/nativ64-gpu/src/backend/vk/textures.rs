@@ -39,16 +39,14 @@
 //! touched costs one `ioctl`); where the kernel gives no watch every texture is hashed in every
 //! submission with draws that read them.
 //!
-//! shortcuts: a depth image is uploaded (its depth plane; the stencil plane is not copied,
-//! since Vulkan copies one aspect at a time and the shaders here read depth) and viewed as its
-//! depth aspect with its own format; planar video formats and 1D textures have no image
-//! (multisampled images are render/depth targets only and are never sampled); a view type that the shader's variable does not match (a cube read
-//! through the 2D variable) cannot be detected here; the address of a placed view is read from
-//! words 10 and 11 of its description **[unverified]**.
+//! shortcuts: a depth image is viewed as its depth aspect with its own format; planar and
+//! multisampled textures and 1D textures have no image; a view type that the shader's variable
+//! does not match (a cube read through the 2D variable) cannot be detected here; the address
+//! of a placed view is read from words 10 and 11 of its description **[unverified]**.
 
 use super::format::FormatInfo;
 use super::profile::{self, Count, Phase};
-use super::replay::{global_barrier, mip_count, stage_bytes, Staging, TitleImage, VkBackend};
+use super::replay::{global_barrier, mip_count, TitleImage, VkBackend};
 use super::sampler::Spec;
 use super::{log_once, Gpu};
 use crate::d3d12::descriptor::{view_at, views_from, View};
@@ -100,8 +98,6 @@ struct Hole {
     image: vk::Image,
     memory: vk::DeviceMemory,
     view: vk::ImageView,
-    /// `NATIV64_HOLE_INDEX` palette views, one per index byte (empty otherwise).
-    views: Vec<vk::ImageView>,
 }
 
 /// What `sync_textures` keeps between submissions.
@@ -124,9 +120,6 @@ pub(super) struct TexState {
     bound: Vec<vk::ImageView>,
     /// The same for binding 1 (storage images).
     bound1: Vec<vk::ImageView>,
-    /// Indices whose view was a hole because its resource was not known yet: classified again
-    /// when the resource appears (a view can be registered before the resource is).
-    pending: Vec<u32>,
     /// The resources and placed images with a view.
     sources: Vec<usize>,
     source_set: HashSet<usize>,
@@ -134,9 +127,14 @@ pub(super) struct TexState {
     by_res: HashMap<usize, Vec<u32>>,
     /// The registry indices whose entry is the placed image.
     by_placed: HashMap<PlacedKey, Vec<u32>>,
+    /// Indices whose view was a hole because its resource was not known yet: classified again
+    /// when the resource appears (a view can be registered before the resource is).
+    pending: Vec<u32>,
     /// Submissions that synced, to hash a texture once in each.
     pub(super) submission: u64,
     hole: Option<Hole>,
+    /// The staging memory of the uploads, reset after each submission.
+    pub(super) ring: super::staging::StagingRing,
     /// The storage image of binding 1's holes.
     hole_storage: Option<Hole>,
     /// While the textures are synced in passes: an upload stops once `staged` reaches the cap
@@ -145,20 +143,6 @@ pub(super) struct TexState {
     pub(super) staged: u64,
     pub(super) more: bool,
     pub(super) cap: Option<u64>,
-}
-
-impl TexState {
-    /// The registry indices made resident: the residency scan's set, or every index when
-    /// `NATIV64_RESIDENT_ALL` asks for the pre-residency behaviour (diagnostics: a texture a
-    /// missing view misses goes blank, and uploading everything tells that apart from a
-    /// content that is simply not drawn).
-    pub(super) fn resident(&self) -> Vec<u32> {
-        if std::env::var("NATIV64_RESIDENT_ALL").is_ok_and(|v| !v.is_empty() && v != "0") {
-            (0..self.entries.len() as u32).collect()
-        } else {
-            self.wanted.iter().copied().collect()
-        }
-    }
 }
 
 /// The most a pass of texture uploads stages before it is submitted and the staging freed: the
@@ -179,9 +163,9 @@ impl TexState {
         match self.entries.get(i) {
             None => "unregistered".to_owned(),
             Some(Entry::Hole) => "hole".to_owned(),
-            Some(Entry::Texture { res, desc }) => format!("texture {res:#x} {desc:x?}"),
+            Some(Entry::Texture { res, .. }) => format!("texture {res:#x}"),
             Some(Entry::Storage { res, .. }) => format!("storage {res:#x}"),
-            Some(Entry::Placed { key, desc }) => format!("placed {key:?} {desc:x?}"),
+            Some(Entry::Placed { key, .. }) => format!("placed {key:?}"),
             Some(Entry::Sampler(_)) => "sampler".to_owned(),
         }
     }
@@ -206,12 +190,7 @@ impl TexState {
         {
             // SAFETY: made by `hole`; the queue is idle when the backend drops.
             unsafe {
-                for v in &h.views {
-                    d.destroy_image_view(*v, None);
-                }
-                if h.views.is_empty() {
-                    d.destroy_image_view(h.view, None);
-                }
+                d.destroy_image_view(h.view, None);
                 d.destroy_image(h.image, None);
                 d.free_memory(h.memory, None);
             }
@@ -270,7 +249,6 @@ const DEFAULT_MAPPING: u32 = 0x1688;
 /// resource's own) describes, made on first use and cached on the image.
 fn texture_view(gpu: &Gpu, t: &mut TitleImage, desc: Option<[u32; 10]>) -> Option<vk::ImageView> {
     let volume = t.desc.dimension == TEXTURE3D;
-    let one_d = t.desc.dimension == TEXTURE1D;
     let all_mips = mip_count(&t.desc);
     let all_layers = if volume {
         1
@@ -283,10 +261,6 @@ fn texture_view(gpu: &Gpu, t: &mut TitleImage, desc: Option<[u32; 10]>) -> Optio
         None => (
             if volume {
                 vk::ImageViewType::TYPE_3D
-            } else if one_d && all_layers > 1 {
-                vk::ImageViewType::TYPE_1D_ARRAY
-            } else if one_d {
-                vk::ImageViewType::TYPE_1D
             } else if all_layers > 1 {
                 vk::ImageViewType::TYPE_2D_ARRAY
             } else {
@@ -301,8 +275,6 @@ fn texture_view(gpu: &Gpu, t: &mut TitleImage, desc: Option<[u32; 10]>) -> Optio
         ),
         Some(w) => {
             let (ty, first, layers) = match w[1] {
-                2 => (vk::ImageViewType::TYPE_1D, 0, 1),
-                3 => (vk::ImageViewType::TYPE_1D_ARRAY, w[5], w[6]),
                 4 => (vk::ImageViewType::TYPE_2D, 0, 1),
                 5 => (vk::ImageViewType::TYPE_2D_ARRAY, w[5], w[6]),
                 8 => (vk::ImageViewType::TYPE_3D, 0, 1),
@@ -412,16 +384,11 @@ fn storage_view(gpu: &Gpu, t: &mut TitleImage, desc: Option<[u32; 10]>) -> Optio
         u32::from(t.desc.depth_or_array_size).max(1)
     };
     // (type, dxgi format, mip, first layer, layers)
-    let one_d = t.desc.dimension == TEXTURE1D;
     let (ty, dxgi, mip, first, layers) = match desc {
         None if volume => (vk::ImageViewType::TYPE_3D, 0, 0, 0, 1),
-        None if one_d && all_layers > 1 => (vk::ImageViewType::TYPE_1D_ARRAY, 0, 0, 0, all_layers),
-        None if one_d => (vk::ImageViewType::TYPE_1D, 0, 0, 0, 1),
         None if all_layers > 1 => (vk::ImageViewType::TYPE_2D_ARRAY, 0, 0, 0, all_layers),
         None => (vk::ImageViewType::TYPE_2D, 0, 0, 0, 1),
         Some(w) => match w[1] {
-            2 => (vk::ImageViewType::TYPE_1D, w[0], w[2], 0, 1),
-            3 => (vk::ImageViewType::TYPE_1D_ARRAY, w[0], w[2], w[3], w[4]),
             4 => (vk::ImageViewType::TYPE_2D, w[0], w[2], 0, 1),
             5 => (vk::ImageViewType::TYPE_2D_ARRAY, w[0], w[2], w[3], w[4]),
             8 => {
@@ -529,15 +496,11 @@ fn upload(
     d: &Device,
     cb: vk::CommandBuffer,
     t: &mut TitleImage,
-    staging: &mut Vec<Staging>,
     stats: &mut super::ReplayStats,
     tex: &mut TexState,
 ) -> bool {
     let submission = tex.submission;
-    // `NATIV64_UPLOAD_ALL=1`: also upload textures a GPU write marked GPU-owned (a diagnostic
-    // for content the title writes on the CPU afterwards, e.g. a rasterized text texture).
-    let force = std::env::var("NATIV64_UPLOAD_ALL").is_ok_and(|v| !v.is_empty() && v != "0");
-    if (t.gpu_owned && !force) || t.seen == submission {
+    if t.gpu_owned || t.seen == submission {
         return false;
     }
     if tex.capped && tex.staged >= tex.cap.unwrap_or(UPLOAD_CAP) {
@@ -549,15 +512,11 @@ fn upload(
     let Some(layout) = &t.layout else {
         return false;
     };
-    // A colour texture has one plane; a depth or depth-stencil texture has a depth plane (the
-    // stencil plane, when there is one, is not copied: Vulkan copies one aspect at a time and
-    // the shaders here only read depth). Anything else is a planar video format: no image.
-    let depth = t
-        .info
-        .aspect
-        .intersects(vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL);
-    if !depth && layout.planes.len() != 1 {
-        log_once(format!("no upload of a planar texture ({:?})", t.desc));
+    if layout.planes.len() != 1 || t.info.aspect != vk::ImageAspectFlags::COLOR {
+        log_once(format!(
+            "no upload of a planar or depth texture ({:?})",
+            t.desc
+        ));
         return false;
     }
     let (at, size) = (t.address as usize, layout.size as usize);
@@ -578,27 +537,9 @@ fn upload(
         profile::count(Count::Skipped, 1);
         return false;
     }
-    if std::env::var("NATIV64_TEX_LOG").is_ok_and(|v| !v.is_empty() && v != "0") {
-        eprintln!(
-            "nativ64-gpu: uploading {:?} ({size} bytes of host memory)",
-            t.desc
-        );
-    }
     let th = profile::start();
     // SAFETY: the range lies in committed, accessible pages of the memory table.
     let data = unsafe { std::slice::from_raw_parts(at as *const u8, size) };
-    // `NATIV64_TEX_STATS=1`: how much of a big texture is nonzero - whether the memory an
-    // upload reads is the content the title wrote (a blank font atlas hides text).
-    if size >= (1 << 20)
-        && std::env::var("NATIV64_TEX_STATS").is_ok_and(|v| !v.is_empty() && v != "0")
-    {
-        let nz = data.iter().filter(|&&b| b != 0).count();
-        eprintln!(
-            "texture stats: {:?} {size} bytes, {nz} nonzero ({:.1}%)",
-            t.desc,
-            100.0 * nz as f64 / size as f64
-        );
-    }
     let hash = hash64(data);
     stats.hashed += size as u64;
     profile::stop(Phase::Hash, th);
@@ -613,18 +554,11 @@ fn upload(
     } else {
         u32::from(t.desc.depth_or_array_size).max(1)
     };
-    // One aspect per copy: depth for a depth-stencil image (its stencil plane is not uploaded).
-    let copy_aspect = if t.info.aspect.contains(vk::ImageAspectFlags::DEPTH) {
-        vk::ImageAspectFlags::DEPTH
-    } else if t.info.aspect.contains(vk::ImageAspectFlags::STENCIL) {
-        vk::ImageAspectFlags::STENCIL
-    } else {
-        vk::ImageAspectFlags::COLOR
-    };
     let plane = &layout.planes[0];
     let e = plane.element_bytes as usize;
-    let mut bytes: Vec<u8> = Vec::new();
-    let mut regions = Vec::new();
+    // where each subresource goes in the staging memory
+    let mut parts = Vec::new();
+    let mut total = 0usize;
     for layer in 0..layers {
         for mip in 0..layout.mip_levels {
             let m = &plane.mips[mip as usize];
@@ -635,48 +569,47 @@ fn upload(
                 1
             };
             let slice = row * rows;
-            let offset = bytes.len().next_multiple_of(16);
-            bytes.resize(offset + slice * depth as usize, 0);
-            let sub = mip + layer * layout.mip_levels;
-            if let Err(err) = detile(
-                layout,
-                0,
-                sub,
-                t.address,
-                data,
-                &mut bytes[offset..],
-                (row, slice),
-            ) {
-                log_once(format!("cannot detile {:?}: {err}", t.desc));
-                return false;
-            }
-            regions.push(vk::BufferImageCopy {
-                buffer_offset: offset as u64,
-                buffer_row_length: 0,
-                buffer_image_height: 0,
-                image_subresource: vk::ImageSubresourceLayers {
-                    aspect_mask: copy_aspect,
-                    mip_level: mip,
-                    base_array_layer: layer,
-                    layer_count: 1,
-                },
-                image_offset: vk::Offset3D::default(),
-                image_extent: vk::Extent3D {
-                    width: super::replay::mip_size(t.desc.width as u32, mip),
-                    height: super::replay::mip_size(t.desc.height, mip),
-                    depth,
-                },
-            });
+            let offset = total.next_multiple_of(16);
+            total = offset + slice * depth as usize;
+            parts.push((layer, mip, offset, row, slice, depth));
         }
     }
-    tex.staged += bytes.len() as u64;
-    let buffer = match stage_bytes(gpu, &bytes, staging) {
-        Ok(b) => b,
+    // detiled straight into the mapped staging buffer
+    let (buffer, base, dst) = match tex.ring.alloc(gpu, total, UPLOAD_CAP) {
+        Ok(x) => x,
         Err(err) => {
             log_once(format!("staging of a texture upload failed: {err}"));
             return false;
         }
     };
+    let mut regions = Vec::new();
+    for (layer, mip, offset, row, slice, depth) in parts {
+        let sub = mip + layer * layout.mip_levels;
+        let out = &mut dst[offset..offset + slice * depth as usize];
+        if let Err(err) = detile(layout, 0, sub, t.address, data, out, (row, slice)) {
+            log_once(format!("cannot detile {:?}: {err}", t.desc));
+            tex.ring.rollback(total);
+            return false;
+        }
+        regions.push(vk::BufferImageCopy {
+            buffer_offset: base + offset as u64,
+            buffer_row_length: 0,
+            buffer_image_height: 0,
+            image_subresource: vk::ImageSubresourceLayers {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                mip_level: mip,
+                base_array_layer: layer,
+                layer_count: 1,
+            },
+            image_offset: vk::Offset3D::default(),
+            image_extent: vk::Extent3D {
+                width: super::replay::mip_size(t.desc.width as u32, mip),
+                height: super::replay::mip_size(t.desc.height, mip),
+                depth,
+            },
+        });
+    }
+    tex.staged += total as u64;
     // SAFETY: `cb` is recording outside a rendering instance; the staging buffer lives until
     // the submission is done; the image is in GENERAL.
     unsafe { d.cmd_copy_buffer_to_image(cb, buffer, t.image, vk::ImageLayout::GENERAL, &regions) };
@@ -696,13 +629,7 @@ fn placed_desc(words: &[u32; 14]) -> ResourceDesc {
 impl<'g> VkBackend<'g> {
     /// Ensures the image of `res` exists and holds the host memory's current content when the
     /// host owns it; records no barrier. True when a copy was recorded.
-    fn host_upload(
-        &mut self,
-        d: &Device,
-        cb: vk::CommandBuffer,
-        staging: &mut Vec<Staging>,
-        res: usize,
-    ) -> bool {
+    fn host_upload(&mut self, d: &Device, cb: vk::CommandBuffer, res: usize) -> bool {
         // a view of a resource the title released stays in the registry
         profile::count(Count::Visited, 1);
         let ti = profile::start();
@@ -714,28 +641,14 @@ impl<'g> VkBackend<'g> {
         let Some(Some(mut t)) = self.images.remove(&res) else {
             return false;
         };
-        let did = upload(
-            self.gpu,
-            d,
-            cb,
-            &mut t,
-            staging,
-            &mut self.stats,
-            &mut self.tex,
-        );
+        let did = upload(self.gpu, d, cb, &mut t, &mut self.stats, &mut self.tex);
         self.images.insert(res, Some(t));
         did
     }
 
     /// As `host_upload`, then a barrier: for the source of a copy.
-    pub(super) fn host_to_image(
-        &mut self,
-        d: &Device,
-        cb: vk::CommandBuffer,
-        staging: &mut Vec<Staging>,
-        res: usize,
-    ) {
-        if self.host_upload(d, cb, staging, res) {
+    pub(super) fn host_to_image(&mut self, d: &Device, cb: vk::CommandBuffer, res: usize) {
+        if self.host_upload(d, cb, res) {
             global_barrier(d, cb);
         }
     }
@@ -771,20 +684,14 @@ impl<'g> VkBackend<'g> {
         ok
     }
 
-    fn placed_upload(
-        &mut self,
-        d: &Device,
-        cb: vk::CommandBuffer,
-        staging: &mut Vec<Staging>,
-        key: PlacedKey,
-    ) -> bool {
+    fn placed_upload(&mut self, d: &Device, cb: vk::CommandBuffer, key: PlacedKey) -> bool {
         if !self.placed_image(d, cb, key) {
             return false;
         }
         let Some(Some(t)) = self.placed.get_mut(&key) else {
             return false;
         };
-        upload(self.gpu, d, cb, t, staging, &mut self.stats, &mut self.tex)
+        upload(self.gpu, d, cb, t, &mut self.stats, &mut self.tex)
     }
 
     /// Start of a submission: frees what was made for the resources the title released since
@@ -818,8 +725,7 @@ impl<'g> VkBackend<'g> {
             };
             let mut kept = Vec::new();
             for i in indices {
-                let entry =
-                    view_at(i as usize).map_or(Entry::Hole, |v| self.classify_at(&v, i as usize));
+                let entry = view_at(i as usize).map_or(Entry::Hole, |v| self.classify(&v));
                 if let Entry::Texture { res: r, .. } | Entry::Storage { res: r, .. } = &entry {
                     // a live resource at the same address
                     if self.tex.source_set.insert(*r) {
@@ -918,8 +824,6 @@ impl<'g> VkBackend<'g> {
 
     /// The 1x1 zero RGBA8 view every index that is not a texture holds (`storage`: the one of
     /// binding 1, a storage image of its own, since shaders may write to it).
-    /// `NATIV64_HOLE_WHITE=1` makes it opaque white (a diagnostic: whatever samples a hole
-    /// shows up white).
     fn hole(&mut self, d: &Device, cb: vk::CommandBuffer, storage: bool) -> Option<vk::ImageView> {
         if let Some(h) = if storage {
             &self.tex.hole_storage
@@ -929,12 +833,6 @@ impl<'g> VkBackend<'g> {
             return Some(h.view);
         }
         let g = self.gpu;
-        // `NATIV64_HOLE_INDEX=low|high`: the stand-in is a palette of 256 one-texel layers
-        // whose alpha is the index byte, so whatever samples a missing texture renders with a
-        // brightness that names the descriptor index it reads.
-        let index_mode = std::env::var("NATIV64_HOLE_INDEX").ok();
-        let palette = index_mode.as_deref() == Some("low") || index_mode.as_deref() == Some("high");
-        let layers = if palette { 256 } else { 1 };
         let ci = vk::ImageCreateInfo::default()
             .image_type(vk::ImageType::TYPE_2D)
             .format(vk::Format::R8G8B8A8_UNORM)
@@ -944,7 +842,7 @@ impl<'g> VkBackend<'g> {
                 depth: 1,
             })
             .mip_levels(1)
-            .array_layers(layers)
+            .array_layers(1)
             .samples(vk::SampleCountFlags::TYPE_1)
             .tiling(vk::ImageTiling::OPTIMAL)
             .usage(if storage {
@@ -995,12 +893,6 @@ impl<'g> VkBackend<'g> {
                 d.destroy_image(image, None);
                 return None;
             };
-            // The barrier and the clear cover every layer: with the index palette the image
-            // has 256 of them, and a layer left UNDEFINED is invalid to sample (a lost device).
-            let all = vk::ImageSubresourceRange {
-                layer_count: layers,
-                ..sub
-            };
             let to_general = [vk::ImageMemoryBarrier::default()
                 .old_layout(vk::ImageLayout::UNDEFINED)
                 .new_layout(vk::ImageLayout::GENERAL)
@@ -1008,7 +900,7 @@ impl<'g> VkBackend<'g> {
                 .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
                 .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
                 .image(image)
-                .subresource_range(all)];
+                .subresource_range(sub)];
             d.cmd_pipeline_barrier(
                 cb,
                 vk::PipelineStageFlags::TOP_OF_PIPE,
@@ -1018,69 +910,17 @@ impl<'g> VkBackend<'g> {
                 &[],
                 &to_general,
             );
-            // `NATIV64_HOLE_WHITE=1` clears the hole to opaque white instead of transparent
-            // black: a draw that samples a hole then renders as solid white, which names the
-            // content that a missing texture is behind.
-            let white =
-                std::env::var("NATIV64_HOLE_WHITE").is_ok_and(|v| !v.is_empty() && v != "0");
-            if palette {
-                // Layer k holds alpha k/255, so a draw that samples index i renders with the
-                // alpha of i's low (or high) byte.
-                for k in 0..layers {
-                    let layer = vk::ImageSubresourceRange {
-                        base_array_layer: k,
-                        layer_count: 1,
-                        ..sub
-                    };
-                    let a = if palette { k as f32 / 255.0 } else { 0.0 };
-                    d.cmd_clear_color_image(
-                        cb,
-                        image,
-                        vk::ImageLayout::GENERAL,
-                        &vk::ClearColorValue {
-                            float32: [1.0, 1.0, 1.0, a],
-                        },
-                        &[layer],
-                    );
-                }
-            } else {
-                let clear = if white { [1.0; 4] } else { [0.0; 4] };
-                d.cmd_clear_color_image(
-                    cb,
-                    image,
-                    vk::ImageLayout::GENERAL,
-                    &vk::ClearColorValue { float32: clear },
-                    &[sub],
-                );
-            }
-            let mut views = Vec::new();
-            if palette {
-                for k in 0..256u32 {
-                    let layer = vk::ImageSubresourceRange {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: k,
-                        layer_count: 1,
-                    };
-                    match d.create_image_view(
-                        &vk::ImageViewCreateInfo::default()
-                            .image(image)
-                            .view_type(vk::ImageViewType::TYPE_2D)
-                            .format(vk::Format::R8G8B8A8_UNORM)
-                            .subresource_range(layer),
-                        None,
-                    ) {
-                        Ok(v) => views.push(v),
-                        Err(_) => break,
-                    }
-                }
-            }
+            d.cmd_clear_color_image(
+                cb,
+                image,
+                vk::ImageLayout::GENERAL,
+                &vk::ClearColorValue { float32: [0.0; 4] },
+                &[sub],
+            );
             let made = Some(Hole {
                 image,
                 memory,
                 view,
-                views,
             });
             if storage {
                 self.tex.hole_storage = made;
@@ -1091,60 +931,24 @@ impl<'g> VkBackend<'g> {
         }
     }
 
-    /// Logs a sampled view left empty, at most `HOLE_LOGS` times (a title can refuse thousands
-    /// of buffer views, and one line each buries the log).
-    fn log_hole(msg: String) {
-        const HOLE_LOGS: usize = 400;
-        static SEEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let n = SEEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        if n < HOLE_LOGS {
-            log_once(msg);
-        } else if n == HOLE_LOGS {
-            log_once(format!(
-                "further sampled views left empty are not logged (more than {HOLE_LOGS})"
-            ));
-        }
-    }
-
-    /// The palette view that names `i` (`NATIV64_HOLE_INDEX`), if that diagnostic is on.
-    fn hole_indexed(&self, i: usize) -> Option<vk::ImageView> {
-        let h = self.tex.hole.as_ref()?;
-        if h.views.is_empty() {
-            return None;
-        }
-        let mode = std::env::var("NATIV64_HOLE_INDEX").ok()?;
-        let k = match mode.as_str() {
-            "low" => i & 0xff,
-            "high" => (i >> 8) & 0xff,
-            _ => return None,
-        };
-        h.views.get(k).copied()
-    }
-
     /// The entry a registry view comes to.
-    /// `classify`, with the registry index in the log line (so a draw's row can be matched).
-    fn classify_at(&self, v: &View, index: usize) -> Entry {
+    fn classify(&self, v: &View) -> Entry {
         match v {
             View::Shader(res, desc) => match info_of_checked(*res as *mut _) {
-                Some((rd, _)) if matches!(rd.dimension, TEXTURE1D | TEXTURE2D | TEXTURE3D) => {
+                Some((rd, _)) if rd.dimension == TEXTURE2D || rd.dimension == TEXTURE3D => {
                     Entry::Texture {
                         res: *res,
                         desc: *desc,
                     }
                 }
-                other => {
-                    // A sampled view left empty: naming its resource (or its absence) is how
-                    // a missing texture behind invisible content is found.
-                    Self::log_hole(format!(
-                        "sampled view {index} is left empty: resource {res:#x} info {other:?} \
-                         view words {:x?}",
-                        desc
-                    ));
+                Some((rd, _)) if rd.dimension == TEXTURE1D => {
+                    log_once("a view of a 1D texture is left empty".into());
                     Entry::Hole
                 }
+                _ => Entry::Hole,
             },
             View::Unordered(res, _, desc) => match info_of_checked(*res as *mut _) {
-                Some((rd, _)) if matches!(rd.dimension, TEXTURE1D | TEXTURE2D | TEXTURE3D) => {
+                Some((rd, _)) if rd.dimension == TEXTURE2D || rd.dimension == TEXTURE3D => {
                     Entry::Storage {
                         res: *res,
                         desc: *desc,
@@ -1155,11 +959,7 @@ impl<'g> VkBackend<'g> {
             View::Placed(false, rd, vd) => {
                 let desc = placed_desc(rd);
                 let address = u64::from(vd[10]) | u64::from(vd[11]) << 32;
-                if address == 0 || !matches!(desc.dimension, TEXTURE1D | TEXTURE2D | TEXTURE3D) {
-                    Self::log_hole(format!(
-                        "placed sampled view {index} is left empty: address {address:#x} desc {desc:?} \
-                         view words {vd:x?}"
-                    ));
+                if address == 0 || (desc.dimension != TEXTURE2D && desc.dimension != TEXTURE3D) {
                     return Entry::Hole;
                 }
                 let mut w = [0u32; 10];
@@ -1172,12 +972,7 @@ impl<'g> VkBackend<'g> {
             View::Sampler(_) | View::ConsoleSampler(_) => {
                 Spec::of_view(v).map_or(Entry::Hole, Entry::Sampler)
             }
-            other => {
-                Self::log_hole(format!(
-                    "sampled view {index} is left empty (other): {other:?}"
-                ));
-                Entry::Hole
-            }
+            _ => Entry::Hole,
         }
     }
 
@@ -1246,101 +1041,15 @@ impl<'g> VkBackend<'g> {
         }
     }
 
-    /// `NATIV64_HOLE_LIST=1`: every so many submissions, list the sampled-descriptor slots that
-    /// hold no view (the stand-in) - the indices content that samples a missing texture names.
-    fn log_hole_textures(&self, count: usize) {
-        static TICKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        if std::env::var("NATIV64_HOLE_TEXTURES")
-            .ok()
-            .is_none_or(|v| v.is_empty())
-        {
-            return;
-        }
-        let n = TICKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        if !n.is_multiple_of(300) {
-            return;
-        }
-        let mut shown = 0;
-        for i in 0..count.min(self.tex.entries.len()) {
-            if !matches!(self.tex.entries.get(i), Some(Entry::Hole)) {
-                continue;
-            }
-            let Some(v) = crate::d3d12::descriptor::view_at(i) else {
-                continue;
-            };
-            let (kind, res, dim) = match &v {
-                View::Shader(res, _) => (
-                    "sampled",
-                    *res,
-                    info_of_checked(*res as *mut _).map(|(rd, _)| rd.dimension),
-                ),
-                View::Placed(false, rd, _) => ("placed", 0, placed_desc(rd).dimension.into()),
-                _ => continue,
-            };
-            // only a view of a texture is a texture that went missing (a buffer or a constant
-            // is left empty on purpose)
-            if !matches!(dim, Some(2) | Some(3) | Some(4)) {
-                continue;
-            }
-            if shown < 24 {
-                let desc = match &v {
-                    View::Shader(res, _) => info_of_checked(*res as *mut _).map(|(rd, _)| rd),
-                    View::Placed(_, rd, _) => placed_desc(rd).into(),
-                    _ => None,
-                };
-                log_once(format!(
-                    "a {kind} view of a texture is a hole: index {i} res {res:#x} desc {desc:?} \
-                     view {v:?}"
-                ));
-            }
-            shown += 1;
-        }
-        if shown > 0 {
-            log_once(format!("texture views left empty: {shown}"));
-        }
-    }
-
-    fn log_hole_list(&self, count: usize) {
-        static TICKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        if std::env::var("NATIV64_HOLE_LIST")
-            .ok()
-            .is_none_or(|v| v.is_empty())
-        {
-            return;
-        }
-        let n = TICKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        if !n.is_multiple_of(300) {
-            return;
-        }
-        let mut holes = Vec::new();
-        for i in 0..count {
-            if matches!(self.tex.entries.get(i), None | Some(Entry::Hole)) {
-                holes.push(i);
-            }
-        }
-        log_once(format!(
-            "hole list: {} empty sampled slots of {count} (first 48: {:?})",
-            holes.len(),
-            &holes[..holes.len().min(48)]
-        ));
-    }
-
     /// The first step of a submission with draws: see the module documentation.
-    pub(super) fn sync_textures(
-        &mut self,
-        d: &Device,
-        cb: vk::CommandBuffer,
-        staging: &mut Vec<Staging>,
-    ) {
+    pub(super) fn sync_textures(&mut self, d: &Device, cb: vk::CommandBuffer) {
         let Some(count) = self.draw.bindless().map(|b| b.count as usize) else {
             return;
         };
-        self.log_hole_list(count);
-        self.log_hole_textures(count);
         // 1. the registry entries added since the last time
         let new = views_from(self.tex.scanned);
-        for (k, v) in new.iter().enumerate() {
-            let entry = self.classify_at(v, self.tex.scanned + k);
+        for v in &new {
+            let entry = self.classify(v);
             match &entry {
                 Entry::Texture { res, .. } | Entry::Storage { res, .. } => {
                     if self.tex.source_set.insert(*res) {
@@ -1359,7 +1068,7 @@ impl<'g> VkBackend<'g> {
                 && matches!(v, View::Shader(..) | View::Placed(false, ..))
                 && self.tex.pending.len() < 4096
             {
-                self.tex.pending.push((self.tex.entries.len()) as u32);
+                self.tex.pending.push(self.tex.entries.len() as u32);
             }
             self.tex.entries.push(entry);
             self.tex.bound.push(vk::ImageView::null());
@@ -1377,10 +1086,10 @@ impl<'g> VkBackend<'g> {
                     continue;
                 }
                 budget -= 1;
-                let Some(v) = crate::d3d12::descriptor::view_at(i as usize) else {
+                let Some(v) = view_at(i as usize) else {
                     continue;
                 };
-                let entry = self.classify_at(&v, i as usize);
+                let entry = self.classify(&v);
                 if matches!(entry, Entry::Hole) {
                     still.push(i);
                     continue;
@@ -1405,8 +1114,7 @@ impl<'g> VkBackend<'g> {
         // 2. images and uploads: of what the draws can read
         let mut uploaded = false;
         let (mut resources, mut placed, mut storage) = (Vec::new(), Vec::new(), Vec::new());
-        let resident = self.tex.resident();
-        for &i in &resident {
+        for &i in &self.tex.wanted {
             match self.tex.entries.get(i as usize) {
                 Some(Entry::Texture { res, .. }) => resources.push(*res),
                 Some(Entry::Storage { res, .. }) => {
@@ -1423,12 +1131,12 @@ impl<'g> VkBackend<'g> {
         placed.dedup();
         let th = profile::start();
         for res in resources {
-            uploaded |= self.host_upload(d, cb, staging, res);
+            uploaded |= self.host_upload(d, cb, res);
         }
         profile::stop(Phase::HostUp, th);
         let tp = profile::start();
         for key in placed {
-            uploaded |= self.placed_upload(d, cb, staging, key);
+            uploaded |= self.placed_upload(d, cb, key);
         }
         profile::stop(Phase::PlacedUp, tp);
         if uploaded {
@@ -1461,7 +1169,8 @@ impl<'g> VkBackend<'g> {
             .map(|i| i as usize)
             .filter(|&i| i < from)
             .collect();
-        for i in resident {
+        let wanted: Vec<u32> = self.tex.wanted.iter().copied().collect();
+        for i in wanted {
             let i = i as usize;
             if i < from.min(end) && !again.contains(&i) {
                 let view = self.view_of(i);
@@ -1487,7 +1196,7 @@ impl<'g> VkBackend<'g> {
         for i in again.into_iter().chain(from..end) {
             let view = self.view_of(i);
             self.tex.bound[i] = view.unwrap_or_default();
-            if let Some(v) = view.or_else(|| self.hole_indexed(i)).or(hole) {
+            if let Some(v) = view.or(hole) {
                 images.push((i, v));
             }
             let sview = self.storage_view_of(i);
@@ -1824,6 +1533,35 @@ mod tests {
         assert_eq!((uploads_of(&b, a), uploads_of(&b, c)), (1, 1));
         assert!(all_pixels(&b.read_back(target).unwrap(), [0, 0, 255, 255]));
         assert!(!b.tex.capped && !b.tex.more);
+    }
+
+    #[test]
+    fn consecutive_upload_passes_reuse_the_staging_buffer() {
+        let Some(g) = gpu_or_skip() else { return };
+        let mut b = VkBackend::new(&g);
+        let d = desc(8, 8, 1, 28, 0, 0);
+        let (red, blue) = (vec![255, 0, 0, 255], vec![0, 0, 255, 255]);
+        let a = resource_at(tiled_memory(&d, |_, _, _, _| red.clone()), d);
+        let c = resource_at(tiled_memory(&d, |_, _, _, _| blue.clone()), d);
+        let pipe = sampling_pipeline(SAMPLING());
+        let target = texture(16, 8, 28, TARGET);
+        let handle = rtv(target);
+        let (t1, t2) = (table(), table());
+        srv(a, None, t1 + 0x20);
+        srv(c, None, t2 + 0x20);
+        let mut first = clear(handle, [0.0, 1.0, 0.0, 1.0]);
+        first.extend(textured_draw(pipe, handle, t1));
+        let mut second = clear(handle, [0.0, 1.0, 0.0, 1.0]);
+        second.extend(textured_draw(pipe, handle, t2));
+        b.execute(&[first]);
+        assert_eq!(uploads_of(&b, a), 1);
+        assert!(all_pixels(&b.read_back(target).unwrap(), [255, 0, 0, 255]));
+        let made = b.tex.ring.made;
+        assert!(made >= 1);
+        b.execute(&[second]);
+        assert_eq!(uploads_of(&b, c), 1);
+        assert!(all_pixels(&b.read_back(target).unwrap(), [0, 0, 255, 255]));
+        assert_eq!(b.tex.ring.made, made, "no new staging buffer");
     }
 
     #[test]

@@ -17,8 +17,6 @@ pub(super) enum Phase {
     Upload,
     /// Recording and executing the lists (the wait for the GPU included).
     Record,
-    /// Only the CPU recording of a list; the rest of `Record` is the submission and its wait.
-    Replay,
     /// Frame dumps (PNG).
     Dump,
     /// Making the images of the textures.
@@ -30,6 +28,18 @@ pub(super) enum Phase {
     /// `host_upload` and `placed_upload` as a whole.
     HostUp,
     PlacedUp,
+    /// `GpuMemory::sync` and the view invalidation before a submission.
+    Begin,
+    /// The view table update (records written, memory imported for them).
+    Views,
+    /// `import_host` calls.
+    Import,
+    /// The commands of the lists, recorded (the submission and its wait excluded).
+    Cmds,
+    /// The compute dispatches among them.
+    Disp,
+    /// The recorded lists as a whole (the submission and its wait included).
+    Replay,
 }
 
 #[derive(Clone, Copy)]
@@ -51,6 +61,10 @@ pub(super) enum Count {
     /// Entries of the source lists visited, and descriptors written.
     Visited,
     Written,
+    /// Import ranges dropped, view records rewritten, imports made.
+    Dropped,
+    Rewritten,
+    Imports,
     /// Bottom-of-pipe writes applied to title memory.
     GpuWrites,
     /// Draws and compute dispatches recorded into Vulkan.
@@ -58,11 +72,11 @@ pub(super) enum Count {
     Dispatched,
 }
 
-const PHASES: [&str; 12] = [
-    "sync", "watch", "hash", "upload", "record", "replay", "dump", "image", "descr", "syncrec",
-    "hostup", "placedup",
+const PHASES: [&str; 17] = [
+    "sync", "watch", "hash", "upload", "record", "dump", "image", "descr", "syncrec", "hostup",
+    "placedup", "begin", "views", "import", "cmds", "disp", "replay",
 ];
-const COUNTS: [&str; 14] = [
+const COUNTS: [&str; 17] = [
     "looked",
     "skipped",
     "scan_none",
@@ -74,13 +88,16 @@ const COUNTS: [&str; 14] = [
     "submissions",
     "visited",
     "descr_written",
+    "dropped",
+    "rewritten",
+    "imports",
     "gpu_writes",
     "drawn",
     "dispatched",
 ];
 
-static NANOS: [AtomicU64; 12] = [const { AtomicU64::new(0) }; 12];
-static COUNT: [AtomicU64; 14] = [const { AtomicU64::new(0) }; 14];
+static NANOS: [AtomicU64; 17] = [const { AtomicU64::new(0) }; 17];
+static COUNT: [AtomicU64; 17] = [const { AtomicU64::new(0) }; 17];
 
 pub(super) fn enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();

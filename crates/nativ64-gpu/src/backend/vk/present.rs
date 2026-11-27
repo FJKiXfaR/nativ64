@@ -20,6 +20,8 @@ pub struct Window {
 pub fn rgba8(rb: &Readback) -> Option<Vec<u8>> {
     match rb.format {
         vk::Format::R8G8B8A8_UNORM | vk::Format::R8G8B8A8_SRGB => Some(rb.bytes.clone()),
+        // Single-channel planes (video luma/chroma) show as grey.
+        vk::Format::R8_UNORM => Some(rb.bytes.iter().flat_map(|&v| [v, v, v, 255]).collect()),
         vk::Format::B8G8R8A8_UNORM | vk::Format::B8G8R8A8_SRGB => {
             let mut v = rb.bytes.clone();
             v.as_chunks_mut::<4>()
@@ -28,15 +30,8 @@ pub fn rgba8(rb: &Readback) -> Option<Vec<u8>> {
                 .for_each(|p| p.swap(0, 2));
             Some(v)
         }
-        // Single- and two-channel images (an A8 mask target, R8 glyph atlases, R8G8 masks): the
-        // channels are shown as grey and alpha, so a mask's coverage is visible in a PNG.
-        vk::Format::R8_UNORM => {
-            let mut v = Vec::with_capacity(rb.bytes.len() * 4);
-            for &r in &rb.bytes {
-                v.extend_from_slice(&[r, r, r, 255]);
-            }
-            Some(v)
-        }
+        // Two-channel mask images (the A8 mask target and the glyph atlases are R8 above):
+        // the channels are shown as grey and blue, so a mask's coverage is visible in a PNG.
         vk::Format::R8G8_UNORM => {
             let mut v = Vec::with_capacity(rb.bytes.len() * 2);
             for &[r, g] in rb.bytes.as_chunks::<2>().0 {
@@ -61,8 +56,16 @@ pub fn write_png(path: &Path, w: u32, h: u32, rgba: &[u8]) -> std::io::Result<()
 
 /// Which presented frames are dumped: 1, 2, 4, 8, ... and every 60th, so a long run does not
 /// fill the disk with 4K PNGs. `NATIV64_DUMP_FROM=<n>` skips the frames before `n` (a late frame
-/// is then reached without paying for the dumps of the early ones).
+/// is then reached without paying for the dumps of the early ones). `NATIV64_DUMP_EVERY=<n>`
+/// also keeps every `n`th frame (dense dumps around a moment of interest).
 pub fn dump_wanted(frame: u64) -> bool {
+    static EVERY: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    let every = *EVERY.get_or_init(|| {
+        std::env::var("NATIV64_DUMP_EVERY")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0)
+    });
     static FROM: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     let from = *FROM.get_or_init(|| {
         std::env::var("NATIV64_DUMP_FROM")
@@ -70,7 +73,10 @@ pub fn dump_wanted(frame: u64) -> bool {
             .and_then(|v| v.parse().ok())
             .unwrap_or(0)
     });
-    frame >= from && (frame.is_power_of_two() || frame.is_multiple_of(60))
+    frame >= from
+        && (frame.is_power_of_two()
+            || frame.is_multiple_of(60)
+            || (every > 0 && frame.is_multiple_of(every)))
 }
 
 impl<'g> VkBackend<'g> {
@@ -195,6 +201,17 @@ mod tests {
     fn dump_subset() {
         let picked: Vec<u64> = (1..=130).filter(|&f| dump_wanted(f)).collect();
         assert_eq!(picked, [1, 2, 4, 8, 16, 32, 60, 64, 120, 128]);
+    }
+
+    #[test]
+    fn single_channel_plane_is_grey() {
+        let rb = Readback {
+            width: 2,
+            height: 1,
+            format: vk::Format::R8_UNORM,
+            bytes: vec![7, 9],
+        };
+        assert_eq!(rgba8(&rb).unwrap(), [7, 7, 7, 255, 9, 9, 9, 255]);
     }
 
     #[test]

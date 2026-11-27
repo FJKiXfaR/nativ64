@@ -72,8 +72,10 @@ entry point, section count and import statistics, the first 20 unresolved import
 package DLLs (base, path, import and unresolved counts) and the unresolved imports per module
 for the exe and each DLL.
 `--trace-imports` (`LoadOptions::trace_imports`) routes every resolved import through a
-trampoline that logs `nativ64: call module!name` on entry (argument registers, xmm0-3 and stack
-arguments are preserved; the return value is not logged). Off by default. Imports by ordinal
+trampoline that logs `nativ64: call module!name(rcx, rdx, r8, r9)` on entry, followed by the
+string at rcx when it reads as ASCII or UTF-16 (argument registers, xmm0-3 and stack arguments are
+preserved; the return value is not logged). `NATIV64_TRACE_FILTER=sub1,sub2` keeps only the imports
+whose `module!name` contains one of the substrings. Off by default. Imports by ordinal
 resolve through `nativ64::lookup_ordinal` (only `ws2_32` has a table).
 
 ## CPU instructions the host may lack

@@ -21,6 +21,7 @@ mod replay;
 mod residency;
 mod rootblock;
 mod sampler;
+mod staging;
 mod swapchain;
 mod textures;
 mod watch;

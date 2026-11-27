@@ -1219,7 +1219,14 @@ impl<'a> Tr<'a> {
         if std::env::var_os("NATIV64_ORIGINS").is_some() {
             eprintln!("origin: {name} user sgpr {sgpr} table offset {offset} bytes");
         }
-        let Some(kind) = self.io().descriptor_kind(sgpr, offset) else {
+        // Only compute programs carry used-resource rows. A load in a vertex or pixel
+        // program is taken as a read of an SRV (a typed texture fetch) [unverified: a UAV
+        // load in a graphics stage would be read through the wrong binding].
+        let kind = self
+            .io()
+            .descriptor_kind(sgpr, offset)
+            .or_else(|| (!store && !matches!(self.io(), StageIo::Compute(_))).then_some(0));
+        let Some(kind) = kind else {
             return refuse("an image whose table slot no used-resource row names");
         };
         if (store && kind != 3) || !matches!(kind, 0 | 3) {

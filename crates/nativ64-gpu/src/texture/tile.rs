@@ -113,6 +113,58 @@ impl<'a> Addresser<'a> {
     }
 }
 
+impl Addresser<'_> {
+    /// The per-column part of [`Addresser::offset`] for every x of the level: the byte offset of
+    /// element (x, y, layer) is `row(y, layer).0 + (table[x] ^ row(y, layer).1)`. The block
+    /// column's contribution is a multiple of the block size, so the XOR of the in-block parts
+    /// does not touch it.
+    pub fn x_table(&self) -> Vec<u64> {
+        let (p, m) = (self.plane, self.mip);
+        let e = u64::from(p.element_bytes);
+        let Some(eq) = &self.eq else {
+            return (0..u64::from(m.width)).map(|x| x * e).collect();
+        };
+        (0..m.width)
+            .map(|x| match m.tail {
+                Some(t) => u64::from(eq.offset(0, x + t.x, 0, 0)),
+                None => {
+                    let block = u64::from(x / p.block[0]);
+                    block * self.block_bytes + u64::from(eq.offset(0, x, 0, 0))
+                }
+            })
+            .collect()
+    }
+
+    /// The per-row part: `(base, xor)`, see [`Addresser::x_table`].
+    pub fn row(&self, y: u32, layer: u32) -> (u64, u32) {
+        let (p, m) = (self.plane, self.mip);
+        let e = u64::from(p.element_bytes);
+        let slice = if self.thick { 0 } else { u64::from(layer) };
+        let start = p.offset + slice * p.slice_size;
+        let Some(eq) = &self.eq else {
+            return (start + m.offset + u64::from(y) * u64::from(m.pitch) * e, 0);
+        };
+        let zb = if self.thick {
+            u64::from(layer / p.block[2])
+        } else {
+            0
+        };
+        match m.tail {
+            Some(t) => (
+                start + zb * self.block_bytes,
+                eq.offset(self.xor, 0, y + t.y, layer),
+            ),
+            None => {
+                let yb = u64::from(y / p.block[1]);
+                (
+                    start + m.offset + (zb * self.blocks_y + yb) * self.blocks_x * self.block_bytes,
+                    eq.offset(self.xor, 0, y, layer),
+                )
+            }
+        }
+    }
+}
+
 /// The part of a resource a subresource covers, and what to do per element.
 struct Walk<'a> {
     layout: &'a Layout,
@@ -191,19 +243,136 @@ pub fn detile(
     base: u64,
     tiled: &[u8],
     linear: &mut [u8],
-    (row_pitch, slice_pitch): (usize, usize),
+    pitch: (usize, usize),
 ) -> Result<(), TileError> {
-    copy(
+    let threads = |bytes: usize| {
+        if bytes >= PARALLEL_MIN_BYTES {
+            std::thread::available_parallelism().map_or(1, |n| n.get().min(MAX_THREADS))
+        } else {
+            1
+        }
+    };
+    detile_with(
         layout,
         plane,
         subresource,
         base,
-        tiled.len(),
-        linear.len(),
-        row_pitch,
-        slice_pitch,
-        |at, to, e| linear[to..to + e].copy_from_slice(&tiled[at..at + e]),
+        tiled,
+        linear,
+        pitch,
+        threads,
     )
+}
+
+/// [`detile`] with the thread count chosen from the bytes of one slice.
+#[allow(clippy::too_many_arguments)]
+fn detile_with(
+    layout: &Layout,
+    plane: usize,
+    subresource: u32,
+    base: u64,
+    tiled: &[u8],
+    linear: &mut [u8],
+    (row_pitch, slice_pitch): (usize, usize),
+    threads: impl Fn(usize) -> usize,
+) -> Result<(), TileError> {
+    let w = walk(layout, plane, subresource)?;
+    let p = &layout.planes[plane];
+    if (tiled.len() as u64) < p.offset + p.size {
+        return Err(TileError::TiledTooSmall);
+    }
+    let _ = linear_extent(&w, linear.len(), row_pitch, slice_pitch)?;
+    let addr = Addresser::new(layout, plane, w.mip, base)?;
+    let m = &p.mips[w.mip];
+    let xt = addr.x_table();
+    let e = p.element_bytes as usize;
+    let rows = m.height as usize;
+    let threads = threads(rows * m.width as usize * e).clamp(1, rows.max(1));
+    // bands of whole rows: disjoint pieces of `linear`
+    let band_rows = rows.div_ceil(threads).max(1);
+    let job = Job {
+        addr: &addr,
+        xt: &xt,
+        tiled,
+        e,
+        row_pitch,
+    };
+    for z in 0..w.depth {
+        let slice = &mut linear[z as usize * slice_pitch..];
+        let layer = w.layer0 + z;
+        if threads == 1 {
+            job.run(0, rows, layer, slice);
+            continue;
+        }
+        std::thread::scope(|s| {
+            let mut rest = slice;
+            let mut y0 = 0;
+            while y0 < rows {
+                let n = band_rows.min(rows - y0);
+                // the last row of the slice may be shorter than the pitch
+                let take = (n * row_pitch).min(rest.len());
+                let (band, tail) = rest.split_at_mut(take);
+                rest = tail;
+                let job = &job;
+                if y0 + n == rows {
+                    job.run(y0, n, layer, band);
+                } else {
+                    s.spawn(move || job.run(y0, n, layer, band));
+                }
+                y0 += n;
+            }
+        });
+    }
+    Ok(())
+}
+
+/// Subresources of at least this many bytes are detiled by several threads.
+const PARALLEL_MIN_BYTES: usize = 1 << 20;
+const MAX_THREADS: usize = 8;
+
+/// What detiling rows needs; shared by the threads.
+struct Job<'a> {
+    addr: &'a Addresser<'a>,
+    xt: &'a [u64],
+    tiled: &'a [u8],
+    e: usize,
+    row_pitch: usize,
+}
+
+impl Job<'_> {
+    /// Detiles `n` rows from row `y0` of `layer` into `band`, whose first byte is row `y0`.
+    fn run(&self, y0: usize, n: usize, layer: u32, band: &mut [u8]) {
+        match self.e {
+            1 => self.rows::<1>(y0, n, layer, band),
+            2 => self.rows::<2>(y0, n, layer, band),
+            4 => self.rows::<4>(y0, n, layer, band),
+            8 => self.rows::<8>(y0, n, layer, band),
+            16 => self.rows::<16>(y0, n, layer, band),
+            e => {
+                for r in 0..n {
+                    let (base, xor) = self.addr.row((y0 + r) as u32, layer);
+                    let line = &mut band[r * self.row_pitch..];
+                    for (x, &t) in self.xt.iter().enumerate() {
+                        let at = (base + (t ^ u64::from(xor))) as usize;
+                        line[x * e..(x + 1) * e].copy_from_slice(&self.tiled[at..at + e]);
+                    }
+                }
+            }
+        }
+    }
+
+    fn rows<const E: usize>(&self, y0: usize, n: usize, layer: u32, band: &mut [u8]) {
+        for r in 0..n {
+            let (base, xor) = self.addr.row((y0 + r) as u32, layer);
+            let xor = u64::from(xor);
+            let line = &mut band[r * self.row_pitch..];
+            let line = &mut line[..self.xt.len() * E];
+            for (dst, &t) in line.as_chunks_mut::<E>().0.iter_mut().zip(self.xt) {
+                let at = (base + (t ^ xor)) as usize;
+                dst.copy_from_slice(&self.tiled[at..at + E]);
+            }
+        }
+    }
 }
 
 /// The reverse of [`detile`]: writes the rows of `linear` into the tiled memory. Padding
@@ -351,6 +520,97 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The per-texel loop `detile` used before the row tables and threads.
+    fn detile_reference(l: &Layout, sub: u32, tiled: &[u8], out: &mut [u8], pitch: (usize, usize)) {
+        copy(
+            l,
+            0,
+            sub,
+            0,
+            tiled.len(),
+            out.len(),
+            pitch.0,
+            pitch.1,
+            |at, to, e| out[to..to + e].copy_from_slice(&tiled[at..at + e]),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn threaded_detile_equals_the_single_threaded_one() {
+        for (d, name) in [
+            (desc(3, (1000, 700, 1), 5, 61, 0x100 | 24, 0), "R8 mips"),
+            (desc(3, (517, 333, 3), 4, 54, 0x100 | 27, 0), "16-bit array"),
+            (desc(3, (300, 130, 1), 0, 28, 0x100 | 9, 0), "32-bit"),
+            (desc(3, (129, 67, 1), 3, 10, 0x100 | 25, 0), "64-bit"),
+            (desc(3, (96, 70, 2), 0, 2, 0x100 | 21, 0), "128-bit"),
+            (desc(3, (350, 90, 1), 2, 71, 0x100 | 24, 0), "BC1"),
+            (desc(3, (100, 50, 1), 2, 28, 1, 0), "micro tiled"),
+            (desc(4, (40, 20, 10), 3, 28, 0x100 | 9, 0), "thick volume"),
+            (desc(4, (64, 64, 5), 3, 28, 0x100 | 27, 0), "thin volume"),
+        ] {
+            let l = Layout::new(&d).unwrap();
+            let tiled = pattern(3, l.size as usize);
+            let subs = l.mip_levels
+                * if l.dimension == 4 {
+                    1
+                } else {
+                    l.depth_or_array
+                };
+            for sub in 0..subs {
+                let m = &l.planes[0].mips[(sub % l.mip_levels) as usize];
+                let depth = if l.dimension != 4 {
+                    1
+                } else if l.thick {
+                    m.depth
+                } else {
+                    (l.depth_or_array >> (sub % l.mip_levels)).max(1)
+                };
+                let row = m.width as usize * l.planes[0].element_bytes as usize + 3;
+                let slice = row * m.height as usize + 1;
+                let mut want = vec![0xEE; slice * depth as usize];
+                detile_reference(&l, sub, &tiled, &mut want, (row, slice));
+                for threads in [1, 2, 3, 8, 64] {
+                    let mut got = vec![0xEE; want.len()];
+                    detile_with(&l, 0, sub, 0, &tiled, &mut got, (row, slice), |_| threads)
+                        .unwrap();
+                    assert!(got == want, "{name} sub {sub} with {threads} threads");
+                }
+            }
+        }
+    }
+
+    /// `cargo test --release -p nativ64-gpu detile_speed -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn detile_speed() {
+        let l = Layout::new(&desc(3, (3840, 2160, 1), 1, 61, 0x100 | 24, 0)).unwrap();
+        let tiled = pattern(1, l.size as usize);
+        let (w, h) = (3840usize, 2160usize);
+        let mut out = vec![0u8; w * h];
+        let mb = (w * h) as f64 / 1e6;
+        let time = |name: &str, f: &mut dyn FnMut()| {
+            f();
+            let t = std::time::Instant::now();
+            for _ in 0..10 {
+                f();
+            }
+            let s = t.elapsed().as_secs_f64() / 10.0;
+            println!("{name}: {:.2} ms, {:.0} MB/s", s * 1e3, mb / s);
+        };
+        time("per-texel reference", &mut || {
+            detile_reference(&l, 0, &tiled, &mut out, (w, w * h))
+        });
+        let mut o2 = vec![0u8; w * h];
+        time("row tables, 1 thread", &mut || {
+            detile_with(&l, 0, 0, 0, &tiled, &mut o2, (w, w * h), |_| 1).unwrap()
+        });
+        time("row tables, threaded", &mut || {
+            detile(&l, 0, 0, 0, &tiled, &mut o2, (w, w * h)).unwrap()
+        });
+        assert!(out == o2);
     }
 
     #[test]
