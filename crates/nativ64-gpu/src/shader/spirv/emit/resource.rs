@@ -10,7 +10,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use spirv::{Capability, Decoration, Op, StorageClass};
+use spirv::{Capability, Decoration, GlslStd450Op as GL, Op, StorageClass};
 
 use super::{bad, Gen, Opd, SpirvError, Tr, R};
 use crate::shader::gfx10::Enc;
@@ -19,6 +19,54 @@ use crate::shader::ir::{Func, Inst, Reg, Src, Term, Val, ValDef};
 use crate::shader::resource::SamplerDesc;
 use crate::shader::spirv::alu::{Backend, Ctx, Unsupported};
 use crate::shader::spirv::builder::inst;
+
+/// A buffer format's numeric convention (the last word of its `BUF_FMT_` name).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BufNum {
+    Unorm,
+    Snorm,
+    Uint,
+    Sint,
+    Float,
+}
+
+/// Components (bits each) and the numeric convention of an MTBUF format byte.
+fn ufmt(f: u8) -> R<(Vec<u32>, BufNum)> {
+    let name = crate::shader::gfx10::table_ext::UFMT
+        .get(usize::from(f))
+        .copied()
+        .unwrap_or("");
+    let name = name.strip_prefix("BUF_FMT_").unwrap_or("");
+    if name.is_empty() {
+        // the table leaves the default format (8_UNORM) unnamed
+        if f == 1 {
+            return Ok((vec![8], BufNum::Unorm));
+        }
+        return refuse(&format!("buffer format {f}"));
+    }
+    let mut parts: Vec<&str> = name.split('_').collect();
+    let num = match parts.pop().unwrap_or("") {
+        "UNORM" => BufNum::Unorm,
+        "SNORM" => BufNum::Snorm,
+        "UINT" => BufNum::Uint,
+        "SINT" => BufNum::Sint,
+        "FLOAT" => BufNum::Float,
+        other => return refuse(&format!("buffer format {name} ({other})")),
+    };
+    let mut bits = Vec::new();
+    for p in parts {
+        bits.push(match p {
+            "8" => 8,
+            "16" => 16,
+            "32" => 32,
+            other => return refuse(&format!("buffer format {name} ({other})")),
+        });
+    }
+    if bits.is_empty() {
+        return refuse(&format!("buffer format {name}"));
+    }
+    Ok((bits, num))
+}
 
 fn refuse<T>(op: &str) -> R<T> {
     Err(SpirvError::Unsupported(Unsupported {
@@ -97,7 +145,9 @@ fn reads_memory_addresses(
                     }
                 }
                 Enc::Smem if name.starts_with("s_buffer_load") => i.srcs.first().map(Vec::as_slice),
-                Enc::Mubuf => i.srcs.len().checked_sub(2).map(|n| i.srcs[n].as_slice()),
+                Enc::Mubuf | Enc::Mtbuf => {
+                    i.srcs.len().checked_sub(2).map(|n| i.srcs[n].as_slice())
+                }
                 _ => None,
             };
             let Some(w) = words else { continue };
@@ -257,7 +307,7 @@ fn is_copy(i: &Inst) -> bool {
 fn descriptor_operand(i: &Inst, j: usize, n: usize) -> bool {
     match i.instr.enc {
         Enc::Smem => i.instr.name().starts_with("s_buffer_load") && j == 0,
-        Enc::Mubuf => j + 2 == n,
+        Enc::Mubuf | Enc::Mtbuf => j + 2 == n,
         Enc::Mimg => j + 2 >= n,
         _ => false,
     }
@@ -657,7 +707,7 @@ impl<'a> Tr<'a> {
     ) -> R<Option<Vec<Opd<Gen>>>> {
         match c.inst.instr.enc {
             Enc::Smem => self.smem(c, b, k),
-            Enc::Mubuf => self.mubuf(c),
+            Enc::Mubuf | Enc::Mtbuf => self.mubuf(c),
             Enc::Mimg if c.inst.instr.name().starts_with("image_load") => self.image_load(c),
             Enc::Mimg if c.inst.instr.name().starts_with("image_store") => self.image_store(c),
             Enc::Mimg => self.image_sample(c),
@@ -766,7 +816,33 @@ impl<'a> Tr<'a> {
             "buffer_store_dwordx2" => (false, 2),
             "buffer_store_dwordx3" => (false, 3),
             "buffer_store_dwordx4" => (false, 4),
-            _ => return Ok(None),
+            _ => {
+                if let Some((load, rest)) = name
+                    .strip_prefix("buffer_load_format_")
+                    .map(|r| (true, r))
+                    .or_else(|| {
+                        name.strip_prefix("buffer_store_format_")
+                            .map(|r| (false, r))
+                    })
+                {
+                    let n = Self::format_components(rest)?;
+                    return self.mubuf_format(c, load, n, false);
+                }
+                // a typed buffer load (`tbuffer_*`) carries its format in the instruction and
+                // always uses its address VGPR
+                if let Some((load, rest)) = name
+                    .strip_prefix("tbuffer_load_format_")
+                    .map(|r| (true, r))
+                    .or_else(|| {
+                        name.strip_prefix("tbuffer_store_format_")
+                            .map(|r| (false, r))
+                    })
+                {
+                    let n = Self::format_components(rest)?;
+                    return self.mubuf_format(c, load, n, true);
+                }
+                return Ok(None);
+            }
         };
         let m = i.mem;
         if m.tfe {
@@ -833,6 +909,237 @@ impl<'a> Tr<'a> {
             }
         }
         Ok(Some(out))
+    }
+
+    /// The component count of a `*_format_x/y/z/w` opcode suffix.
+    fn format_components(suffix: &str) -> R<usize> {
+        Ok(match suffix {
+            "x" => 1,
+            "xy" => 2,
+            "xyz" => 3,
+            "xyzw" => 4,
+            other => return refuse(&format!("buffer format op '{other}'")),
+        })
+    }
+
+    /// `buffer_load_format_*` / `buffer_store_format_*`: `n` components of the instruction's
+    /// buffer format at the address (the descriptor's stride steps between elements).
+    fn mubuf_format(
+        &mut self,
+        c: &Ctx<Gen>,
+        load: bool,
+        n: usize,
+        address_used: bool,
+    ) -> R<Option<Vec<Opd<Gen>>>> {
+        let i = &c.inst.instr;
+        let m = i.mem;
+        if m.format == 0 && !address_used {
+            // a `buffer_*_format_*` op has no format of its own: the descriptor's (a runtime
+            // value in the view record) says it, so the components are not known here
+            return refuse(&format!("{} (the descriptor's format)", i.name()));
+        }
+        let (bits, num) = ufmt(m.format)?;
+        if bits.len() < n {
+            return bad("a buffer format op wider than its format");
+        }
+        if bits.iter().any(|b| b % 8 != 0) {
+            return refuse("a packed buffer format");
+        }
+        let elem: u32 = bits.iter().map(|b| b / 8).sum();
+        let ns = c.srcs.len();
+        if ns < 2 || (load && c.inst.dsts.len() != n) {
+            return bad("a buffer format op whose operands do not match its width");
+        }
+        let buf = self.buffer_of(&c.inst.srcs[ns - 2], &c.srcs[ns - 2])?;
+        let t64 = self.t64();
+        let soff = self.bits_of(c.srcs[ns - 1][0]);
+        let mut off = self.zext(soff);
+        off = self.add_k64(off, u64::from(m.offset as u32));
+        let addr = usize::from(load);
+        let mut at = c
+            .srcs
+            .get(addr)
+            .filter(|_| m.offen || m.idxen || address_used)
+            .map(|v| v.iter());
+        if m.idxen {
+            let Some(&ix) = at.as_mut().and_then(|a| a.next()) else {
+                return bad("a buffer index operand is missing");
+            };
+            let ix = self.bits_of(ix);
+            let ix = self.zext(ix);
+            let stride = self.zext(buf.stride);
+            let scaled = self.g.op(Op::IMul, t64, &[ix, stride]);
+            // a descriptor with no stride steps by the format's own size
+            let tb = self.g.t_bool();
+            let zero = self.g.k(0);
+            let raw = self.g.op(Op::IEqual, tb, &[buf.stride, zero]);
+            let size = self.k64(u64::from(elem));
+            let by_format = self.g.op(Op::IMul, t64, &[ix, size]);
+            let step = self.g.op(Op::Select, t64, &[raw, by_format, scaled]);
+            off = self.add64(off, step);
+        }
+        // a typed buffer's address is a byte offset when it is not an element index
+        if m.offen || (address_used && !m.idxen) {
+            let Some(&vo) = at.as_mut().and_then(|a| a.next()) else {
+                return bad("a buffer offset operand is missing");
+            };
+            let vo = self.bits_of(vo);
+            let vo = self.zext(vo);
+            off = self.add64(off, vo);
+        }
+        let base = self.add64(buf.base, off);
+        let tb = self.g.t_bool();
+        let end = self.add_k64(off, u64::from(elem));
+        let inside = self.g.op(Op::ULessThanEqual, tb, &[end, buf.size]);
+        let tu = self.g.t_u32();
+        let dwords = elem.div_ceil(4);
+        if !load {
+            // pack the components, then write whole dwords (the last one merges with memory
+            // when the store does not cover it)
+            let mut words = vec![self.g.k(0); dwords as usize];
+            let mut bit = 0u32;
+            for (j, &b) in bits.iter().take(n).enumerate() {
+                let Some(&d) = c.srcs[0].get(j) else {
+                    return bad("a buffer store with too few data dwords");
+                };
+                let d = self.bits_of(d);
+                let raw = self.pack_component(d, b, num);
+                let shift = bit % 32;
+                let at = (bit / 32) as usize;
+                let raw = if shift == 0 {
+                    raw
+                } else {
+                    let sh = self.g.k(shift);
+                    self.g.op(Op::ShiftLeftLogical, tu, &[raw, sh])
+                };
+                words[at] = self.g.op(Op::BitwiseOr, tu, &[words[at], raw]);
+                bit += b;
+            }
+            let stored: u32 = bits[..n].iter().map(|b| b / 8).sum();
+            for (k, &w) in words.iter().enumerate() {
+                let kk = k as u32;
+                let a = self.add_k64(base, u64::from(4 * kk));
+                let ok = self.and(inside, c.active);
+                let whole = 4 * (kk + 1) <= stored;
+                if !whole {
+                    // merge with the bytes the store does not cover
+                    let old = self.guarded_load(a, ok)?;
+                    let kept = self.g.k(if stored > 4 * kk {
+                        u32::MAX << (8 * (stored - 4 * kk))
+                    } else {
+                        u32::MAX
+                    });
+                    let w = self.g.op(Op::BitwiseAnd, tu, &[old, kept]);
+                    let w = self.g.op(Op::BitwiseOr, tu, &[w, words[k]]);
+                    self.guarded(Some(ok), |t| {
+                        t.bda_store_u32(a, w);
+                        Ok(())
+                    })?;
+                } else {
+                    self.guarded(Some(ok), |t| {
+                        t.bda_store_u32(a, w);
+                        Ok(())
+                    })?;
+                }
+            }
+            return Ok(Some(Vec::new()));
+        }
+        let mut words = Vec::new();
+        for k in 0..dwords {
+            let a = self.add_k64(base, u64::from(4 * k));
+            let ok = self.and(inside, c.active);
+            words.push(self.guarded_load(a, ok)?);
+        }
+        let mut out = Vec::new();
+        let mut bit = 0u32;
+        for (j, &b) in bits.iter().take(n).enumerate() {
+            let w = words[(bit / 32) as usize];
+            let shift = bit % 32;
+            let raw = if shift == 0 {
+                w
+            } else {
+                let sh = self.g.k(shift);
+                self.g.op(Op::ShiftRightLogical, tu, &[w, sh])
+            };
+            let mask = self.g.k(if b >= 32 { u32::MAX } else { (1u32 << b) - 1 });
+            let raw = self.g.op(Op::BitwiseAnd, tu, &[raw, mask]);
+            let v = self.unpack_component(raw, b, num);
+            out.push(self.lane_result(c, j, v));
+            bit += b;
+        }
+        Ok(Some(out))
+    }
+
+    /// The dword a format load leaves for one component (float bits for the normalized and
+    /// float formats, the integer itself otherwise).
+    fn unpack_component(&mut self, raw: u32, bits: u32, num: BufNum) -> u32 {
+        let tf = self.g.t_f32();
+        match num {
+            BufNum::Uint | BufNum::Float => raw,
+            BufNum::Unorm => {
+                let f = self.g.op(Op::ConvertUToF, tf, &[raw]);
+                let scale = self.g.fconst(1.0 / ((1u64 << bits) - 1) as f32);
+                let f = self.g.op(Op::FMul, tf, &[f, scale]);
+                self.g.as_bits(f)
+            }
+            BufNum::Snorm => {
+                let s = self.sign_extend(raw, bits);
+                let f = self.g.op(Op::ConvertSToF, tf, &[s]);
+                let scale = self.g.fconst(1.0 / ((1u64 << (bits - 1)) - 1) as f32);
+                let f = self.g.op(Op::FMul, tf, &[f, scale]);
+                let one = self.g.fconst(1.0);
+                let mone = self.g.fconst(-1.0);
+                let hi = self.g.ext(tf, GL::FMin, &[f, one]);
+                let lo = self.g.ext(tf, GL::FMax, &[hi, mone]);
+                self.g.as_bits(lo)
+            }
+            BufNum::Sint => self.sign_extend(raw, bits),
+        }
+    }
+
+    /// The packed bits a format store takes for one component.
+    fn pack_component(&mut self, d: u32, bits: u32, num: BufNum) -> u32 {
+        let (tu, tf) = (self.g.t_u32(), self.g.t_f32());
+        match num {
+            BufNum::Uint | BufNum::Float | BufNum::Sint => d,
+            BufNum::Unorm => {
+                let zero = self.g.fconst(0.0);
+                let one = self.g.fconst(1.0);
+                let f = self.g.as_f32(d);
+                let f = self.g.ext(tf, GL::FMax, &[f, zero]);
+                let f = self.g.ext(tf, GL::FMin, &[f, one]);
+                let scale = self.g.fconst(((1u64 << bits) - 1) as f32);
+                let f = self.g.op(Op::FMul, tf, &[f, scale]);
+                let f = self.g.ext(tf, GL::RoundEven, &[f]);
+                self.g.op(Op::ConvertFToU, tu, &[f])
+            }
+            BufNum::Snorm => {
+                let mone = self.g.fconst(-1.0);
+                let one = self.g.fconst(1.0);
+                let f = self.g.as_f32(d);
+                let f = self.g.ext(tf, GL::FMax, &[f, mone]);
+                let f = self.g.ext(tf, GL::FMin, &[f, one]);
+                let scale = self.g.fconst(((1u64 << (bits - 1)) - 1) as f32);
+                let f = self.g.op(Op::FMul, tf, &[f, scale]);
+                let f = self.g.ext(tf, GL::RoundEven, &[f]);
+                let s = self.g.op(Op::ConvertFToS, tu, &[f]);
+                let mask = self.g.k(if bits >= 32 {
+                    u32::MAX
+                } else {
+                    (1u32 << bits) - 1
+                });
+                self.g.op(Op::BitwiseAnd, tu, &[s, mask])
+            }
+        }
+    }
+
+    /// A `bits`-wide signed value as i32.
+    fn sign_extend(&mut self, raw: u32, bits: u32) -> u32 {
+        let sh = self.g.k(32 - bits);
+        let t = self.g.t_u32();
+        let l = self.g.op(Op::ShiftLeftLogical, t, &[raw, sh]);
+        let ti = self.g.m.global(Op::TypeInt, None, &[32, 1]);
+        self.g.op(Op::ShiftRightArithmetic, ti, &[l, sh])
     }
 
     // -----------------------------------------------------------------------------------

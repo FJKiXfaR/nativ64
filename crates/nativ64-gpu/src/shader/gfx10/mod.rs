@@ -15,7 +15,7 @@ pub mod ops;
 #[rustfmt::skip]
 mod table;
 #[rustfmt::skip]
-mod table_ext;
+pub(crate) mod table_ext;
 
 use std::fmt;
 
