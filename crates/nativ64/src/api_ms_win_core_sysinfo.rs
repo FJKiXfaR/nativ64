@@ -106,8 +106,94 @@ unsafe fn logical_processor_information(buffer: *mut u8, length: *mut u32) -> i3
     1
 }
 
+/// `SYSTEM_INFO` (48 bytes on x64): the host's processor configuration as Windows reports it.
+/// `GetSystemInfo` and `GetNativeSystemInfo` are the same on x64 - the process is never WOW64.
+unsafe fn system_info(out: *mut u8) {
+    if out.is_null() {
+        return;
+    }
+    let mask = processor_mask();
+    let pages = libc::sysconf(libc::_SC_PAGESIZE);
+    let (level, revision) = processor_level_and_revision();
+    std::ptr::write_bytes(out, 0, 48);
+    // The union: wProcessorArchitecture (PROCESSOR_ARCHITECTURE_AMD64 = 9), wReserved = 0.
+    (out as *mut u16).write_unaligned(9);
+    (out.add(4) as *mut u32).write_unaligned(if pages > 0 { pages as u32 } else { 4096 });
+    (out.add(8) as *mut u64).write_unaligned(0x1_0000);
+    (out.add(16) as *mut u64).write_unaligned(0x7FFF_FFFE_FFFF);
+    (out.add(24) as *mut u64).write_unaligned(mask);
+    (out.add(32) as *mut u32).write_unaligned(mask.count_ones());
+    (out.add(36) as *mut u32).write_unaligned(0x21D8); // PROCESSOR_AMD_X8664
+    (out.add(40) as *mut u32).write_unaligned(0x1_0000);
+    (out.add(44) as *mut u16).write_unaligned(level);
+    (out.add(46) as *mut u16).write_unaligned(revision);
+}
+
+/// The processor level (family) and revision (model << 8 | stepping) Windows fills
+/// `SYSTEM_INFO` with, from CPUID leaf 1.
+fn processor_level_and_revision() -> (u16, u16) {
+    let r = std::arch::x86_64::__cpuid(1);
+    let base_family = ((r.eax >> 8) & 0xf) as u16;
+    let base_model = ((r.eax >> 4) & 0xf) as u16;
+    let ext_family = ((r.eax >> 20) & 0xff) as u16;
+    let ext_model = ((r.eax >> 16) & 0xf) as u16;
+    let family = if base_family == 0xf {
+        base_family + ext_family
+    } else {
+        base_family
+    };
+    let model = if base_family == 0x6 || base_family == 0xf {
+        base_model | ext_model << 4
+    } else {
+        base_model
+    };
+    (family, model << 8 | (r.eax & 0xf) as u16)
+}
+
+/// `GetSystemTimeAdjustment`: the host clock's tick in 100 ns units, with periodic adjustment
+/// disabled (the same shape Windows reports; its own default tick is 15.625 ms).
+unsafe fn system_time_adjustment(
+    adjustment: *mut u32,
+    increment: *mut u32,
+    disabled: *mut i32,
+) -> i32 {
+    if adjustment.is_null() || increment.is_null() || disabled.is_null() {
+        set_last_error(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    let mut res = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    let ok = libc::clock_getres(libc::CLOCK_MONOTONIC, &mut res) == 0;
+    let ns = if ok {
+        res.tv_sec as u64 * 1_000_000_000 + res.tv_nsec as u64
+    } else {
+        0
+    };
+    let tick = if ns == 0 {
+        156_250
+    } else {
+        ns.div_ceil(100).clamp(1, u64::from(u32::MAX)) as u32
+    };
+    adjustment.write_unaligned(tick);
+    increment.write_unaligned(tick);
+    disabled.write_unaligned(1);
+    1
+}
+
 win32! {
     module "api-ms-win-core-sysinfo" => "kernel32";
+    Native fn GetSystemInfo(out: *mut u8) {
+        unsafe { system_info(out) }
+    }
+    // On x64 the native form is the same structure (`GetSystemInfo` is the WOW64-compatible one).
+    Native fn GetNativeSystemInfo(out: *mut u8) {
+        unsafe { system_info(out) }
+    }
+    Native fn GetSystemTimeAdjustment(adjustment: *mut u32, increment: *mut u32, disabled: *mut i32) -> i32 {
+        unsafe { system_time_adjustment(adjustment, increment, disabled) }
+    }
     Native fn GetLogicalProcessorInformation(buffer: *mut u8, length: *mut u32) -> i32 {
         logical_processor_information(buffer, length)
     }
@@ -169,6 +255,54 @@ mod tests {
         let avail = u64::from_le_bytes(b[16..24].try_into().unwrap());
         assert!(total > 0 && avail <= total);
         assert!(b[4] <= 100);
+    }
+
+    #[test]
+    fn system_info_describes_the_host() {
+        let mut b = [0u8; 48];
+        let mask = processor_mask();
+        unsafe {
+            GetSystemInfo(std::ptr::null_mut());
+            GetSystemInfo(b.as_mut_ptr());
+            assert_eq!(u16::from_le_bytes([b[0], b[1]]), 9, "AMD64");
+            assert_eq!(u32::from_le_bytes(b[4..8].try_into().unwrap()), 4096);
+            let min = u64::from_le_bytes(b[8..16].try_into().unwrap());
+            let max = u64::from_le_bytes(b[16..24].try_into().unwrap());
+            assert_eq!(min, 0x1_0000);
+            assert!(max > min);
+            assert_eq!(u64::from_le_bytes(b[24..32].try_into().unwrap()), mask);
+            assert_eq!(
+                u32::from_le_bytes(b[32..36].try_into().unwrap()),
+                mask.count_ones()
+            );
+            assert!(u16::from_le_bytes([b[44], b[45]]) >= 5);
+            // The native form fills the same structure.
+            let mut n = [0u8; 48];
+            GetNativeSystemInfo(n.as_mut_ptr());
+            assert_eq!(n, b);
+        }
+    }
+
+    #[test]
+    fn system_time_adjustment_is_the_host_clock() {
+        let (mut adjust, mut increment, mut disabled) = (0u32, 0u32, -1i32);
+        unsafe {
+            assert_eq!(
+                GetSystemTimeAdjustment(&mut adjust, &mut increment, &mut disabled),
+                1
+            );
+            assert!(increment > 0);
+            assert_eq!(adjust, increment);
+            assert_eq!(disabled, 1);
+            assert_eq!(
+                GetSystemTimeAdjustment(std::ptr::null_mut(), &mut increment, &mut disabled),
+                0
+            );
+            assert_eq!(
+                crate::api_ms_win_core_errorhandling::GetLastError(),
+                ERROR_INVALID_PARAMETER
+            );
+        }
     }
 
     #[test]

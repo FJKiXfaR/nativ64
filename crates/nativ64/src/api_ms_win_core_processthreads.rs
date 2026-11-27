@@ -56,8 +56,53 @@ pub static ALIASES: &[Export] = &[
     },
 ];
 
+/// The host CPU's feature set, in the `PF_*` numbering `IsProcessorFeaturePresent` takes: the
+/// same answers Windows gives on this machine. A number Windows does not define answers false.
+fn processor_feature(feature: u32) -> bool {
+    use std::arch::x86_64::{__cpuid, __cpuid_count};
+    let leaf1 = __cpuid(1);
+    let leaf7 = __cpuid_count(7, 0);
+    let ext1 = __cpuid(0x8000_0001);
+    let osxsave = leaf1.ecx & (1 << 27) != 0;
+    let xcr0 = if osxsave {
+        // SAFETY: the CPU reported XSAVE/OSXSAVE, so XGETBV is available.
+        unsafe {
+            let (lo, hi): (u32, u32);
+            core::arch::asm!("xgetbv", in("ecx") 0u32, out("eax") lo, out("edx") hi,
+                             options(nostack, preserves_flags));
+            (u64::from(hi) << 32) | u64::from(lo)
+        }
+    } else {
+        0
+    };
+    let ymm = xcr0 & 0x6 == 0x6;
+    let zmm = xcr0 & 0xe6 == 0xe6;
+    match feature {
+        // Features every x86-64 machine has.
+        2 | 3 | 6 | 8 | 9 | 10 | 14 | 23 => true,
+        12 | 20 => true,                  // NX and second-level address translation.
+        13 => leaf1.ecx & 1 != 0,         // SSE3
+        17 => osxsave,                    // XSAVE
+        22 => leaf7.ebx & 1 != 0,         // RDWRFSGSBASE
+        28 => leaf1.ecx & (1 << 30) != 0, // RDRAND
+        32 => ext1.edx & (1 << 27) != 0,  // RDTSCP
+        33 => leaf7.ecx & (1 << 22) != 0, // RDPID
+        36 => leaf1.ecx & (1 << 9) != 0,  // SSSE3
+        37 => leaf1.ecx & (1 << 19) != 0, // SSE4.1
+        38 => leaf1.ecx & (1 << 20) != 0, // SSE4.2
+        39 => leaf1.ecx & (1 << 28) != 0 && ymm, // AVX
+        40 => leaf7.ebx & (1 << 5) != 0 && ymm, // AVX2
+        41 => leaf7.ebx & (1 << 16) != 0 && zmm, // AVX-512F
+        42 => leaf7.ebx & (1 << 9) != 0,  // ERMS
+        _ => false,
+    }
+}
+
 win32! {
     module "api-ms-win-core-processthreads" => "kernel32";
+    Native fn IsProcessorFeaturePresent(feature: u32) -> i32 {
+        processor_feature(feature) as i32
+    }
     Native fn GetCurrentProcessId() -> u32 {
         libc::getpid() as u32
     }
@@ -225,6 +270,26 @@ win32! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn processor_features_match_the_host() {
+        unsafe {
+            // x86-64 baseline features are always present; the query is a BOOL.
+            assert_eq!(IsProcessorFeaturePresent(2), 1, "CMPXCHG8B");
+            assert_eq!(IsProcessorFeaturePresent(6), 1, "SSE");
+            assert_eq!(IsProcessorFeaturePresent(10), 1, "SSE2");
+            assert_eq!(IsProcessorFeaturePresent(9), 1, "PAE");
+            assert_eq!(IsProcessorFeaturePresent(0xffff_ffff), 0, "undefined");
+            for f in [13, 17, 22, 28, 32, 33, 36, 37, 38, 39, 40, 41, 42] {
+                let v = IsProcessorFeaturePresent(f);
+                assert!(v == 0 || v == 1, "feature {f} answered {v}");
+            }
+            // AVX2 cannot be reported when the CPU's AVX bit is clear.
+            if std::arch::x86_64::__cpuid(1).ecx & (1 << 28) == 0 {
+                assert_eq!(IsProcessorFeaturePresent(40), 0);
+            }
+        }
+    }
     use crate::api_ms_win_core_errorhandling::GetLastError;
 
     #[test]
