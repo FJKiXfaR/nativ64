@@ -298,7 +298,9 @@ pub(in crate::shader::spirv) fn analyze(
                 Some(_) => None,
             };
             if let (Some((t, add)), Some(soff)) = (table_addend(f, tables, lo, 0), soff) {
-                let at = add.wrapping_add(soff).wrapping_add(i.instr.mem.offset as u32);
+                let at = add
+                    .wrapping_add(soff)
+                    .wrapping_add(i.instr.mem.offset as u32);
                 a.origin.extend(i.dsts.iter().map(|d| (d.1, (t, at))));
             }
         }
@@ -1189,7 +1191,8 @@ impl<'a> Tr<'a> {
             comps[0]
         } else {
             let tv = self.g.m.global(Op::TypeVector, None, &[tu, ncoord]);
-            self.g.op(Op::CompositeConstruct, tv, &comps[..ncoord as usize])
+            self.g
+                .op(Op::CompositeConstruct, tv, &comps[..ncoord as usize])
         };
         let index = self.bits_of(c.srcs[ns - 1][0]);
         self.non_uniform(index);

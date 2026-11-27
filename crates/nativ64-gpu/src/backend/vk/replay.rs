@@ -682,11 +682,7 @@ impl<'g> VkBackend<'g> {
     pub(super) fn memory_line(&mut self) -> String {
         self.refresh_stats();
         let keys = self.tex.placed_keys();
-        let addresses = keys
-            .iter()
-            .map(|k| k.0)
-            .collect::<HashSet<_>>()
-            .len();
+        let addresses = keys.iter().map(|k| k.0).collect::<HashSet<_>>().len();
         let s = &self.stats;
         format!(
             "nativ64-gpu: frame {}: images {} ({} MiB), placed {} ({} MiB), arena {} KiB, \
