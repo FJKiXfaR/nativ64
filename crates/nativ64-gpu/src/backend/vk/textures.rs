@@ -493,7 +493,10 @@ fn upload(
     tex: &mut TexState,
 ) -> bool {
     let submission = tex.submission;
-    if t.gpu_owned || t.seen == submission {
+    // `NATIV64_UPLOAD_ALL=1`: also upload textures a GPU write marked GPU-owned (a diagnostic
+    // for content the title writes on the CPU afterwards, e.g. a rasterized text texture).
+    let force = std::env::var("NATIV64_UPLOAD_ALL").is_ok_and(|v| !v.is_empty() && v != "0");
+    if (t.gpu_owned && !force) || t.seen == submission {
         return false;
     }
     if tex.capped && tex.staged >= tex.cap.unwrap_or(UPLOAD_CAP) {

@@ -104,6 +104,11 @@ impl VkBackend<'_> {
             Outcome::Built(b) => b.clone(),
             Outcome::Failed(w) => return Err(Skip::Pipeline(w.clone())),
         };
+        log_once(format!(
+            "compute pipeline {} ({:?}) dispatched",
+            pd.serial,
+            [groups]
+        ));
         let pipe_ms = started.elapsed().as_millis();
         if pipe_ms >= 1 {
             eprintln!(
