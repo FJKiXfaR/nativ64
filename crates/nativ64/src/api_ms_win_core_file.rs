@@ -1036,6 +1036,14 @@ crate::win32! {
         1
     }
 
+    // TRUE unless the default-current-directory search is disabled through the environment.
+    Native fn NeedCurrentDirectoryForExePathW(_name: *const u16) -> i32 {
+        match std::env::var_os("NoDefaultCurrentDirectoryInExePath") {
+            Some(v) if !v.is_empty() => 0,
+            _ => 1,
+        }
+    }
+
 }
 
 #[cfg(test)]
@@ -1508,6 +1516,18 @@ mod tests {
             let _ = std::fs::remove_file(write_path("nativ64-file-batch-sym.txt"));
             let _ = std::fs::remove_file(write_path("nativ64-file-batch-hard.txt"));
             let _ = std::fs::remove_file(write_path(target));
+        }
+    }
+
+    #[test]
+    fn current_directory_search_can_be_disabled() {
+        unsafe {
+            assert_eq!(NeedCurrentDirectoryForExePathW(std::ptr::null()), 1);
+            // SAFETY: the test process sets and restores its own environment variable.
+            std::env::set_var("NoDefaultCurrentDirectoryInExePath", "1");
+            assert_eq!(NeedCurrentDirectoryForExePathW(std::ptr::null()), 0);
+            std::env::remove_var("NoDefaultCurrentDirectoryInExePath");
+            assert_eq!(NeedCurrentDirectoryForExePathW(std::ptr::null()), 1);
         }
     }
 }
