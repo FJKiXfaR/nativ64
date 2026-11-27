@@ -182,6 +182,151 @@ unsafe fn system_time_adjustment(
     1
 }
 
+const RELATION_ALL: u32 = 0xffff;
+/// `SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX` (8-byte header) + `PROCESSOR_RELATIONSHIP`
+/// (24-byte body + one 16-byte `GROUP_AFFINITY`).
+const LPI2_ENTRY: usize = 8 + 24 + 16;
+
+/// One `PROCESSOR_RELATIONSHIP` entry per logical processor, then one package entry when the
+/// caller asks for it (`GetLogicalProcessorInformationEx`).
+unsafe fn logical_processor_information_ex(
+    relationship: u32,
+    buffer: *mut u8,
+    length: *mut u32,
+) -> i32 {
+    if length.is_null()
+        || relationship != RELATION_PROCESSOR_CORE
+            && relationship != RELATION_PROCESSOR_PACKAGE
+            && relationship != RELATION_ALL
+    {
+        set_last_error(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    let mask = processor_mask();
+    let cores = mask.count_ones() as usize;
+    // The relationship is an enum value; `RELATION_ALL` asks for every kind.
+    let want = |rel: u32| relationship == rel || relationship == RELATION_ALL;
+    let packages = usize::from(want(RELATION_PROCESSOR_PACKAGE));
+    let need = (cores + packages) * LPI2_ENTRY;
+    if buffer.is_null() || (length.read_unaligned() as usize) < need {
+        length.write_unaligned(need as u32);
+        set_last_error(ERROR_INSUFFICIENT_BUFFER);
+        return 0;
+    }
+    let mut out = buffer;
+    let mut put = |mask: u64| {
+        // Relationship, then the record's size including the header.
+        (out as *mut u32).write_unaligned(RELATION_PROCESSOR_CORE);
+        (out.add(4) as *mut u32).write_unaligned(LPI2_ENTRY as u32);
+        // PROCESSOR_RELATIONSHIP: Flags, EfficiencyClass, 20 reserved bytes, GroupCount.
+        std::ptr::write_bytes(out.add(8), 0, LPI2_ENTRY - 8);
+        (out.add(8 + 22) as *mut u16).write_unaligned(1);
+        // GROUP_AFFINITY: KAFFINITY mask, WORD Group, WORD Reserved[3].
+        (out.add(8 + 24) as *mut u64).write_unaligned(mask);
+        out = out.add(LPI2_ENTRY);
+    };
+    if want(RELATION_PROCESSOR_CORE) {
+        for bit in (0..64).filter(|b| mask >> b & 1 != 0) {
+            put(1 << bit);
+        }
+    }
+    if want(RELATION_PROCESSOR_PACKAGE) {
+        put(mask);
+    }
+    length.write_unaligned(need as u32);
+    1
+}
+
+/// `GetSystemTimes`: the host's cumulative times in 100 ns units. Windows' "kernel" time
+/// includes the idle time; the idle value is reported separately, as there.
+fn system_times(idle: *mut u64, kernel: *mut u64, user: *mut u64) -> i32 {
+    if idle.is_null() || kernel.is_null() || user.is_null() {
+        set_last_error(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    let Ok(stat) = std::fs::read_to_string("/proc/stat") else {
+        set_last_error(ERROR_INVALID_PARAMETER);
+        return 0;
+    };
+    let Some(line) = stat.lines().next() else {
+        set_last_error(ERROR_INVALID_PARAMETER);
+        return 0;
+    };
+    let fields: Vec<u64> = line
+        .split_whitespace()
+        .skip(1)
+        .filter_map(|f| f.parse().ok())
+        .collect();
+    if fields.len() < 4 {
+        set_last_error(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    let hz = {
+        let h = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+        if h > 0 {
+            h as u64
+        } else {
+            100
+        }
+    };
+    let ticks = |t: u64| t.saturating_mul(10_000_000) / hz;
+    let idle_time = fields[3] + fields.get(4).copied().unwrap_or(0);
+    let kernel_time = fields[2];
+    let user_time = fields[0] + fields[1];
+    unsafe {
+        idle.write_unaligned(ticks(idle_time));
+        kernel.write_unaligned(ticks(kernel_time + idle_time));
+        user.write_unaligned(ticks(user_time));
+    }
+    1
+}
+
+/// The host's RAM and swap for `MEMORYSTATUS` (32-bit fields; values above 4 GiB clamp).
+fn memory_status() -> (u32, u64, u64, u64, u64) {
+    let mut si: libc::sysinfo = unsafe { std::mem::zeroed() };
+    unsafe { libc::sysinfo(&mut si) };
+    let unit = si.mem_unit.max(1) as u64;
+    let total = si.totalram as u64 * unit;
+    let avail = si.freeram as u64 * unit;
+    let swap = si.totalswap as u64 * unit;
+    let swap_free = si.freeswap as u64 * unit;
+    let load = (100 - (avail * 100).checked_div(total).unwrap_or(100)) as u32;
+    (load, total, avail, total + swap, avail + swap_free)
+}
+
+/// `GetPhysicallyInstalledSystemMemory`: the installed RAM in kilobytes.
+unsafe fn physically_installed_memory(out: *mut u64) -> i32 {
+    if out.is_null() {
+        set_last_error(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    let mut si: libc::sysinfo = unsafe { std::mem::zeroed() };
+    unsafe { libc::sysinfo(&mut si) };
+    let unit = si.mem_unit.max(1) as u64;
+    out.write_unaligned((si.totalram as u64 * unit) / 1024);
+    1
+}
+
+/// `GetLargePageMinimum`: the host's huge page size, 2 MiB when the kernel names none.
+fn large_page_minimum() -> usize {
+    if let Ok(meminfo) = std::fs::read_to_string("/proc/meminfo") {
+        for line in meminfo.lines() {
+            if let Some(rest) = line.strip_prefix("Hugepagesize:") {
+                if let Some(kb) = rest
+                    .split_whitespace()
+                    .next()
+                    .and_then(|k| k.parse::<usize>().ok())
+                {
+                    if kb > 0 {
+                        return kb * 1024;
+                    }
+                }
+            }
+        }
+    }
+    2 << 20
+}
+
 win32! {
     module "api-ms-win-core-sysinfo" => "kernel32";
     Native fn GetSystemInfo(out: *mut u8) {
@@ -236,11 +381,45 @@ win32! {
     Native fn GetTickCount64() -> u64 {
         monotonic_ns() / 1_000_000
     }
+    Native fn GetLogicalProcessorInformationEx(relationship: u32, buffer: *mut u8, length: *mut u32) -> i32 {
+        unsafe { logical_processor_information_ex(relationship, buffer, length) }
+    }
+    Native fn GetSystemTimes(idle: *mut u64, kernel: *mut u64, user: *mut u64) -> i32 {
+        system_times(idle, kernel, user)
+    }
+    // MEMORYSTATUS: the same numbers as the Ex form, in 32-bit fields.
+    Native fn GlobalMemoryStatus(out: *mut u8) -> i32 {
+        if out.is_null() || unsafe { (out as *const u32).read_unaligned() } != 32 {
+            set_last_error(ERROR_INVALID_PARAMETER);
+            return 0;
+        }
+        let (load, total, avail, page, page_avail) = memory_status();
+        let clamp = |v: u64| if v > u64::from(u32::MAX) { u32::MAX } else { v as u32 };
+        unsafe {
+            (out.add(4) as *mut u32).write_unaligned(load);
+            (out.add(8) as *mut u32).write_unaligned(clamp(total));
+            (out.add(12) as *mut u32).write_unaligned(clamp(avail));
+            (out.add(16) as *mut u32).write_unaligned(clamp(page));
+            (out.add(20) as *mut u32).write_unaligned(clamp(page_avail));
+            // dwTotalVirtual / dwAvailVirtual: the user-half address space, clamped.
+            (out.add(24) as *mut u32).write_unaligned(u32::MAX);
+            (out.add(28) as *mut u32).write_unaligned(u32::MAX);
+        }
+        1
+    }
+    Native fn GetPhysicallyInstalledSystemMemory(out: *mut u64) -> i32 {
+        unsafe { physically_installed_memory(out) }
+    }
+    Native fn GetLargePageMinimum() -> usize {
+        large_page_minimum()
+    }
+
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api_ms_win_core_errorhandling::GetLastError;
 
     #[test]
     fn global_memory_status() {
@@ -396,5 +575,91 @@ mod tests {
                 0
             );
         }
+    }
+
+    #[test]
+    fn system_times_are_monotonic() {
+        let (mut idle, mut kernel, mut user) = (0u64, 0u64, 0u64);
+        assert_eq!(system_times(&mut idle, &mut kernel, &mut user), 1);
+        assert!(kernel >= idle);
+        assert!(user > 0);
+        assert_eq!(
+            system_times(std::ptr::null_mut(), &mut kernel, &mut user),
+            0
+        );
+        assert_eq!(unsafe { GetLastError() }, ERROR_INVALID_PARAMETER);
+    }
+
+    #[test]
+    fn logical_processor_information_ex_needs_a_buffer() {
+        let mut need = 0u32;
+        unsafe {
+            assert_eq!(
+                logical_processor_information_ex(
+                    RELATION_PROCESSOR_CORE,
+                    std::ptr::null_mut(),
+                    &mut need
+                ),
+                0
+            );
+            assert!(need > 0);
+        }
+        assert_eq!(unsafe { GetLastError() }, ERROR_INSUFFICIENT_BUFFER);
+        let mask = processor_mask();
+        let mut buf = vec![0u8; need as usize];
+        let mut len = need;
+        unsafe {
+            assert_eq!(
+                logical_processor_information_ex(
+                    RELATION_PROCESSOR_CORE,
+                    buf.as_mut_ptr(),
+                    &mut len
+                ),
+                1
+            );
+        }
+        assert_eq!(len, need);
+        // One record per logical processor, with its size in the header.
+        let records = (need as usize) / LPI2_ENTRY;
+        assert_eq!(records, mask.count_ones() as usize);
+        assert_eq!(
+            u32::from_le_bytes(buf[4..8].try_into().unwrap()) as usize,
+            LPI2_ENTRY
+        );
+        // The packages query adds one entry.
+        let mut len = 0u32;
+        unsafe {
+            assert_eq!(
+                logical_processor_information_ex(RELATION_ALL, std::ptr::null_mut(), &mut len),
+                0
+            );
+        }
+        assert_eq!(len as usize, need as usize + LPI2_ENTRY);
+        // An unknown relationship is an invalid parameter.
+        unsafe {
+            assert_eq!(
+                logical_processor_information_ex(99, buf.as_mut_ptr(), &mut len),
+                0
+            );
+        }
+        assert_eq!(unsafe { GetLastError() }, ERROR_INVALID_PARAMETER);
+    }
+
+    #[test]
+    fn memory_sizes_are_plausible() {
+        let mut b = [0u8; 32];
+        b[0] = 32;
+        unsafe {
+            assert_eq!(GlobalMemoryStatus(b.as_mut_ptr()), 1);
+        }
+        assert!(u32::from_le_bytes(b[8..12].try_into().unwrap()) > 0);
+        unsafe {
+            let mut kb = 0u64;
+            assert_eq!(GetPhysicallyInstalledSystemMemory(&mut kb), 1);
+            assert!(kb > 0);
+            assert_eq!(GetPhysicallyInstalledSystemMemory(std::ptr::null_mut()), 0);
+        }
+        let page = unsafe { GetLargePageMinimum() };
+        assert!(page == 0 || page >= 4096);
     }
 }
