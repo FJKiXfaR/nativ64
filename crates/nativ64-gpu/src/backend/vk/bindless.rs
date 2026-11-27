@@ -578,6 +578,7 @@ impl<'g> ViewTable<'g> {
             let n = sorted.partition_point(|&(s, _)| s < b);
             if sorted[..n].iter().any(|&(_, e)| e > a) {
                 self.retry.push(index);
+                super::profile::count(super::profile::Count::Rewritten, 1);
             }
         }
     }

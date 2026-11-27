@@ -214,11 +214,17 @@ impl<'g> DrawState<'g> {
     /// kept from one submission to the next and grows by doubling when a submission needs more;
     /// it is made here, before the submission's images take the memory.
     pub(super) fn begin(&mut self, draws: usize) {
+        let t = super::profile::start();
         if self.mem.sync() {
             if let Some(v) = &mut self.views {
+                super::profile::count(
+                    super::profile::Count::Dropped,
+                    self.mem.dropped().len() as u64,
+                );
                 v.invalidate(self.mem.dropped());
             }
         }
+        super::profile::stop(super::profile::Phase::Begin, t);
         self.views_ready = false;
         self.arena_size = draws * rootblock::STRIDE;
         if let Some((_, used)) = &mut self.arena {
@@ -303,7 +309,9 @@ impl<'g> DrawState<'g> {
         let v = self.views.as_mut()?;
         if !self.views_ready {
             self.views_ready = true;
+            let t = super::profile::start();
             v.update(&mut self.mem);
+            super::profile::stop(super::profile::Phase::Views, t);
         }
         Some(v.address())
     }

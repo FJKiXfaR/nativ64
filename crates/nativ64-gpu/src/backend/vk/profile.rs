@@ -28,6 +28,16 @@ pub(super) enum Phase {
     /// `host_upload` and `placed_upload` as a whole.
     HostUp,
     PlacedUp,
+    /// `GpuMemory::sync` and the view invalidation before a submission.
+    Begin,
+    /// The view table update (records written, memory imported for them).
+    Views,
+    /// `import_host` calls.
+    Import,
+    /// The commands of the lists, recorded (the submission and its wait excluded).
+    Cmds,
+    /// The compute dispatches among them.
+    Disp,
 }
 
 #[derive(Clone, Copy)]
@@ -49,13 +59,17 @@ pub(super) enum Count {
     /// Entries of the source lists visited, and descriptors written.
     Visited,
     Written,
+    /// Import ranges dropped, view records rewritten, imports made.
+    Dropped,
+    Rewritten,
+    Imports,
 }
 
-const PHASES: [&str; 11] = [
+const PHASES: [&str; 16] = [
     "sync", "watch", "hash", "upload", "record", "dump", "image", "descr", "syncrec", "hostup",
-    "placedup",
+    "placedup", "begin", "views", "import", "cmds", "disp",
 ];
-const COUNTS: [&str; 11] = [
+const COUNTS: [&str; 14] = [
     "looked",
     "skipped",
     "scan_none",
@@ -67,10 +81,13 @@ const COUNTS: [&str; 11] = [
     "submissions",
     "visited",
     "descr_written",
+    "dropped",
+    "rewritten",
+    "imports",
 ];
 
-static NANOS: [AtomicU64; 11] = [const { AtomicU64::new(0) }; 11];
-static COUNT: [AtomicU64; 11] = [const { AtomicU64::new(0) }; 11];
+static NANOS: [AtomicU64; 16] = [const { AtomicU64::new(0) }; 16];
+static COUNT: [AtomicU64; 14] = [const { AtomicU64::new(0) }; 14];
 
 pub(super) fn enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();

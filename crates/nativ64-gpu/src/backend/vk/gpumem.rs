@@ -217,7 +217,11 @@ impl<'g> GpuMemory<'g> {
             .filter(|(_, i)| i.end > start)
             .map(|(&s, _)| s)
             .collect();
-        let buffer = match self.gpu.import_host(start as *mut u8, run_end - start) {
+        let ti = crate::backend::vk::profile::start();
+        let imported = self.gpu.import_host(start as *mut u8, run_end - start);
+        crate::backend::vk::profile::stop(crate::backend::vk::profile::Phase::Import, ti);
+        crate::backend::vk::profile::count(crate::backend::vk::profile::Count::Imports, 1);
+        let buffer = match imported {
             Ok(b) => b,
             Err(e) => {
                 log_once(format!(

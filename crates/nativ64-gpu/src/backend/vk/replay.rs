@@ -419,7 +419,12 @@ impl<'g> VkBackend<'g> {
                     if self.inspecting() {
                         self.inspect_command(c);
                     }
+                    let tc = super::profile::start();
                     self.record(d, cb, c, &mut staging);
+                    super::profile::stop(super::profile::Phase::Cmds, tc);
+                    if matches!(c, Command::Dispatch { .. }) {
+                        super::profile::stop(super::profile::Phase::Disp, tc);
+                    }
                     if matches!(
                         c,
                         Command::ClearRenderTarget { .. }
