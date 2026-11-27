@@ -418,10 +418,53 @@ enum Rec {
 }
 
 /// The record of one registry view: a buffer view of memory that translates is kind 1.
+/// The formats of the buffer views recorded so far, by count (`NATIV64_BUFFER_FORMATS=1`
+/// prints it at every submission): the DXGI formats a `*_format_*` shader can meet.
+static FORMATS: std::sync::Mutex<Option<std::collections::BTreeMap<u32, u64>>> =
+    std::sync::Mutex::new(None);
+
+/// Whether the buffer format histogram is on (read once: a record is made per view).
+fn formats_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("NATIV64_BUFFER_FORMATS").is_some())
+}
+
+/// Counts a recorded buffer view's format when the histogram is on.
+fn count_format(format: u32) {
+    if !formats_on() {
+        return;
+    }
+    let mut m = FORMATS.lock().unwrap_or_else(|p| p.into_inner());
+    let m = m.get_or_insert_with(std::collections::BTreeMap::new);
+    *m.entry(format).or_default() += 1;
+}
+
+/// Prints the histogram (once, at the first call after a change).
+pub fn log_buffer_formats() {
+    if !formats_on() {
+        return;
+    }
+    let Some(m) = FORMATS
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+        .cloned()
+    else {
+        return;
+    };
+    let line = m
+        .iter()
+        .map(|(f, n)| format!("{f}:{n}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    log_once(format!("buffer view formats (dxgi:count) {line}"));
+}
+
 fn record_of(view: &View, mem: &mut GpuMemory<'_>) -> Rec {
     match buffer_view(view) {
         None => Rec::None,
         Some((format, address, size, stride)) => match mem.translate(address, size.max(1)) {
+            #[allow(unreachable_patterns)]
             None => Rec::Retry,
             Some(m) => {
                 let mut r = [0u8; RECORD];
@@ -432,6 +475,7 @@ fn record_of(view: &View, mem: &mut GpuMemory<'_>) -> Rec {
                 let size = u32::try_from(size).unwrap_or(u32::MAX);
                 r[16..20].copy_from_slice(&size.to_le_bytes());
                 r[20..24].copy_from_slice(&stride.to_le_bytes());
+                count_format(format);
                 Rec::Buffer(r, (address, address.saturating_add(len)))
             }
         },
@@ -647,6 +691,7 @@ impl<'g> ViewTable<'g> {
             self.put(first + k, rec);
         }
         self.written = first + views.len();
+        log_buffer_formats();
     }
 }
 

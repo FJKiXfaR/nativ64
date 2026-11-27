@@ -2799,10 +2799,6 @@ pub(crate) mod stage {
     #[test]
     fn chunk_9b_operations_stay_unsupported_by_name() {
         for (line, name) in [
-            (
-                "buffer_load_format_x v4, v1, s[0:3], 0 offen",
-                "buffer_load_format_x",
-            ),
             ("global_load_dword v4, v[2:3], off", "global_load_dword"),
             (
                 "image_sample_b v[4:7], v[2:4], s[0:7], s[12:15] dmask:0xf dim:SQ_RSRC_IMG_2D",

@@ -30,6 +30,31 @@ enum BufNum {
     Float,
 }
 
+/// The typed buffer formats a runtime-format load converts, most used first: the DXGI format,
+/// the components' bit widths and their numeric convention (16-bit floats as half).
+const KNOWN_FORMATS: &[(u32, &[u32], BufNum)] = &[
+    (41, &[32], BufNum::Float),
+    (39, &[32], BufNum::Float),
+    (42, &[32], BufNum::Uint),
+    (43, &[32], BufNum::Sint),
+    (57, &[16], BufNum::Uint),
+    (62, &[8], BufNum::Uint),
+    (2, &[32, 32, 32, 32], BufNum::Float),
+    (17, &[32, 32], BufNum::Uint),
+    (10, &[16, 16, 16, 16], BufNum::Float),
+    (12, &[16, 16, 16, 16], BufNum::Uint),
+    (36, &[16, 16], BufNum::Uint),
+    (50, &[8, 8], BufNum::Uint),
+    (61, &[8], BufNum::Unorm),
+    (54, &[16], BufNum::Float),
+    (27, &[8, 8, 8, 8], BufNum::Unorm),
+    (28, &[8, 8, 8, 8], BufNum::Unorm),
+    (11, &[16, 16, 16, 16], BufNum::Unorm),
+    (35, &[16, 16], BufNum::Unorm),
+    (49, &[8, 8], BufNum::Unorm),
+    (56, &[16], BufNum::Unorm),
+];
+
 /// Components (bits each) and the numeric convention of an MTBUF format byte.
 fn ufmt(f: u8) -> R<(Vec<u32>, BufNum)> {
     let name = crate::shader::gfx10::table_ext::UFMT
@@ -636,6 +661,49 @@ impl<'a> Tr<'a> {
         Buf { base, size, stride }
     }
 
+    /// The dword at byte `off` of the view table record `index` (a runtime value: the record
+    /// says what the descriptor names).
+    fn record_dword(&mut self, index: u32, off: u64) -> u32 {
+        let table = self.view_table();
+        let i64 = self.zext(index);
+        let five = self.g.k(5);
+        let t64 = self.t64();
+        let sh = self.g.op(Op::ShiftLeftLogical, t64, &[i64, five]);
+        let rec = self.add64(table, sh);
+        let a = self.add_k64(rec, off);
+        self.bda_u32(a)
+    }
+
+    /// The dword of `words` that holds the `bits`-wide component starting at byte `bit / 8`.
+    fn extract_bits(&mut self, words: &[u32], bit: u32, bits: u32) -> u32 {
+        let w = words[(bit / 32) as usize];
+        let shift = bit % 32;
+        let tu = self.g.t_u32();
+        let raw = if shift == 0 {
+            w
+        } else {
+            let sh = self.g.k(shift);
+            self.g.op(Op::ShiftRightLogical, tu, &[w, sh])
+        };
+        let mask = self.g.k(if bits >= 32 {
+            u32::MAX
+        } else {
+            (1u32 << bits) - 1
+        });
+        self.g.op(Op::BitwiseAnd, tu, &[raw, mask])
+    }
+
+    /// A half-float component at bit `bit` of `words` as f32 bits (`UnpackHalf2x16`).
+    fn unpack_half(&mut self, words: &[u32], bit: u32) -> u32 {
+        let w = words[(bit / 32) as usize];
+        let which = (bit % 32) / 16;
+        let t2 = self.g.t_v2();
+        let v = self.g.ext(t2, GL::UnpackHalf2x16, &[w]);
+        let tf = self.g.t_f32();
+        let f = self.g.op(Op::CompositeExtract, tf, &[v, which]);
+        self.g.as_bits(f)
+    }
+
     /// A buffer built by the program: its four words are an RDNA2 V# (base in word 0 and
     /// the low 16 bits of word 1, stride in bits 16-29 of word 1, `num_records` in word 2;
     /// a stride scales `num_records`, -1 is unbounded).
@@ -933,19 +1001,31 @@ impl<'a> Tr<'a> {
     ) -> R<Option<Vec<Opd<Gen>>>> {
         let i = &c.inst.instr;
         let m = i.mem;
-        if m.format == 0 && !address_used {
-            // a `buffer_*_format_*` op has no format of its own: the descriptor's (a runtime
-            // value in the view record) says it, so the components are not known here
+        // a `buffer_*_format_*` op has no format of its own: the descriptor's (a runtime value
+        // in the view record) names it, so the components are only known per candidate format
+        let runtime = m.format == 0 && !address_used;
+        if runtime && !load {
             return refuse(&format!("{} (the descriptor's format)", i.name()));
         }
-        let (bits, num) = ufmt(m.format)?;
-        if bits.len() < n {
-            return bad("a buffer format op wider than its format");
+        let (bits, num) = if runtime {
+            (Vec::new(), BufNum::Uint)
+        } else {
+            ufmt(m.format)?
+        };
+        if !runtime {
+            if bits.len() < n {
+                return bad("a buffer format op wider than its format");
+            }
+            if bits.iter().any(|b| b % 8 != 0) {
+                return refuse("a packed buffer format");
+            }
         }
-        if bits.iter().any(|b| b % 8 != 0) {
-            return refuse("a packed buffer format");
-        }
-        let elem: u32 = bits.iter().map(|b| b / 8).sum();
+        let elem: u32 = if runtime {
+            // the widest format the runtime chain reads
+            16
+        } else {
+            bits.iter().map(|b| b / 8).sum()
+        };
         let ns = c.srcs.len();
         if ns < 2 || (load && c.inst.dsts.len() != n) {
             return bad("a buffer format op whose operands do not match its width");
@@ -993,6 +1073,18 @@ impl<'a> Tr<'a> {
         let inside = self.g.op(Op::ULessThanEqual, tb, &[end, buf.size]);
         let tu = self.g.t_u32();
         let dwords = elem.div_ceil(4);
+        let runtime_fmt = if runtime {
+            if !matches!(
+                c.inst.srcs[ns - 2].first(),
+                Some(Src::Val(v)) if self.res().analysis.loaded.contains(v)
+            ) {
+                return refuse(&format!("{} of a descriptor that is not loaded", i.name()));
+            }
+            let index = self.bits_of(c.srcs[ns - 2][0]);
+            Some(self.record_dword(index, 4))
+        } else {
+            None
+        };
         if !load {
             // pack the components, then write whole dwords (the last one merges with memory
             // when the store does not cover it)
@@ -1051,18 +1143,33 @@ impl<'a> Tr<'a> {
             words.push(self.guarded_load(a, ok)?);
         }
         let mut out = Vec::new();
+        if let Some(fmt) = runtime_fmt {
+            // one conversion per candidate format, selected by the descriptor's format
+            let tb = self.g.t_bool();
+            for j in 0..n {
+                let mut selected = self.g.k(0);
+                for &(dxgi, cbits, cnum) in KNOWN_FORMATS {
+                    if cbits.len() < n {
+                        continue;
+                    }
+                    let bit: u32 = cbits[..j].iter().sum();
+                    let v = if matches!(cnum, BufNum::Float) && cbits[j] == 16 {
+                        self.unpack_half(&words, bit)
+                    } else {
+                        let raw = self.extract_bits(&words, bit, cbits[j]);
+                        self.unpack_component(raw, cbits[j], cnum)
+                    };
+                    let want = self.g.k(dxgi);
+                    let is = self.g.op(Op::IEqual, tb, &[fmt, want]);
+                    selected = self.g.select(is, v, selected);
+                }
+                out.push(self.lane_result(c, j, selected));
+            }
+            return Ok(Some(out));
+        }
         let mut bit = 0u32;
         for (j, &b) in bits.iter().take(n).enumerate() {
-            let w = words[(bit / 32) as usize];
-            let shift = bit % 32;
-            let raw = if shift == 0 {
-                w
-            } else {
-                let sh = self.g.k(shift);
-                self.g.op(Op::ShiftRightLogical, tu, &[w, sh])
-            };
-            let mask = self.g.k(if b >= 32 { u32::MAX } else { (1u32 << b) - 1 });
-            let raw = self.g.op(Op::BitwiseAnd, tu, &[raw, mask]);
+            let raw = self.extract_bits(&words, bit, b);
             let v = self.unpack_component(raw, b, num);
             out.push(self.lane_result(c, j, v));
             bit += b;
