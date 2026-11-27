@@ -3109,7 +3109,6 @@ pub(crate) mod stage {
         for (rsrc2, flags, what) in [
             (base | 0x400, 0xa0000, "thread-group info"),
             (base | 1, 0xa0000, "scratch"),
-            (base, 0xa0020, "wave32"),
         ] {
             let mut c = CsSpec::new(rsrc2, [8, 8, 1]);
             c.flags = flags;
@@ -3117,6 +3116,14 @@ pub(crate) mod stage {
             assert_eq!(chunk, 10);
             assert!(op.contains(what), "{op}");
         }
+    }
+
+    #[test]
+    fn a_wave32_compute_entry_translates() {
+        let lines = ["s_mov_b32 s12, s0"];
+        let mut c = CsSpec::new(4 << 1 | 1 << 11, [8, 8, 1]);
+        c.flags = 0xa0020;
+        translate_full(&cs_blob(&lines, &c), None);
     }
 
     #[test]
