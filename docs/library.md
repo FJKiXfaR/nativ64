@@ -62,8 +62,12 @@ other API is refused and logged.
 connected; device callbacks enumerate it, readings answer `GetGamepadState`). Buttons come from
 `NATIV64_INPUT_SCRIPT` (`<mask hex>@<seconds>[+<duration>]`, comma separated, seconds from the
 first reading query, default hold 0.3 s: `4@25,4@35` presses A twice) and from
-`gameinput::set_keyboard_buttons`, which a window backend can call (none does yet: the Wayland
-backend has no seat). Reading callbacks are stored and never fire.
+`gameinput::set_keyboard_buttons`, which the Wayland window backend calls from its keyboard
+events (OR-ed with the script). Keys are raw evdev codes, i.e. physical positions of a QWERTY
+layout (the keymap is ignored); key repeat is ignored and focus loss releases everything.
+Enter / Space = A; Escape / Backspace = B; X = X; Y = Y; arrows = dpad; Tab = View; M = Menu;
+Q / E = left / right shoulder (0x400 / 0x800). There are no triggers or sticks in the reading,
+so those have no keys. Reading callbacks are stored and never fire.
 
 ## Windowing (`src/windowing.rs`)
 

@@ -20,8 +20,8 @@
 //!   (`4@25,20@30+1`: A at 25 s for 0.3 s, X at 30 s for one second). Bits: Menu 0x1, View 0x2,
 //!   A 0x4, B 0x8, X 0x10, Y 0x20, dpad up/down/left/right 0x40/0x80/0x100/0x200. Bad entries are
 //!   logged and skipped.
-//! - [`set_keyboard_buttons`], for a window backend that turns key events into buttons (no
-//!   backend does yet: the Wayland one has no seat).
+//! - [`set_keyboard_buttons`], for a window backend that turns key events into buttons (the
+//!   Wayland one does; its key map is in `docs/library.md`). Shoulders are 0x400 / 0x800.
 //!
 //! A new reading is made at every change of the buttons (the history keeps the last 128), so
 //! next/previous/temporal lookups work. Reading callbacks are stored and never fire; other
@@ -85,6 +85,8 @@ pub const UP: u32 = 0x40;
 pub const DOWN: u32 = 0x80;
 pub const LEFT: u32 = 0x100;
 pub const RIGHT: u32 = 0x200;
+pub const LEFT_SHOULDER: u32 = 0x400;
+pub const RIGHT_SHOULDER: u32 = 0x800;
 
 /// Buttons held down on the host keyboard, set by the window backend.
 static KEYBOARD_BUTTONS: AtomicU32 = AtomicU32::new(0);
