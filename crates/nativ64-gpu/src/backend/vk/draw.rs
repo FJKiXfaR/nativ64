@@ -457,7 +457,32 @@ impl<'g> VkBackend<'g> {
                 };
                 *n += 1;
                 log_once(format!("draw skipped: {why}"));
+                if crate::backend::trace::enabled() {
+                    // Under NATIV64_TRACE_DRAWS: each (pipeline, reason) once, with the
+                    // pipeline's serial and its stages' shader hashes.
+                    log_once(format!(
+                        "draw skipped: pipeline {}: {why}",
+                        self.describe_bound_pipeline()
+                    ));
+                }
             }
+        }
+    }
+
+    /// The bound pipeline's serial and stage hashes, for the skip trace.
+    fn describe_bound_pipeline(&self) -> String {
+        let ptr = self.draw.list.pipeline;
+        // SAFETY: the pointer was recorded from a live pipeline object of ours (or is 0).
+        match (ptr != 0).then(|| unsafe { pipeline_data(ptr) }).flatten() {
+            Some(pd) => {
+                let stages: Vec<String> = pd
+                    .stages
+                    .iter()
+                    .map(|s| format!("{}={:016x}", s.name, crate::shader::fnv1a64(&s.bytes)))
+                    .collect();
+                format!("#{} [{}]", pd.serial, stages.join(" "))
+            }
+            None => "none".into(),
         }
     }
 

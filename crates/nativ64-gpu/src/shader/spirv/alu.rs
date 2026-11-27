@@ -511,7 +511,8 @@ const ABS: u32 = 0x7fff_ffff;
 pub fn exec<K: Backend>(b: &mut K, c: &Ctx<K>) -> Result<Vec<Opd<K>>, Unsupported> {
     let i = &c.inst.instr;
     let name = i.name();
-    if let Some(chunk) = non_alu_chunk(i) {
+    // The structurer only lets a `v_readfirstlane` through when its source is uniform: a copy.
+    if let Some(chunk) = non_alu_chunk(i).filter(|_| !name.starts_with("v_readfirstlane")) {
         return Err(Unsupported {
             chunk,
             op: name.to_string(),
@@ -1948,7 +1949,7 @@ impl<K: Backend> X<'_, K> {
         let name = self.name;
         match name {
             // -- moves and bit operations
-            "v_mov_b32" => Ok(Res::v(self.v(0)?)),
+            "v_mov_b32" | "v_readfirstlane_b32" => Ok(Res::v(self.v(0)?)),
             "v_not_b32" => {
                 let a = self.v(0)?;
                 Ok(Res::v(self.b.iun(IUn::Not, a)))

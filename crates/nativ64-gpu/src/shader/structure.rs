@@ -324,6 +324,10 @@ pub fn type_masks(f: &Func) -> Masks {
     for blk in &f.blocks {
         for inst in &blk.insts {
             if let Some(name) = cross_lane_use(&m, inst) {
+                // `v_readfirstlane` of a value every lane holds is a copy.
+                if uniform_readfirstlane(f, &m, inst) {
+                    continue;
+                }
                 m.cross_lane.push(CrossLane {
                     at: inst.instr.at,
                     name,
@@ -428,6 +432,65 @@ fn uniform_masks(f: &Func, m: &mut Masks) {
             }
         }
     }
+}
+
+/// Whether the VGPR value `v` is the same in every lane over the active lanes (the strict test of the wave survey).
+pub fn wave_uniform(f: &Func, m: &Masks, v: Val, seen: &mut HashSet<Val>) -> bool {
+    use crate::shader::gfx10::Enc;
+    use crate::shader::ir::{Reg, Src, ValDef};
+    if !seen.insert(v) {
+        return true;
+    }
+    if m.is_mask(v) {
+        return false;
+    }
+    let info = f.vals[v.0 as usize];
+    if !matches!(info.reg, Reg::V(_)) {
+        return matches!(info.reg, Reg::S(_) | Reg::T(_) | Reg::M0);
+    }
+    let src_ok = |s: &Src, seen: &mut HashSet<_>| match s {
+        Src::Val(x) => wave_uniform(f, m, *x, seen),
+        _ => true,
+    };
+    match info.def {
+        ValDef::Arg => false,
+        ValDef::Phi { block, index } => {
+            let phi = &f.blocks[block].phis[index];
+            phi.args.iter().all(|(_, s)| src_ok(s, seen))
+        }
+        ValDef::Inst { block, index } => {
+            let inst = &f.blocks[block].insts[index];
+            let i = &inst.instr;
+            let n = i.name();
+            if n.starts_with("v_readfirstlane") || n.starts_with("v_readlane") {
+                return true;
+            }
+            let alu = matches!(
+                i.enc,
+                Enc::Vop1 | Enc::Vop2 | Enc::Vop3 | Enc::Vop3p | Enc::Vopc
+            );
+            if !alu
+                || i.dpp.is_some()
+                || n.starts_with("v_mbcnt")
+                || n.starts_with("v_permlane")
+                || n.starts_with("v_writelane")
+            {
+                return false;
+            }
+            inst.srcs.iter().flatten().all(|s| src_ok(s, seen))
+        }
+    }
+}
+
+/// A `v_readfirstlane` whose source is the same in every lane: a plain copy, no lane exchange.
+fn uniform_readfirstlane(f: &Func, m: &Masks, inst: &Inst) -> bool {
+    inst.instr.name().starts_with("v_readfirstlane")
+        && inst.instr.dpp.is_none()
+        && match inst.srcs.first().and_then(|v| v.first()) {
+            Some(Src::Val(v)) => wave_uniform(f, m, *v, &mut HashSet::new()),
+            Some(_) => true,
+            None => false,
+        }
 }
 
 /// The name under which `inst` crosses lanes, when it does.

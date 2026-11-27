@@ -425,59 +425,6 @@ fn structure_stats(files: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Whether the VGPR value `v` is the same in every lane (see `wave_survey`).
-fn wave_uniform(
-    f: &shader::ir::Func,
-    m: &shader::structure::Masks,
-    v: shader::ir::Val,
-    seen: &mut std::collections::HashSet<shader::ir::Val>,
-) -> bool {
-    use shader::gfx10::Enc;
-    use shader::ir::{Reg, Src, ValDef};
-    if !seen.insert(v) {
-        return true;
-    }
-    if m.is_mask(v) {
-        return false;
-    }
-    let info = f.vals[v.0 as usize];
-    if !matches!(info.reg, Reg::V(_)) {
-        return matches!(info.reg, Reg::S(_) | Reg::T(_) | Reg::M0);
-    }
-    let src_ok = |s: &Src, seen: &mut std::collections::HashSet<_>| match s {
-        Src::Val(x) => wave_uniform(f, m, *x, seen),
-        _ => true,
-    };
-    match info.def {
-        ValDef::Arg => false,
-        ValDef::Phi { block, index } => {
-            let phi = &f.blocks[block].phis[index];
-            phi.args.iter().all(|(_, s)| src_ok(s, seen))
-        }
-        ValDef::Inst { block, index } => {
-            let inst = &f.blocks[block].insts[index];
-            let i = &inst.instr;
-            let n = i.name();
-            if n.starts_with("v_readfirstlane") || n.starts_with("v_readlane") {
-                return true;
-            }
-            let alu = matches!(
-                i.enc,
-                Enc::Vop1 | Enc::Vop2 | Enc::Vop3 | Enc::Vop3p | Enc::Vopc
-            );
-            if !alu
-                || i.dpp.is_some()
-                || n.starts_with("v_mbcnt")
-                || n.starts_with("v_permlane")
-                || n.starts_with("v_writelane")
-            {
-                return false;
-            }
-            inst.srcs.iter().flatten().all(|s| src_ok(s, seen))
-        }
-    }
-}
-
 /// The category of one cross-lane use (`wave_survey`).
 fn wave_category(
     f: &shader::ir::Func,
@@ -514,7 +461,7 @@ fn wave_category(
         let Some(Src::Val(v)) = src(0) else {
             return "readfirstlane_uniform".into();
         };
-        if wave_uniform(f, m, v, &mut Default::default()) {
+        if shader::structure::wave_uniform(f, m, v, &mut Default::default()) {
             return "readfirstlane_uniform".into();
         }
         let res = inst.dsts.first().map(|d| d.1);
