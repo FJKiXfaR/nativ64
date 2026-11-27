@@ -1100,10 +1100,6 @@ impl<'g> VkBackend<'g> {
     }
 
     /// The entry a registry view comes to.
-    fn classify(&self, v: &View) -> Entry {
-        self.classify_at(v, usize::MAX)
-    }
-
     /// `classify`, with the registry index in the log line (so a draw's row can be matched).
     fn classify_at(&self, v: &View, index: usize) -> Entry {
         match v {
