@@ -594,8 +594,41 @@ extern "win64" fn gamepad_state(this: Reading, out: *mut PadState) -> bool {
     };
     true
 }
-/// Kinds our device does not have: nothing to count or read.
-extern "win64" fn no_input(_: Reading) -> usize {
+/// `IGameInputReading` method names by slot (the public v0 order, XCL's facts for the API).
+fn reading_method(slot: usize) -> &'static str {
+    match slot {
+        7 => "GetRawReport",
+        8 => "GetControllerAxisCount",
+        9 => "GetControllerAxisState",
+        10 => "GetControllerButtonCount",
+        11 => "GetControllerButtonState",
+        12 => "GetControllerSwitchCount",
+        13 => "GetControllerSwitchState",
+        14 => "GetKeyCount",
+        15 => "GetKeyState",
+        16 => "GetMouseState",
+        17 => "GetTouchCount",
+        18 => "GetTouchState",
+        19 => "GetMotionState",
+        20 => "GetArcadeStickState",
+        21 => "GetFlightStickState",
+        22 => "GetGamepadState",
+        23 => "GetRacingWheelState",
+        24 => "GetUiNavigationState",
+        _ => "?",
+    }
+}
+
+/// A reading method this pad does not have: logged once (so a run names what the title asked
+/// for), then answers 0/NULL like an absent input kind.
+extern "win64" fn reading_trap<const SLOT: usize>(_: Reading) -> usize {
+    static SEEN: AtomicU32 = AtomicU32::new(0);
+    if SEEN.fetch_or(1 << SLOT, Ordering::Relaxed) & (1 << SLOT) == 0 {
+        eprintln!(
+            "nativ64: gameinput reading {} (slot {SLOT}) has no input to report",
+            reading_method(SLOT)
+        );
+    }
     0
 }
 
@@ -604,24 +637,24 @@ static READING_VTBL: Table<READING_SLOTS> = table!(READING_SLOTS, Entry;
     reading_sequence,  // 4
     reading_timestamp, // 5
     reading_device,    // 6
-    no_input,          // 7 raw report
-    no_input,          // 8 controller axes, buttons, switches
-    no_input,          // 9
-    no_input,          // 10
-    no_input,          // 11
-    no_input,          // 12
-    no_input,          // 13
-    no_input,          // 14 key count
-    no_input,          // 15 key state
-    no_input,          // 16 mouse
-    no_input,          // 17 touch
-    no_input,          // 18
-    no_input,          // 19 motion
-    no_input,          // 20 arcade stick
-    no_input,          // 21 flight stick
-    gamepad_state,     // 22
-    no_input,          // 23 racing wheel
-    ui_navigation,     // 24 UI navigation
+    reading_trap::<7>,  // 7 raw report
+    reading_trap::<8>,  // 8 controller axis count
+    reading_trap::<9>,  // 9 controller axis state
+    reading_trap::<10>, // 10 controller button count
+    reading_trap::<11>, // 11 controller button state
+    reading_trap::<12>, // 12 controller switch count
+    reading_trap::<13>, // 13 controller switch state
+    reading_trap::<14>, // 14 key count
+    reading_trap::<15>, // 15 key state
+    reading_trap::<16>, // 16 mouse state
+    reading_trap::<17>, // 17 touch count
+    reading_trap::<18>, // 18 touch state
+    reading_trap::<19>, // 19 motion state
+    reading_trap::<20>, // 20 arcade stick state
+    reading_trap::<21>, // 21 flight stick state
+    gamepad_state,      // 22
+    reading_trap::<23>, // 23 racing wheel state
+    ui_navigation,      // 24 UI navigation state
 );
 
 #[repr(C)]
