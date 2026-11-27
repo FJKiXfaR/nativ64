@@ -30,6 +30,8 @@ struct State {
     logged_foreign: bool,
     last_lists: u64,
     last_commands: u64,
+    /// When the previous frame was presented (frame-interval diagnostics).
+    last_present: Option<std::time::Instant>,
 }
 
 static STATE: Mutex<State> = Mutex::new(State {
@@ -40,6 +42,7 @@ static STATE: Mutex<State> = Mutex::new(State {
     logged_foreign: false,
     last_lists: 0,
     last_commands: 0,
+    last_present: None,
 });
 
 fn state() -> MutexGuard<'static, State> {
@@ -120,9 +123,15 @@ pub(crate) unsafe fn present_x(
             let rect = (!rect_ptr.is_null()).then(|| rect_ptr.read_unaligned());
             crate::backend::with(|b| b.present(res as usize, rect));
             if st.frames == 1 || st.frames.is_power_of_two() {
+                // The interval since the previous present tells a stutter apart from pacing.
+                let dt = st
+                    .last_present
+                    .map(|t| t.elapsed().as_secs_f64() * 1000.0)
+                    .map(|ms| format!(", {ms:.1} ms since the last frame"))
+                    .unwrap_or_default();
                 eprintln!(
                     "nativ64: PresentX frame {} token {token}: {}x{} format {}, {} lists and \
-                     {} commands since the last line",
+                     {} commands since the last line{dt}",
                     st.frames,
                     d.width,
                     d.height,
@@ -132,6 +141,7 @@ pub(crate) unsafe fn present_x(
                 );
                 st.last_lists = lists;
                 st.last_commands = commands;
+                st.last_present = Some(std::time::Instant::now());
             }
         }
         None => {
