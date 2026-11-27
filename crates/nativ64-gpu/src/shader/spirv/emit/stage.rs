@@ -62,12 +62,28 @@ impl<'a> Stage<'a> {
             StageIo::Vertex(_) => ExecutionModel::Vertex,
             StageIo::Pixel(_) => ExecutionModel::Fragment,
             StageIo::Compute(_) => ExecutionModel::GLCompute,
+            StageIo::Mesh(_) => ExecutionModel::MeshEXT,
         }
     }
 
     pub(super) fn exec_modes(&self, m: &mut super::Module, main: u32) {
         if let StageIo::Compute(c) = self.io {
             m.exec_mode(main, ExecutionMode::LocalSize, &c.group);
+        }
+        if let StageIo::Mesh(mesh) = self.io {
+            let (v, p) = (u32::from(mesh.max_vertices), u32::from(mesh.max_primitives));
+            m.exec_mode(
+                main,
+                ExecutionMode::LocalSize,
+                &[u32::from(mesh.group_lanes), 1, 1],
+            );
+            m.exec_mode(main, ExecutionMode::OutputVertices, &[v]);
+            m.exec_mode(main, ExecutionMode::OutputPrimitivesEXT, &[p]);
+            match mesh.topology {
+                // 1: lines, 2: triangles
+                1 => m.exec_mode(main, ExecutionMode::OutputLinesEXT, &[]),
+                _ => m.exec_mode(main, ExecutionMode::OutputTrianglesEXT, &[]),
+            }
         }
         if matches!(self.io, StageIo::Pixel(_)) {
             m.exec_mode(main, ExecutionMode::OriginUpperLeft, &[]);
@@ -231,7 +247,7 @@ impl<'a> Tr<'a> {
                     let ok = match io {
                         StageIo::Vertex(_) => n == 4 || n == 5,
                         StageIo::Pixel(p) => n >= p.user.end && n < p.user.end + 2,
-                        StageIo::Compute(_) => false,
+                        StageIo::Compute(_) | StageIo::Mesh(_) => false,
                     };
                     if !ok {
                         return unsupported(&format!("entry {reg}"));
@@ -304,6 +320,7 @@ impl<'a> Tr<'a> {
                 let (a, b) = (self.load_builtin(id, tu), self.load_builtin(base, tu));
                 Ok(self.g.op(Op::ISub, tu, &[a, b]))
             }
+            StageIo::Mesh(_) => return unsupported(&format!("entry v{n}")),
             StageIo::Compute(c) => {
                 if n >= c.thread_ids {
                     return unsupported(&format!("entry v{n}"));

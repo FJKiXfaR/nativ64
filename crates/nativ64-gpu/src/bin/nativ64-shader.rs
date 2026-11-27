@@ -913,6 +913,7 @@ fn write_words(words: &[u32], out: &str, io: &shader::io::StageIo) -> ExitCode {
         shader::io::StageIo::Vertex(_) => "Vertex",
         shader::io::StageIo::Pixel(_) => "Fragment",
         shader::io::StageIo::Compute(_) => "GLCompute",
+        shader::io::StageIo::Mesh(_) => "MeshEXT",
     };
     println!("{out}: {stage} entry, {} words", words.len());
     ExitCode::SUCCESS

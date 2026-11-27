@@ -2755,6 +2755,8 @@ impl<'a> Tr<'a> {
             StageIo::Compute(cs) => (cs.lds_bytes, StorageClass::Workgroup),
             StageIo::Pixel(ps) => (ps.lds_bytes, StorageClass::Private),
             StageIo::Vertex(vs) => (vs.lds_bytes, StorageClass::Private),
+            // a Vulkan mesh shader does have workgroup memory
+            StageIo::Mesh(_) => (MIN_LDS * 4, StorageClass::Workgroup),
         };
         // A program that uses LDS without asking for any (a lane exchange through
         // `ds_swizzle_b32`) gets a wave's worth of dwords.

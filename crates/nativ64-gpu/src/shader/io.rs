@@ -161,11 +161,27 @@ pub struct CsIo {
     pub lds_bytes: u32,
 }
 
+/// The mesh stage's I/O: the wave's lane is a vertex, and the exports name attributes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MeshIo {
+    pub user: Range<u16>,
+    pub tables: BTreeSet<u16>,
+    /// The vertex attributes the program exports (a `VsOutput` each, their locations in `OSG1`
+    /// order).
+    pub outputs: Vec<VsOutput>,
+    /// Lanes per thread group.
+    pub group_lanes: u16,
+    pub max_vertices: u16,
+    pub max_primitives: u16,
+    pub topology: u8,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StageIo {
     Vertex(VsIo),
     Pixel(PsIo),
     Compute(CsIo),
+    Mesh(MeshIo),
 }
 
 impl StageIo {
@@ -174,6 +190,7 @@ impl StageIo {
             Self::Vertex(v) => &v.user,
             Self::Pixel(p) => &p.user,
             Self::Compute(c) => &c.user,
+            Self::Mesh(m) => &m.user,
         }
     }
 
@@ -182,6 +199,7 @@ impl StageIo {
             Self::Vertex(v) => &v.tables,
             Self::Pixel(p) => &p.tables,
             Self::Compute(c) => &c.tables,
+            Self::Mesh(m) => &m.tables,
         }
     }
 
@@ -192,6 +210,8 @@ impl StageIo {
             Self::Vertex(v) => &v.used,
             Self::Pixel(p) => &p.used,
             Self::Compute(c) => &c.used,
+            // a mesh stage carries no used-resource rows
+            Self::Mesh(_) => return None,
         };
         used.iter()
             .find(|u| u.sgpr == sgpr && u.offset == offset)
@@ -396,6 +416,23 @@ fn cs_io(rec: &Record) -> Option<CsIo> {
     })
 }
 
+fn mesh_io(rec: &Record) -> Option<MeshIo> {
+    let StageData::Mesh(d) = &rec.data else {
+        return None;
+    };
+    // the mesh entry SGPRs are the user SGPRs from s8 and the system ones above them
+    let user = 8..8 + u16::from(d.user_sgprs).max(1);
+    Some(MeshIo {
+        user,
+        tables: table_sgprs(rec),
+        outputs: d.outputs.clone(),
+        group_lanes: d.group_lanes,
+        max_vertices: d.max_vertices,
+        max_primitives: d.max_primitives,
+        topology: d.topology,
+    })
+}
+
 /// The stage's I/O, or `None` for a stage other than vertex, pixel and compute. `link` is the
 /// pair's linking; without it a stage numbers its own parameters (VS `param n`, PS `attr n`).
 pub fn stage_io(p: &ParsedShader, targets: &[u32], link: Option<&Link>) -> Option<StageIo> {
@@ -404,7 +441,7 @@ pub fn stage_io(p: &ParsedShader, targets: &[u32], link: Option<&Link>) -> Optio
         StageData::Vertex(_) => vs_io(p, rec, link).map(StageIo::Vertex),
         StageData::Pixel(_) => ps_io(rec, targets, link).map(StageIo::Pixel),
         StageData::Compute(_) => cs_io(rec).map(StageIo::Compute),
-        _ => None,
+        StageData::Mesh(_) => mesh_io(rec).map(StageIo::Mesh),
     }
 }
 
