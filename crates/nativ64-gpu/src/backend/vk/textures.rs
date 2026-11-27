@@ -1245,6 +1245,58 @@ impl<'g> VkBackend<'g> {
 
     /// `NATIV64_HOLE_LIST=1`: every so many submissions, list the sampled-descriptor slots that
     /// hold no view (the stand-in) - the indices content that samples a missing texture names.
+    fn log_hole_textures(&self, count: usize) {
+        static TICKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        if std::env::var("NATIV64_HOLE_TEXTURES")
+            .ok()
+            .is_none_or(|v| v.is_empty())
+        {
+            return;
+        }
+        let n = TICKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if !n.is_multiple_of(300) {
+            return;
+        }
+        let mut shown = 0;
+        for i in 0..count.min(self.tex.entries.len()) {
+            if !matches!(self.tex.entries.get(i), Some(Entry::Hole)) {
+                continue;
+            }
+            let Some(v) = crate::d3d12::descriptor::view_at(i) else {
+                continue;
+            };
+            let (kind, res, dim) = match &v {
+                View::Shader(res, _) => (
+                    "sampled",
+                    *res,
+                    info_of_checked(*res as *mut _).map(|(rd, _)| rd.dimension),
+                ),
+                View::Placed(false, rd, _) => ("placed", 0, placed_desc(rd).dimension.into()),
+                _ => continue,
+            };
+            // only a view of a texture is a texture that went missing (a buffer or a constant
+            // is left empty on purpose)
+            if !matches!(dim, Some(2) | Some(3) | Some(4)) {
+                continue;
+            }
+            if shown < 24 {
+                let desc = match &v {
+                    View::Shader(res, _) => info_of_checked(*res as *mut _).map(|(rd, _)| rd),
+                    View::Placed(_, rd, _) => placed_desc(rd).into(),
+                    _ => None,
+                };
+                log_once(format!(
+                    "a {kind} view of a texture is a hole: index {i} res {res:#x} desc {desc:?} \
+                     view {v:?}"
+                ));
+            }
+            shown += 1;
+        }
+        if shown > 0 {
+            log_once(format!("texture views left empty: {shown}"));
+        }
+    }
+
     fn log_hole_list(&self, count: usize) {
         static TICKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         if std::env::var("NATIV64_HOLE_LIST")
@@ -1281,6 +1333,7 @@ impl<'g> VkBackend<'g> {
             return;
         };
         self.log_hole_list(count);
+        self.log_hole_textures(count);
         // 1. the registry entries added since the last time
         let new = views_from(self.tex.scanned);
         for (k, v) in new.iter().enumerate() {
