@@ -523,6 +523,9 @@ fn buffer_view(view: &View) -> Option<(u32, u64, u64, u32)> {
     })
 }
 
+/// How many submissions a view that could not translate waits before it is tried again.
+const RETRY_SUBMISSIONS: u32 = 30;
+
 /// `D3D12_RESOURCE_DIMENSION_BUFFER`.
 const BUFFER_DIMENSION: u32 = 1;
 
@@ -540,6 +543,9 @@ pub struct ViewTable<'g> {
     spans: Vec<Option<(usize, usize)>>,
     /// Indices whose recorded address lies in memory that changed: recorded again.
     dirty: Vec<usize>,
+    /// Submissions until the views that could not translate are tried again (a view whose
+    /// memory is not committed yet would otherwise be retried, and fail, every frame).
+    retry_wait: u32,
 }
 
 impl<'g> ViewTable<'g> {
@@ -553,6 +559,7 @@ impl<'g> ViewTable<'g> {
             retry: Vec::new(),
             spans: Vec::new(),
             dirty: Vec::new(),
+            retry_wait: 0,
         })
     }
 
@@ -669,7 +676,16 @@ impl<'g> ViewTable<'g> {
                 Rec::None => {}
             }
         }
-        let again = std::mem::take(&mut self.retry);
+        // The retried views: only when the memory changed (something may be committed now) or
+        // after a while; a view that keeps failing is not worth a translation every frame.
+        let due = !mem.changed().is_empty() || self.retry_wait == 0;
+        let again = if due {
+            self.retry_wait = RETRY_SUBMISSIONS;
+            std::mem::take(&mut self.retry)
+        } else {
+            self.retry_wait -= 1;
+            Vec::new()
+        };
         let again_len = again.len();
         for index in again {
             let v = crate::d3d12::descriptor::views_from(index)
