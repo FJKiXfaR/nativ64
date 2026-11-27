@@ -1455,8 +1455,12 @@ impl<'a> Tr<'a> {
             ) {
                 if std::env::var_os("NATIV64_FMT_DEBUG").is_some() {
                     eprintln!(
-                        "fmt debug: {} srcs {:?} loaded {} numbers {}",
+                        "fmt debug: {} first-in-loaded {:?} srcs {:?} loaded {} numbers {}",
                         i.name(),
+                        c.inst.srcs[ns - 2].first().map(|s| match s {
+                            Src::Val(v) => self.res().analysis.loaded.contains(v),
+                            _ => false,
+                        }),
                         c.inst.srcs[ns - 2]
                             .iter()
                             .map(|s| format!("{s:?}"))
@@ -2575,7 +2579,7 @@ impl<'a> Tr<'a> {
             return Ok(None);
         }
         let m = i.img;
-        if m.d16 || m.tfe || m.lwe {
+        if store && (m.d16 || m.tfe || m.lwe) {
             return refuse(&format!("{name} with d16, tfe or lwe"));
         }
         let dim = match m.dim {
@@ -2686,20 +2690,47 @@ impl<'a> Tr<'a> {
             self.g.op(Op::ImageRead, u4, &[image, coord])
         };
         let chans: Vec<u32> = (0..4).filter(|ch| m.dmask >> ch & 1 != 0).collect();
-        if chans.len() != c.inst.dsts.len() {
+        let words = chans.len().div_ceil(if m.d16 { 2 } else { 1 });
+        let trailer = if m.tfe { 1 } else { 0 } + usize::from(m.lwe);
+        if words + trailer != c.inst.dsts.len() {
             return bad("an image load whose results do not match its dmask");
         }
         let mut out = Vec::new();
-        for (j, ch) in chans.into_iter().enumerate() {
-            // a texture fetch gives floats, a storage read the dwords themselves
-            let bits = if kind == 0 {
-                let x = self.g.op(Op::CompositeExtract, tf, &[res, ch]);
-                self.g.as_bits(x)
-            } else {
-                let dword = self.g.t_u32();
-                self.g.op(Op::CompositeExtract, dword, &[res, ch])
-            };
-            out.push(self.lane_result(c, j, bits));
+        if m.d16 {
+            if kind != 0 {
+                return refuse("a d16 image load of a UAV");
+            }
+            // two channels per dword, the dmask's first channel in the low half
+            for (k, pair) in chans.chunks(2).enumerate() {
+                let lo = self.g.op(Op::CompositeExtract, tf, &[res, pair[0]]);
+                let lo = self.g.as_bits(lo);
+                let hi = match pair.get(1) {
+                    Some(&ch) => {
+                        let x = self.g.op(Op::CompositeExtract, tf, &[res, ch]);
+                        self.g.as_bits(x)
+                    }
+                    None => self.g.k(0),
+                };
+                let v = self.g.pack_half2(lo, hi);
+                out.push(self.lane_result(c, k, v));
+            }
+        } else {
+            for (j, ch) in chans.into_iter().enumerate() {
+                // a texture fetch gives floats, a storage read the dwords themselves
+                let bits = if kind == 0 {
+                    let x = self.g.op(Op::CompositeExtract, tf, &[res, ch]);
+                    self.g.as_bits(x)
+                } else {
+                    let dword = self.g.t_u32();
+                    self.g.op(Op::CompositeExtract, dword, &[res, ch])
+                };
+                out.push(self.lane_result(c, j, bits));
+            }
+        }
+        // the tfe / lwe status dwords (no failure, no level warning)
+        for k in 0..trailer {
+            let zero = self.g.k(0);
+            out.push(self.lane_result(c, words + k, zero));
         }
         Ok(Some(out))
     }
