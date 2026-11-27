@@ -580,6 +580,18 @@ struct Frame {
     cont: u32,
 }
 
+/// The loop iteration cap of `NATIV64_LOOP_CLAMP` (0 or unset: none).
+fn loop_clamp() -> Option<u32> {
+    static CLAMP: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    let n = *CLAMP.get_or_init(|| {
+        std::env::var("NATIV64_LOOP_CLAMP")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0)
+    });
+    (n > 0).then_some(n)
+}
+
 /// How many words of a program's code a module embeds for its literal tables.
 const CODE_WINDOW_WORDS: usize = 8192;
 
@@ -1192,6 +1204,19 @@ impl Tr<'_> {
     ) -> R<()> {
         let (hdr, body_l, cont, merge) =
             (self.g.m.id(), self.g.m.id(), self.g.m.id(), self.g.m.id());
+        // `NATIV64_LOOP_CLAMP=<n>` stops a loop after n iterations: a safety net for a
+        // translated bound that never terminates (a GPU hang loses the device).
+        let clamp = loop_clamp();
+        let counter = match clamp {
+            Some(_) => {
+                let tu = self.g.t_u32();
+                let var = self.global(StorageClass::Private, tu);
+                let zero = self.g.k(0);
+                self.g.store(var, zero);
+                Some(var)
+            }
+            None => None,
+        };
         self.g.branch(hdr);
         self.g.label(hdr);
         self.g.op0(Op::LoopMerge, &[merge, cont, 0]);
@@ -1210,7 +1235,27 @@ impl Tr<'_> {
             self.g.branch(if looping { cont } else { merge });
         }
         self.g.label(cont);
-        self.g.branch(hdr);
+        match (counter, clamp) {
+            (Some(var), Some(limit)) => {
+                let tu = self.g.t_u32();
+                let tb = self.g.t_bool();
+                let n = self.g.load(tu, var);
+                let one = self.g.k(1);
+                let n = self.g.op(Op::IAdd, tu, &[n, one]);
+                self.g.store(var, n);
+                let k = self.g.k(limit);
+                let over = self.g.op(Op::UGreaterThanEqual, tb, &[n, k]);
+                let stop = self.g.m.id();
+                let go = self.g.m.id();
+                self.g.op0(Op::SelectionMerge, &[merge, 0]);
+                self.g.term(Op::BranchConditional, &[over, stop, go]);
+                self.g.label(stop);
+                self.g.branch(merge);
+                self.g.label(go);
+                self.g.branch(hdr);
+            }
+            _ => self.g.branch(hdr),
+        }
         self.g.label(merge);
         for &t in forwards {
             self.forward(t)?;
