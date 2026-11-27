@@ -367,16 +367,18 @@ fn parse_stage(bytes: &[u8], what: &str) -> Result<ParsedShader, String> {
 }
 
 /// `NATIV64_SHADER_VALIDATE`: runs the module through `spirv-val` and logs a failure.
-fn validate(words: &[u32], what: &str) {
+/// `NATIV64_SHADER_VALIDATE=1`: runs `spirv-val` on the module; a rejection **fails** the
+/// pipeline (the driver may crash on a module the validator rejects, so it must not see one).
+fn validate(words: &[u32], what: &str) -> Result<(), String> {
     if std::env::var_os("NATIV64_SHADER_VALIDATE").is_none() {
-        return;
+        return Ok(());
     }
     let dir = std::env::temp_dir().join(format!("nativ64-spv-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&dir);
     let file = dir.join(format!("{what}-{:08x}.spv", words.len()));
     let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
     if std::fs::write(&file, bytes).is_err() {
-        return;
+        return Ok(());
     }
     match std::process::Command::new("spirv-val")
         .arg("--target-env")
@@ -384,18 +386,25 @@ fn validate(words: &[u32], what: &str) {
         .arg(&file)
         .output()
     {
-        Ok(o) if !o.status.success() => log_once(format!(
-            "spirv-val rejects the {what} module {}: {}",
-            file.display(),
-            String::from_utf8_lossy(&o.stderr)
+        Ok(o) if !o.status.success() => {
+            let why = String::from_utf8_lossy(&o.stderr)
                 .lines()
                 .next()
                 .unwrap_or("")
-        )),
-        Ok(_) => {}
-        Err(e) => log_once(format!(
-            "NATIV64_SHADER_VALIDATE: cannot run spirv-val: {e}"
-        )),
+                .to_string();
+            log_once(format!(
+                "spirv-val rejects the {what} module {}: {why}",
+                file.display()
+            ));
+            Err(format!("invalid SPIR-V ({what}): {why}"))
+        }
+        Ok(_) => Ok(()),
+        Err(e) => {
+            log_once(format!(
+                "NATIV64_SHADER_VALIDATE: cannot run spirv-val: {e}"
+            ));
+            Ok(())
+        }
     }
 }
 
@@ -588,12 +597,12 @@ fn build(
         }
     }
     let d = &gpu.device;
-    validate(&tv.words, "vertex");
+    validate(&tv.words, "vertex")?;
     if let Some(t) = &tp {
-        validate(&t.words, "pixel");
+        validate(&t.words, "pixel")?;
     }
     if let Some(w) = &gs {
-        validate(w, "rectangle");
+        validate(w, "rectangle")?;
     }
     // SAFETY: every object made here is destroyed before returning (modules) or owned by the
     // returned `Built`.
@@ -801,7 +810,7 @@ fn build_compute(
         }
     };
     let layouts = bindless.layouts(&static_samplers, samplers)?;
-    validate(&words, "compute");
+    validate(&words, "compute")?;
     let d = &gpu.device;
     // SAFETY: the module is destroyed before returning; the pipeline is owned by the `Built`.
     unsafe {

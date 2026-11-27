@@ -985,6 +985,14 @@ impl<'g> VkBackend<'g> {
         staging: &mut Vec<Staging>,
     ) {
         use Command as C;
+        // `NATIV64_SKIP_DRAWS` / `NATIV64_SKIP_DISPATCHES`: a GPU hang is first placed in the
+        // draws or the dispatches
+        if env_on("NATIV64_SKIP_DRAWS") && matches!(c, C::Draw { .. } | C::DrawIndexed { .. }) {
+            return self.skip(c, "NATIV64_SKIP_DRAWS");
+        }
+        if env_on("NATIV64_SKIP_DISPATCHES") && matches!(c, C::Dispatch { .. }) {
+            return self.skip(c, "NATIV64_SKIP_DISPATCHES");
+        }
         self.draw.track(c);
         // Rendering stays open over draws and state changes; anything else ends it.
         if !matches!(
@@ -1718,6 +1726,22 @@ impl Drop for VkBackend<'_> {
             self.tex.destroy(&self.gpu.device);
         }
     }
+}
+
+/// Whether an environment switch (read once) is on.
+fn env_on(name: &str) -> bool {
+    static ON: std::sync::OnceLock<std::sync::Mutex<Vec<(&'static str, bool)>>> =
+        std::sync::OnceLock::new();
+    let list = ON.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+    let mut list = list.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some((_, on)) = list.iter().find(|(n, _)| *n == name) {
+        return *on;
+    }
+    let on = std::env::var_os(name).is_some();
+    // the names every call passes are literals: keeping one copy is enough
+    let name: &'static str = unsafe { std::mem::transmute::<&str, &'static str>(name) };
+    list.push((name, on));
+    on
 }
 
 #[cfg(test)]
