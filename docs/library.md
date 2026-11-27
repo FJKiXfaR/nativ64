@@ -15,7 +15,8 @@ the compatibility layer ("base") that loads the game: VIctory today, possibly ot
 - `src/registry.rs`: `Export { module, name, addr, status }`, `Status::{Native, Stub}`,
   `lookup(module, name)`, `normalize_module`, and the C function `nativ64_lookup`.
 - `src/lib.rs`: `TABLES` lists each module's `EXPORTS`; `exports()` iterates them all.
-- `src/bin/nativ64-status.rs`: prints the status file for the import map
+- `crates/nativ64-status`: prints the status file for the import map (the host API library
+  and the graphics modules together)
   (see "Library view" in `import-map.md`).
 
 ## Adding a function

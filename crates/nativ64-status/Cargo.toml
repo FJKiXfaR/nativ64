@@ -1,0 +1,16 @@
+[package]
+name = "nativ64-status"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Ybucaille/nativ64"
+description = "Prints the import-map status file of the nativ64 libraries"
+publish = false
+
+[[bin]]
+name = "nativ64-status"
+path = "src/main.rs"
+
+[dependencies]
+nativ64 = { path = "../nativ64" }
+nativ64-gpu = { path = "../nativ64-gpu" }

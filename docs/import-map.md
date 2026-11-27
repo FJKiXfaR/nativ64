@@ -120,7 +120,7 @@ implements. Its `nativ64-status` binary turns that registry into a status file, 
 tab shows how much of the title's import list the library covers, whatever base loads the game:
 
 ```bash
-cargo run -q -p nativ64 --bin nativ64-status > reports/status-nativ64.json
+cargo run -q -p nativ64-status --bin nativ64-status > reports/status-nativ64.json
 python -I tools/import_map.py game/*.exe game/*.dll \
     --status reports/status-victory-windows.json \
     --status reports/status-victory-linux.json \
