@@ -157,6 +157,8 @@ pub struct ReplayStats {
     pub dispatched: u64,
     pub dispatch_skips: super::compute::DispatchSkips,
     pub skipped: u64,
+    /// `Write{32,64}BitValueBottomOfPipeX` writes applied to title memory, and waits observed.
+    pub gpu_writes: u64,
     /// Bytes of host texture memory hashed, and textures uploaded because the hash changed.
     pub hashed: u64,
     /// Textures not hashed because the write watch saw none of their pages written.
@@ -200,6 +202,10 @@ pub struct VkBackend<'g> {
     /// In tests: the bytes of images kept alive after a sync, in place of the device's.
     #[cfg(test)]
     pub(super) trim_budget: Option<u64>,
+    /// `Write{32,64}BitValueBottomOfPipeX` writes to title memory, applied once the submission
+    /// that recorded them is done (the queue is synchronous here, so "bottom of pipe" is after
+    /// this submission's `submit_once`).
+    pending_writes: Vec<(u64, u64, bool)>,
 }
 
 fn range(
@@ -335,6 +341,7 @@ impl<'g> VkBackend<'g> {
             budget: None,
             #[cfg(test)]
             trim_budget: None,
+            pending_writes: Vec::new(),
         }
     }
 
@@ -414,6 +421,23 @@ impl<'g> VkBackend<'g> {
         }
         self.draw.end();
         free_staging(gpu, staging);
+        // Bottom-of-pipe writes: the submission above is done (submit_once waits), so the
+        // title's memory now holds what a real queue would have written.
+        for (address, value, wide) in std::mem::take(&mut self.pending_writes) {
+            let size = if wide { 8 } else { 4 };
+            if !committed(address as usize, size) {
+                continue;
+            }
+            // SAFETY: the range is committed title memory.
+            unsafe {
+                if wide {
+                    (address as *mut u64).write_unaligned(value);
+                } else {
+                    (address as *mut u32).write_unaligned(value as u32);
+                }
+            }
+            self.stats.gpu_writes += 1;
+        }
         self.refresh_stats();
         super::profile::stop(super::profile::Phase::Record, tr);
     }
@@ -985,9 +1009,24 @@ impl<'g> VkBackend<'g> {
                 src_sub,
                 ..
             } => self.resolve_subresource(d, cb, *dst, *dst_sub, *src, *src_sub),
-            C::WriteBottom { .. }
-            | C::WaitValue { .. }
-            | C::ClearUav { .. }
+            C::WriteBottom {
+                address,
+                value,
+                wide,
+                ..
+            } => {
+                let (Ok(a), size) = (usize::try_from(*address), if *wide { 8 } else { 4 }) else {
+                    return self.skip(c, "an address out of range");
+                };
+                if !committed(a, size) {
+                    return self.skip(c, "a write to memory that is not committed");
+                }
+                self.pending_writes.push((*address, *value, *wide));
+            }
+            // A GPU wait is already satisfied: the queue is submitted and waited for in order,
+            // so the value a producer queue wrote is in memory before this list replays.
+            C::WaitValue { .. } => {}
+            C::ClearUav { .. }
             | C::BeginQuery { .. }
             | C::EndQuery { .. }
             | C::ResolveQueries { .. } => self.skip(c, "not replayed yet"),
@@ -1630,6 +1669,52 @@ pub(super) mod tests {
         assert_eq!(&page[0x100..0x108], &[1, 2, 3, 4, 5, 6, 7, 8]);
         assert_eq!(&page[0x200..0x20a], &[9, 8, 7, 6, 9, 8, 7, 6, 9, 8]);
         assert_eq!(b.stats.copies, 2);
+        assert_eq!(b.stats.skipped, 1);
+    }
+
+    /// A bottom-of-pipe write lands in the title's memory and the wait on it is satisfied.
+    #[test]
+    fn bottom_of_pipe_writes_and_waits() {
+        use nativ64::api_ms_win_core_memory as table;
+        let Some(g) = gpu_or_skip() else { return };
+        let mut b = VkBackend::new(&g);
+        let a = table::alloc(
+            0,
+            0x1000,
+            table::MEM_RESERVE | table::MEM_COMMIT,
+            0x04,
+            None,
+        )
+        .unwrap();
+        // SAFETY: the page was just committed read-write.
+        let page = unsafe { std::slice::from_raw_parts_mut(a as *mut u8, 0x1000) };
+        b.execute(&[vec![
+            Command::WriteBottom {
+                address: a as u64,
+                value: 0x1234_5678,
+                wide: false,
+                flush: 0,
+                flags: 0,
+            },
+            Command::WaitValue {
+                address: a as u64,
+                comparison: 7,
+                reference: 0x1234_5678,
+                mask: u64::MAX,
+                wide: false,
+            },
+        ]]);
+        assert_eq!(&page[..4], &0x1234_5678u32.to_le_bytes());
+        assert_eq!(b.stats.gpu_writes, 1, "the write is applied");
+        assert_eq!(b.stats.skipped, 0, "the wait is satisfied, not skipped");
+        // A write to memory that is not committed is skipped by name, not a crash.
+        b.execute(&[vec![Command::WriteBottom {
+            address: 0x3000,
+            value: 1,
+            wide: false,
+            flush: 0,
+            flags: 0,
+        }]]);
         assert_eq!(b.stats.skipped, 1);
     }
 
