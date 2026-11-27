@@ -202,10 +202,6 @@ pub struct VkBackend<'g> {
     /// In tests: the bytes of images kept alive after a sync, in place of the device's.
     #[cfg(test)]
     pub(super) trim_budget: Option<u64>,
-    /// `Write{32,64}BitValueBottomOfPipeX` writes to title memory, applied once the submission
-    /// that recorded them is done (the queue is synchronous here, so "bottom of pipe" is after
-    /// this submission's `submit_once`).
-    pending_writes: Vec<(u64, u64, bool)>,
 }
 
 fn range(
@@ -341,7 +337,6 @@ impl<'g> VkBackend<'g> {
             budget: None,
             #[cfg(test)]
             trim_budget: None,
-            pending_writes: Vec::new(),
         }
     }
 
@@ -421,24 +416,6 @@ impl<'g> VkBackend<'g> {
         }
         self.draw.end();
         free_staging(gpu, staging);
-        // Bottom-of-pipe writes: the submission above is done (submit_once waits), so the
-        // title's memory now holds what a real queue would have written.
-        for (address, value, wide) in std::mem::take(&mut self.pending_writes) {
-            let size = if wide { 8 } else { 4 };
-            if !committed(address as usize, size) {
-                continue;
-            }
-            // SAFETY: the range is committed title memory.
-            unsafe {
-                if wide {
-                    (address as *mut u64).write_unaligned(value);
-                } else {
-                    (address as *mut u32).write_unaligned(value as u32);
-                }
-            }
-            self.stats.gpu_writes += 1;
-            super::profile::count(super::profile::Count::GpuWrites, 1);
-        }
         self.refresh_stats();
         super::profile::stop(super::profile::Phase::Record, tr);
     }
@@ -1022,7 +999,20 @@ impl<'g> VkBackend<'g> {
                 if !committed(a, size) {
                     return self.skip(c, "a write to memory that is not committed");
                 }
-                self.pending_writes.push((*address, *value, *wide));
+                // Written at record time: the title's other threads poll these fence values
+                // while this replay runs (a frame can take a second during a load, and a wait
+                // loop with a short timeout would time out if the value only appeared after the
+                // whole submission). Our list order still orders the consumers' work.
+                // SAFETY: the range is committed title memory (checked above).
+                unsafe {
+                    if *wide {
+                        (a as *mut u64).write_unaligned(*value);
+                    } else {
+                        (a as *mut u32).write_unaligned(*value as u32);
+                    }
+                }
+                self.stats.gpu_writes += 1;
+                super::profile::count(super::profile::Count::GpuWrites, 1);
             }
             // A GPU wait is already satisfied: the queue is submitted and waited for in order,
             // so the value a producer queue wrote is in memory before this list replays.
