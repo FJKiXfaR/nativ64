@@ -580,6 +580,13 @@ struct Frame {
     cont: u32,
 }
 
+/// Whether `NATIV64_CLAMP_COUNT` asks for the loop clamp's counter (it costs an atomic per
+/// loop iteration).
+fn clamp_count_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("NATIV64_CLAMP_COUNT").is_some())
+}
+
 /// The loop iteration cap of `NATIV64_LOOP_CLAMP` (0 or unset: none).
 fn loop_clamp() -> Option<u32> {
     static CLAMP: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
@@ -1282,10 +1289,12 @@ impl Tr<'_> {
                 let under = self.g.op(Op::ULessThan, tb, &[n, k]);
                 let over = self.g.op(Op::LogicalNot, tb, &[under]);
                 // count the stop so a run says which submission clamps (the atomic adds zero
-                // when the loop goes on)
-                let (one, zero) = (self.g.k(1), self.g.k(0));
-                let inc = self.g.select(over, one, zero);
-                self.clamp_count(inc);
+                // when the loop goes on); off unless asked, an atomic per iteration costs
+                if clamp_count_on() {
+                    let (one, zero) = (self.g.k(1), self.g.k(0));
+                    let inc = self.g.select(over, one, zero);
+                    self.clamp_count(inc);
+                }
                 self.g.term(Op::BranchConditional, &[under, hdr, merge]);
             }
             _ => self.g.branch(hdr),
