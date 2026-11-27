@@ -341,6 +341,12 @@ fn upload(
         profile::count(Count::Skipped, 1);
         return false;
     }
+    if std::env::var("NATIV64_TEX_LOG").is_ok_and(|v| !v.is_empty() && v != "0") {
+        eprintln!(
+            "nativ64-gpu: uploading {:?} ({size} bytes of host memory)",
+            t.desc
+        );
+    }
     let th = profile::start();
     // SAFETY: the range lies in committed, accessible pages of the memory table.
     let data = unsafe { std::slice::from_raw_parts(at as *const u8, size) };
