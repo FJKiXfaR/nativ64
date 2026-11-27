@@ -3141,10 +3141,10 @@ pub(crate) mod stage {
             "ds_read_b64 v[4:5], v1 offset:8",
         ];
         translate_full(&cs_blob(&lines, &c), None);
-        // no LDS in the record: refused
+        // a record with no LDS still gets a wave's worth (a lane exchange through ds_swizzle
+        // uses LDS without asking for any)
         c.lds = 0;
-        let (_, op) = refused_cs(&cs_blob(&lines, &c));
-        assert!(op.contains("no LDS"), "{op}");
+        translate_full(&cs_blob(&lines, &c), None);
     }
 
     #[test]

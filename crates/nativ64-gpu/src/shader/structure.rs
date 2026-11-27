@@ -180,7 +180,6 @@ pub fn cross_lane_by_nature(i: &Instr) -> bool {
     i.dpp.is_some()
         || n.starts_with("v_readfirstlane")
         || n.starts_with("v_permlane")
-        || n.starts_with("ds_swizzle")
         || n.starts_with("ds_permute")
         || n.starts_with("ds_bpermute")
 }

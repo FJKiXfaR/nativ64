@@ -575,6 +575,9 @@ struct Buf {
     stride: u32,
 }
 
+/// Workgroup-memory dwords a program that uses LDS without declaring any gets.
+const MIN_LDS: u32 = 256;
+
 /// `(set, binding)` of the bindless arrays (`docs/shaders.md`, Resources).
 const SET_BINDLESS: u32 = 0;
 const BIND_SAMPLED: u32 = 0;
@@ -2118,10 +2121,9 @@ impl<'a> Tr<'a> {
         let StageIo::Compute(cs) = self.io() else {
             return refuse("workgroup memory outside a compute program");
         };
-        let n = cs.lds_bytes.div_ceil(4);
-        if n == 0 {
-            return refuse("an LDS access in a program with no LDS");
-        }
+        // A program that uses LDS without asking for any (a lane exchange through
+        // `ds_swizzle_b32`) gets a wave's worth of dwords.
+        let n = cs.lds_bytes.div_ceil(4).max(MIN_LDS);
         if let Some(v) = self.res().lds {
             return Ok((v, n));
         }
@@ -2282,6 +2284,59 @@ impl<'a> Tr<'a> {
         }
     }
 
+    /// `ds_swizzle_b32`: the LDS read address comes from the lane the swizzle immediate picks
+    /// (`((lane & and) | or) ^ xor`, or a quad permutation), a subgroup shuffle of the address.
+    fn ds_swizzle(&mut self, c: &Ctx<Gen>) -> R<Option<Vec<Opd<Gen>>>> {
+        let i = &c.inst.instr;
+        if i.mem.gds {
+            return refuse("ds_swizzle_b32 on GDS");
+        }
+        let (var, n) = self.lds()?;
+        let tu = self.g.t_u32();
+        let tb = self.g.t_bool();
+        let Some(&addr) = c.srcs.first().and_then(|s| s.first()) else {
+            return bad("ds_swizzle_b32 without its address");
+        };
+        let addr = self.bits_of(addr);
+        let imm = (i.mem.offset as u32) & 0xffff;
+        let lane = <Gen as super::super::alu::Backend>::lane_id(&mut self.g);
+        let (and_mask, or_mask, xor_mask) = (imm & 0x1f, imm >> 5 & 0x1f, imm >> 10 & 0x1f);
+        let sw = if imm & 0x8000 != 0 {
+            // a per-quad permutation of the low two lane bits
+            let (zero, one, three) = (self.g.k(0), self.g.k(1), self.g.k(3));
+            let low = self.g.op(Op::BitwiseAnd, tu, &[lane, three]);
+            let sh = self.g.op(Op::ShiftLeftLogical, tu, &[low, one]);
+            let all = self.g.k(imm);
+            let shifted = self.g.op(Op::ShiftRightLogical, tu, &[all, sh]);
+            let picked = self.g.op(Op::BitwiseAnd, tu, &[shifted, three]);
+            let not_three = self.g.k(!3u32);
+            let base = self.g.op(Op::BitwiseAnd, tu, &[lane, not_three]);
+            let _ = zero;
+            self.g.op(Op::BitwiseOr, tu, &[base, picked])
+        } else {
+            let (and_k, or_k, xor_k) = (self.g.k(and_mask), self.g.k(or_mask), self.g.k(xor_mask));
+            let a = self.g.op(Op::BitwiseAnd, tu, &[lane, and_k]);
+            let a = self.g.op(Op::BitwiseOr, tu, &[a, or_k]);
+            self.g.op(Op::BitwiseXor, tu, &[a, xor_k])
+        };
+        self.g.m.capability(Capability::GroupNonUniformShuffle);
+        let scope = self.g.k(3);
+        let addr = self
+            .g
+            .op(Op::GroupNonUniformShuffle, tu, &[scope, addr, sw]);
+        let two = self.g.k(2);
+        let word = self.g.op(Op::ShiftRightLogical, tu, &[addr, two]);
+        let nn = self.g.k(n);
+        let inside = self.g.op(Op::ULessThan, tb, &[word, nn]);
+        let zero = self.g.k(0);
+        let safe = self.g.select(inside, word, zero);
+        let p = self.g.t_ptr(StorageClass::Workgroup, tu);
+        let ptr = self.g.op(Op::AccessChain, p, &[var, safe]);
+        let v = self.g.load(tu, ptr);
+        let v = self.g.select(inside, v, zero);
+        Ok(Some(vec![self.lane_result(c, 0, v)]))
+    }
+
     /// `ds_add_u32`, `ds_max_u32`, ...: an atomic on a workgroup-memory dword.
     fn ds_atomic(&mut self, c: &Ctx<Gen>, rest: &str) -> R<Option<Vec<Opd<Gen>>>> {
         let i = &c.inst.instr;
@@ -2345,6 +2400,9 @@ impl<'a> Tr<'a> {
         let Some(rest) = name.strip_prefix("ds_") else {
             return Ok(None);
         };
+        if rest == "swizzle_b32" {
+            return self.ds_swizzle(c);
+        }
         if [
             "add_", "sub_", "min_", "max_", "and_", "or_", "xor_", "inc_", "dec_", "cmpst_",
         ]
