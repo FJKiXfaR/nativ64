@@ -586,6 +586,67 @@ impl<'g> VkBackend<'g> {
         }
     }
 
+    /// `NATIV64_DRAW_VERTEX_PS=<hex hash>`: for the draws of that pixel shader, print the
+    /// vertex buffers (slot, address, size, stride, first bytes) and the first indices - a draw
+    /// that produces nothing is usually one whose vertex data is not what the title wrote.
+    fn log_vertex(
+        &mut self,
+        pd: &crate::d3d12::pipeline::PipelineData,
+        vbufs: &[(
+            u32,
+            super::gpumem::Mapped,
+            crate::d3d12::command::VertexView,
+        )],
+        c: &Command,
+    ) {
+        let Ok(want) = std::env::var("NATIV64_DRAW_VERTEX_PS") else {
+            return;
+        };
+        let Ok(hash) = u64::from_str_radix(want.trim(), 16) else {
+            return;
+        };
+        let ps = pd
+            .stages
+            .iter()
+            .find(|s| s.name == "pixel")
+            .map(|s| crate::shader::fnv1a64(&s.bytes));
+        if ps != Some(hash) {
+            return;
+        }
+        let draw = format!("{c:?}");
+        for (slot, _, v) in vbufs {
+            // SAFETY: the buffer translated above, so its pages are committed and readable.
+            let n = v.size.min(32) as usize;
+            let raw = unsafe { std::slice::from_raw_parts(v.address as *const u8, n) };
+            super::log_once(format!(
+                "draw vertex: {draw} slot {slot} at {:#x} size {} stride {} first bytes {}",
+                v.address,
+                v.size,
+                v.stride,
+                raw.iter().map(|b| format!("{b:02x}")).collect::<String>()
+            ));
+        }
+        if let Some(iv) = self.draw.list.index {
+            // D3D12 index format 57 is R16_UINT, anything else is R32_UINT.
+            let sixteen = iv.format == 57;
+            let el = if sixteen { 2 } else { 4 };
+            let n = (usize::try_from(iv.size).unwrap_or(0).min(32)).max(el);
+            // SAFETY: as above.
+            let raw = unsafe { std::slice::from_raw_parts(iv.address as *const u8, n) };
+            let idx: Vec<u32> = raw
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .take(8)
+                .map(|b| u32::from_le_bytes(*b))
+                .collect();
+            super::log_once(format!(
+                "draw index: {draw} at {:#x} size {} format {} first {idx:08x?}",
+                iv.address, iv.size, iv.format
+            ));
+        }
+    }
+
     pub(super) fn draw_command(&mut self, d: &Device, cb: vk::CommandBuffer, c: &Command) {
         match self.try_draw(d, cb, c, &[]) {
             Ok(()) => {
@@ -835,6 +896,7 @@ impl<'g> VkBackend<'g> {
         let (stencil_ref, blend, viewport, scissor) =
             (list.stencil_ref, list.blend, list.viewport, list.scissor);
         let vbufs: Vec<_> = vbufs.into_iter().map(|(s, m, v)| (s, m, *v)).collect();
+        self.log_vertex(pd, &vbufs, c);
         // Quads draw as triangle lists through an index buffer: (buffer, indices).
         let quad_index = if quads {
             match (c, index) {
