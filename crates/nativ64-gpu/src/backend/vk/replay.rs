@@ -320,6 +320,62 @@ pub(super) fn stage_bytes(g: &Gpu, data: &[u8], staging: &mut Vec<Staging>) -> R
     }
 }
 
+/// The title's hang watchdog progress counter (`sub_1422159F0` writes `QueryPerformanceCounter`
+/// values to this VA; `sub_142215A60` fails the title after ~30 s without a change). A
+/// synchronous replay that runs for a long time here is slow, not hung, so while one runs a
+/// helper thread keeps the counter moving; `NATIV64_WATCHDOG_POKE=0` turns that off.
+const WATCHDOG_COUNTER_VA: usize = 0x1471_B6338;
+
+struct WatchdogPoke {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl WatchdogPoke {
+    fn start() -> Self {
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let off = std::env::var("NATIV64_WATCHDOG_POKE").is_ok_and(|v| v == "0");
+        let address = if off {
+            None
+        } else {
+            nativ64::process::image_base_of(WATCHDOG_COUNTER_VA)
+                .map(|base| base + WATCHDOG_COUNTER_VA - 0x1_4000_0000)
+        };
+        let Some(address) = address else {
+            return WatchdogPoke { stop, thread: None };
+        };
+        let stop2 = stop.clone();
+        let thread = std::thread::spawn(move || {
+            while !stop2.load(std::sync::atomic::Ordering::Relaxed) {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                if stop2.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos() as u64)
+                    .unwrap_or(0);
+                // SAFETY: the counter is the title image's own .data (mapped and writable); an
+                // 8-byte aligned store is atomic for the title's readers.
+                unsafe { (address as *mut u64).write_volatile(now) };
+            }
+        });
+        WatchdogPoke {
+            stop,
+            thread: Some(thread),
+        }
+    }
+}
+
+impl Drop for WatchdogPoke {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
 impl<'g> VkBackend<'g> {
     pub fn new(gpu: &'g Gpu) -> Self {
         VkBackend {
@@ -342,6 +398,8 @@ impl<'g> VkBackend<'g> {
 
     /// Replay `lists` in order and wait for the GPU to be idle.
     pub fn execute(&mut self, lists: &[Vec<Command>]) {
+        // A long synchronous replay must not look like a hang to the title's watchdog.
+        let _poke = WatchdogPoke::start();
         let gpu = self.gpu;
         let mut staging = Vec::new();
         self.reap();
@@ -363,6 +421,7 @@ impl<'g> VkBackend<'g> {
         let lists_seen = lists.len();
         let commands_seen: u64 = lists.iter().map(|l| l.len() as u64).sum();
         let (drawn0, dispatched0) = (self.stats.drawn, self.stats.dispatched);
+        let hashed0 = self.stats.hashed;
         self.tex.submission += 1;
         super::profile::count(super::profile::Count::Submissions, 1);
         let ts = super::profile::start();
@@ -393,6 +452,7 @@ impl<'g> VkBackend<'g> {
             self.tex.capped = false;
         }
         super::profile::stop(super::profile::Phase::Sync, ts);
+        let sync_done = started.elapsed();
         let tr = super::profile::start();
         let r = gpu.submit_once(|d, cb| {
             for list in lists {
@@ -426,10 +486,13 @@ impl<'g> VkBackend<'g> {
         if elapsed.as_secs_f64() > 2.0 {
             eprintln!(
                 "nativ64-gpu: a replay of {lists_seen} lists ({commands_seen} commands, {} draws, \
-                 {} dispatches) took {:.1} s",
+                 {} dispatches, {} MB hashed) took {:.1} s ({:.1} s texture sync, {:.1} s lists)",
                 self.stats.drawn - drawn0,
                 self.stats.dispatched - dispatched0,
-                elapsed.as_secs_f64()
+                (self.stats.hashed - hashed0) >> 20,
+                elapsed.as_secs_f64(),
+                sync_done.as_secs_f64(),
+                (elapsed - sync_done).as_secs_f64()
             );
         }
         self.refresh_stats();
