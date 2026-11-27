@@ -109,7 +109,26 @@ pub fn trace_calls() -> u64 {
 /// keeps this even when `NATIV64_TRACE_SILENT` suppresses the per-call lines).
 static RECENT: std::sync::Mutex<std::collections::VecDeque<u32>> =
     std::sync::Mutex::new(std::collections::VecDeque::new());
-const RECENT_MAX: usize = 64;
+const RECENT_MAX: usize = 512;
+
+/// The imports called before the last hardware fault (newest last): the pre-crash view, since
+/// the fault hook snapshots the ring before any handler (the crash reporter) adds its calls.
+static BEFORE_FAULT: std::sync::Mutex<Option<Vec<String>>> = std::sync::Mutex::new(None);
+
+/// Snapshots the import ring: installed as the SEH fault hook.
+pub fn snapshot_imports() {
+    let mut slot = BEFORE_FAULT.lock().unwrap_or_else(|p| p.into_inner());
+    *slot = Some(recent_imports());
+}
+
+/// The imports called before the last hardware fault (empty when the hook has not run).
+pub fn imports_before_fault() -> Vec<String> {
+    BEFORE_FAULT
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
+        .unwrap_or_default()
+}
 
 /// The last imports called (their names, newest last).
 pub fn recent_imports() -> Vec<String> {
@@ -289,5 +308,10 @@ mod tests {
         assert!(recent.iter().any(|n| n == "t!second"));
         // The ring is bounded.
         assert!(recent.len() <= RECENT_MAX);
+        // The fault hook's snapshot keeps that view for the crash report.
+        snapshot_imports();
+        let before = imports_before_fault();
+        assert!(before.iter().any(|n| n == "t!first"));
+        assert!(before.iter().any(|n| n == "t!second"));
     }
 }

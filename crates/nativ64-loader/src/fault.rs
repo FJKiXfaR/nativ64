@@ -77,6 +77,16 @@ fn report_unhandled(rec: *const nativ64::seh::ExceptionRecord) {
         let line = unsafe { nativ64::seh::backtrace_line(ctx as *mut u8, 48) };
         say(format_args!("{line}\n"));
     }
+    let before = crate::stubs::imports_before_fault();
+    if !before.is_empty() {
+        say(format_args!(
+            "nativ64: the {} imports before the fault (the ring up to the fault):\n",
+            before.len()
+        ));
+        for name in before.iter().rev().take(40).rev() {
+            say(format_args!("  {name}\n"));
+        }
+    }
     let recent = crate::stubs::recent_imports();
     if !recent.is_empty() {
         say(format_args!(
@@ -251,6 +261,7 @@ pub fn install(base: u64, size: usize) {
         Ordering::Relaxed,
     );
     nativ64::seh::set_fatal_hook(report_unhandled);
+    nativ64::seh::set_fault_hook(crate::stubs::snapshot_imports);
     for sig in [
         libc::SIGSEGV,
         libc::SIGILL,

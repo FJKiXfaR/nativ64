@@ -657,6 +657,26 @@ pub fn set_fatal_hook(hook: FatalHook) {
     FATAL_HOOK.store(hook as usize, std::sync::atomic::Ordering::Release);
 }
 
+/// A hook run when a hardware fault is turned into an exception, before any SEH handler sees
+/// it: the loader snapshots its import ring there, so a crash report shows what the title
+/// called before the fault (and not the crash handler's own calls).
+pub type FaultHook = fn();
+
+static FAULT_HOOK: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Installs the pre-dispatch fault hook.
+pub fn set_fault_hook(hook: FaultHook) {
+    FAULT_HOOK.store(hook as usize, std::sync::atomic::Ordering::Release);
+}
+
+fn call_fault_hook() {
+    let hook = FAULT_HOOK.load(std::sync::atomic::Ordering::Acquire);
+    if hook != 0 {
+        let hook: FaultHook = unsafe { std::mem::transmute(hook) };
+        hook();
+    }
+}
+
 /// Entry for a hardware fault turned into an exception: the loader's signal handler copies the
 /// `CONTEXT` and `EXCEPTION_RECORD` onto the faulting thread's stack, then resumes the thread
 /// here (as if called, so `rsp` is 8 mod 16). Dispatches like `RaiseException`; resumes the
@@ -666,6 +686,7 @@ pub fn set_fatal_hook(hook: FatalHook) {
 /// `rec` and `ctx` must be a valid record and a 16-aligned `CONTEXT` that stay readable and
 /// writable for the whole dispatch (they live on the guest stack below the fault).
 pub unsafe extern "win64" fn dispatch_fault(rec: *mut ExceptionRecord, ctx: *mut u8) -> ! {
+    call_fault_hook();
     if !search(rec, ctx) {
         unhandled(rec, ctx);
     }
