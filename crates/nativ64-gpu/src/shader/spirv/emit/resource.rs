@@ -2136,8 +2136,8 @@ impl<'a> Tr<'a> {
             _ => return Ok(None),
         };
         let m = i.img;
-        if m.a16 || m.d16 || m.tfe || m.lwe || m.unorm {
-            return refuse(&format!("{name} with a16, d16, tfe, lwe or unorm"));
+        if m.a16 || m.tfe || m.lwe || m.unorm {
+            return refuse(&format!("{name} with a16, tfe, lwe or unorm"));
         }
         let Some((_, _, ncoord)) = Self::image_dim(m.dim) else {
             return refuse(&format!("{name} on dimension {}", m.dim));
@@ -2160,7 +2160,8 @@ impl<'a> Tr<'a> {
         // not need).
         let compute_implicit = matches!(self.io(), StageIo::Compute(_)) && !explicit;
         let chans: Vec<u32> = (0..4).filter(|ch| m.dmask >> ch & 1 != 0).collect();
-        if chans.len() != c.inst.dsts.len() {
+        let words = chans.len().div_ceil(if m.d16 { 2 } else { 1 });
+        if words != c.inst.dsts.len() {
             return bad("an image sample whose results do not match its dmask");
         }
         let si = self.sampled_image(c)?;
@@ -2233,10 +2234,27 @@ impl<'a> Tr<'a> {
                 .op(Op::ImageSampleExplicitLod, v4, &[si, coord, 2, lod])
         };
         let mut out = Vec::new();
-        for (j, ch) in chans.into_iter().enumerate() {
-            let x = self.g.op(Op::CompositeExtract, tf, &[res, ch]);
-            let bits = self.g.as_bits(x);
-            out.push(self.lane_result(c, j, bits));
+        if m.d16 {
+            // two channels per dword, the dmask's first channel in the low half
+            for (k, pair) in chans.chunks(2).enumerate() {
+                let lo = self.g.op(Op::CompositeExtract, tf, &[res, pair[0]]);
+                let lo = self.g.as_bits(lo);
+                let hi = match pair.get(1) {
+                    Some(&ch) => {
+                        let x = self.g.op(Op::CompositeExtract, tf, &[res, ch]);
+                        self.g.as_bits(x)
+                    }
+                    None => self.g.k(0),
+                };
+                let v = self.g.pack_half2(lo, hi);
+                out.push(self.lane_result(c, k, v));
+            }
+        } else {
+            for (j, ch) in chans.into_iter().enumerate() {
+                let x = self.g.op(Op::CompositeExtract, tf, &[res, ch]);
+                let bits = self.g.as_bits(x);
+                out.push(self.lane_result(c, j, bits));
+            }
         }
         Ok(Some(out))
     }
