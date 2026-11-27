@@ -558,6 +558,8 @@ pub(in crate::shader::spirv) struct Res {
     pub(super) samplers: Vec<SamplerDesc>,
     /// The import table variable and its struct type (set 0, binding 3).
     imports: Option<(u32, u32)>,
+    /// The ids already decorated NonUniform.
+    non_uniform: HashSet<u32>,
     static_vars: Vec<u32>,
     /// A `Function` variable the guarded loads write their result to.
     tmp: Option<u32>,
@@ -587,6 +589,7 @@ impl Res {
             lds: None,
             samplers: Vec::new(),
             imports: None,
+            non_uniform: HashSet::new(),
             static_vars: Vec::new(),
             tmp: None,
         }
@@ -1655,7 +1658,10 @@ impl<'a> Tr<'a> {
     }
 
     fn non_uniform(&mut self, id: u32) -> u32 {
-        self.g.m.decorate(id, Decoration::NonUniform, &[]);
+        // a value can be the index of more than one access chain; one decoration is enough
+        if self.res().non_uniform.insert(id) {
+            self.g.m.decorate(id, Decoration::NonUniform, &[]);
+        }
         id
     }
 

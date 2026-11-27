@@ -99,6 +99,12 @@ struct MaskOp {
     wr: bool,
 }
 
+/// Whether `i` is one of the wave-sized mask operations (the emitter reads its sources as
+/// masks; every other instruction that reads one reads it as data).
+pub fn is_mask_op(i: &Instr) -> bool {
+    mask_op(i).is_some()
+}
+
 /// The wave-sized scalar operation `i` is, when it is one of the mask operations.
 fn mask_op(i: &Instr) -> Option<MaskOp> {
     if !matches!(i.enc, Enc::Sop1 | Enc::Sop2) {
@@ -167,7 +173,7 @@ fn mask_srcs<'a>(inst: &'a Inst, op: MaskOp) -> impl Iterator<Item = Src> + 'a {
 }
 
 /// True for the vector instructions that read a mask per lane in their last source (or VCC).
-fn takes_lane_mask(name: &str) -> bool {
+pub fn takes_lane_mask(name: &str) -> bool {
     ["v_cndmask", "v_addc", "v_subb", "v_subbrev", "v_div_fmas"]
         .iter()
         .any(|p| name.starts_with(p))
@@ -177,8 +183,9 @@ fn takes_lane_mask(name: &str) -> bool {
 /// Instructions whose result depends on other lanes, whatever their operands.
 pub fn cross_lane_by_nature(i: &Instr) -> bool {
     let n = i.name();
-    i.dpp.is_some()
-        || n.starts_with("v_readfirstlane")
+    // DPP is translated as a subgroup shuffle of the source lane; the others are real
+    // cross-lane instructions without a translation
+    n.starts_with("v_readfirstlane")
         || n.starts_with("v_permlane")
         || n.starts_with("ds_permute")
         || n.starts_with("ds_bpermute")
@@ -538,7 +545,9 @@ pub fn cross_lane_use(m: &Masks, inst: &Inst) -> Option<String> {
     if matches!(i.name(), "v_readlane_b32" | "v_writelane_b32") {
         return None;
     }
-    Some(i.name().to_string())
+    // anything else reads the mask as data: the emitter emits the ballot's dword the value's
+    // register names
+    None
 }
 
 // ---------------------------------------------------------------------------------------

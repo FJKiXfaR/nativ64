@@ -262,6 +262,7 @@ impl Backend for Gen {
     }
 
     fn ballot_words(&mut self, bit: u32) -> (u32, u32) {
+        self.m.capability(Capability::GroupNonUniformBallot);
         let t = self.t_u32();
         let scope = self.k(3);
         let tv4 = self.m.global(Op::TypeVector, None, &[t, 4]);
@@ -839,6 +840,24 @@ impl Tr<'_> {
         self.g.select(inside, v, zero)
     }
 
+    /// A mask read as data: the ballot of the lane's bit, and the dword the value's register
+    /// names (a wave64 mask pair's low or high half).
+    fn as_data(&mut self, s: Src, o: Opd<Gen>) -> R<Opd<Gen>> {
+        let Opd::B(bit) = o else {
+            return Ok(o);
+        };
+        let dword = match s {
+            Src::Val(v) => match self.f.vals[v.0 as usize].reg {
+                Reg::ExecHi | Reg::VccHi => 1,
+                Reg::S(n) if n % 2 == 1 => 1,
+                _ => 0,
+            },
+            _ => 0,
+        };
+        let (lo, hi) = self.g.ballot_words(bit);
+        Ok(Opd::V(if dword == 0 { lo } else { hi }))
+    }
+
     /// The value of a source operand.
     fn read(&mut self, s: Src) -> R<Opd<Gen>> {
         Ok(match s {
@@ -970,11 +989,17 @@ impl Tr<'_> {
         let f = self.f;
         let blk = &f.blocks[b];
         for (k, i) in blk.insts.iter().enumerate() {
+            // An instruction that is not a mask operation (and does not take a lane mask)
+            // reads a mask-valued source as data: the console's mask dword, which the ballot of
+            // the lane's bit gives back.
+            let data_read = !crate::shader::structure::is_mask_op(&i.instr)
+                && !crate::shader::structure::takes_lane_mask(i.instr.name());
             let mut srcs = Vec::new();
             for s in &i.srcs {
                 let mut v = Vec::new();
                 for &d in s {
-                    v.push(self.read(d)?);
+                    let o = self.read(d)?;
+                    v.push(if data_read { self.as_data(d, o)? } else { o });
                 }
                 srcs.push(v);
             }
