@@ -1,8 +1,9 @@
 //! DXGI formats to Vulkan formats, for the images the replay creates. Typeless formats take
 //! the usual typed reading (UNORM, or float for 32-bit channels); a depth-stencil resource
 //! takes the depth format of its size. Block-compressed formats (BC1 to BC7) are mapped (the
-//! device must have `textureCompressionBC`); integer formats are not yet: a resource in one has
-//! no image and its commands are skipped.
+//! device must have `textureCompressionBC`); integer and normalized formats map to their Vulkan
+//! counterparts (SNORM included), and a format Vulkan has no equivalent for (R1, the typeless
+//! X8 view targets beyond the B8G8R8A8 approximation) stays unmapped and is refused by name.
 
 use ash::vk;
 
@@ -52,30 +53,74 @@ pub fn lookup(dxgi: u32, flags: u32) -> Option<FormatInfo> {
     use vk::Format as F;
     let ds = flags & FLAG_DEPTH_STENCIL != 0;
     match dxgi {
+        // 32-bit float channels.
         1 | 2 => info(F::R32G32B32A32_SFLOAT, COLOR, 16),
-        9 | 10 => info(F::R16G16B16A16_SFLOAT, COLOR, 8),
-        11 => info(F::R16G16B16A16_UNORM, COLOR, 8),
+        5 | 6 => info(F::R32G32B32_SFLOAT, COLOR, 12),
         15 | 16 => info(F::R32G32_SFLOAT, COLOR, 8),
-        19 | 20 => info(F::D32_SFLOAT_S8_UINT, DEPTH_STENCIL, 8),
+        // 16-bit float channels.
+        9 | 10 => info(F::R16G16B16A16_SFLOAT, COLOR, 8),
+        33 | 34 => info(F::R16G16_SFLOAT, COLOR, 4),
+        54 => info(F::R16_SFLOAT, COLOR, 2),
+        // Normalized, integer and SNORM channels (stored, sampled and written as such).
+        3 => info(F::R32G32B32A32_UINT, COLOR, 16),
+        4 => info(F::R32G32B32A32_SINT, COLOR, 16),
+        7 => info(F::R32G32B32_UINT, COLOR, 12),
+        8 => info(F::R32G32B32_SINT, COLOR, 12),
+        11 => info(F::R16G16B16A16_UNORM, COLOR, 8),
+        12 => info(F::R16G16B16A16_UINT, COLOR, 8),
+        13 => info(F::R16G16B16A16_SNORM, COLOR, 8),
+        14 => info(F::R16G16B16A16_SINT, COLOR, 8),
+        17 => info(F::R32G32_UINT, COLOR, 8),
+        18 => info(F::R32G32_SINT, COLOR, 8),
         23 | 24 => info(F::A2B10G10R10_UNORM_PACK32, COLOR, 4),
+        25 => info(F::A2B10G10R10_UINT_PACK32, COLOR, 4),
         26 => info(F::B10G11R11_UFLOAT_PACK32, COLOR, 4),
         27 | 28 => info(F::R8G8B8A8_UNORM, COLOR, 4),
         29 => info(F::R8G8B8A8_SRGB, COLOR, 4),
-        33 | 34 => info(F::R16G16_SFLOAT, COLOR, 4),
+        30 => info(F::R8G8B8A8_UINT, COLOR, 4),
+        31 => info(F::R8G8B8A8_SNORM, COLOR, 4),
+        32 => info(F::R8G8B8A8_SINT, COLOR, 4),
         35 => info(F::R16G16_UNORM, COLOR, 4),
+        36 => info(F::R16G16_UINT, COLOR, 4),
+        37 => info(F::R16G16_SNORM, COLOR, 4),
+        38 => info(F::R16G16_SINT, COLOR, 4),
+        // Single-channel 32-bit: typeless is float unless the resource is a depth target.
         39 if ds => info(F::D32_SFLOAT, DEPTH, 4),
         39 | 41 => info(F::R32_SFLOAT, COLOR, 4),
         40 => info(F::D32_SFLOAT, DEPTH, 4),
-        44 | 45 => info(F::D32_SFLOAT_S8_UINT, DEPTH_STENCIL, 8),
+        42 => info(F::R32_UINT, COLOR, 4),
+        43 => info(F::R32_SINT, COLOR, 4),
+        // 24-bit depth with stencil (the typeless and the typed form).
+        44 | 45 => info(F::D24_UNORM_S8_UINT, DEPTH_STENCIL, 4),
+        19 | 20 => info(F::D32_SFLOAT_S8_UINT, DEPTH_STENCIL, 8),
+        // 8-bit two-channel.
         48 | 49 => info(F::R8G8_UNORM, COLOR, 2),
+        50 => info(F::R8G8_UINT, COLOR, 2),
+        51 => info(F::R8G8_SNORM, COLOR, 2),
+        52 => info(F::R8G8_SINT, COLOR, 2),
+        // 16-bit single channel; the typeless form is depth when the target is.
         53 if ds => info(F::D16_UNORM, DEPTH, 2),
         53 | 56 => info(F::R16_UNORM, COLOR, 2),
-        54 => info(F::R16_SFLOAT, COLOR, 2),
         55 => info(F::D16_UNORM, DEPTH, 2),
-        // A8_UNORM: an R8 image; sampled views move the red channel to alpha (`a8_swizzle`)
+        57 => info(F::R16_UINT, COLOR, 2),
+        58 => info(F::R16_SNORM, COLOR, 2),
+        59 => info(F::R16_SINT, COLOR, 2),
+        // 8-bit single channel; A8_UNORM is an R8 image and its views move red to alpha
+        // (`a8_swizzle`).
         60 | 61 | 65 => info(F::R8_UNORM, COLOR, 1),
-        87 | 90 => info(F::B8G8R8A8_UNORM, COLOR, 4),
-        91 => info(F::B8G8R8A8_SRGB, COLOR, 4),
+        62 => info(F::R8_UINT, COLOR, 1),
+        63 => info(F::R8_SNORM, COLOR, 1),
+        64 => info(F::R8_SINT, COLOR, 1),
+        67 => info(F::E5B9G9R9_UFLOAT_PACK32, COLOR, 4),
+        // Packed 16-bit colour.
+        85 => info(F::B5G6R5_UNORM_PACK16, COLOR, 2),
+        86 => info(F::B5G5R5A1_UNORM_PACK16, COLOR, 2),
+        // 8-bit four-channel, BGRA order; the X8 forms are the same image with alpha unused.
+        87 | 88 | 90 | 92 => info(F::B8G8R8A8_UNORM, COLOR, 4),
+        91 | 93 => info(F::B8G8R8A8_SRGB, COLOR, 4),
+        // XR bias is not modelled: the same memory layout, sampled as plain UNORM.
+        89 => info(F::A2B10G10R10_UNORM_PACK32, COLOR, 4),
+        // Block-compressed colour (BC1 to BC7).
         70 | 71 => block(F::BC1_RGBA_UNORM_BLOCK, 8),
         72 => block(F::BC1_RGBA_SRGB_BLOCK, 8),
         73 | 74 => block(F::BC2_UNORM_BLOCK, 16),
@@ -209,6 +254,35 @@ mod tests {
         );
         assert!(bc1.compressed);
         assert_eq!(lookup(99, 0).unwrap().format, vk::Format::BC7_SRGB_BLOCK);
+    }
+
+    #[test]
+    fn integer_normalized_packed_and_depth_formats() {
+        let f = |dxgi, flags| lookup(dxgi, flags).unwrap();
+        // SNORM (format 13 is what the title asked about), UINT, SINT.
+        assert_eq!(f(13, 0).format, vk::Format::R16G16B16A16_SNORM);
+        assert_eq!(f(31, 0).format, vk::Format::R8G8B8A8_SNORM);
+        assert_eq!(f(3, 0).format, vk::Format::R32G32B32A32_UINT);
+        assert_eq!(f(42, 0).format, vk::Format::R32_UINT);
+        assert_eq!(f(43, 0).format, vk::Format::R32_SINT);
+        // 24-bit depth with stencil, both the typeless and the typed form.
+        assert_eq!(
+            f(45, FLAG_DEPTH_STENCIL).format,
+            vk::Format::D24_UNORM_S8_UINT
+        );
+        assert_eq!(
+            f(44, FLAG_DEPTH_STENCIL).format,
+            vk::Format::D24_UNORM_S8_UINT
+        );
+        // Packed colour and the shared-exponent format.
+        assert_eq!(f(85, 0).format, vk::Format::B5G6R5_UNORM_PACK16);
+        assert_eq!(f(86, 0).format, vk::Format::B5G5R5A1_UNORM_PACK16);
+        assert_eq!(f(67, 0).format, vk::Format::E5B9G9R9_UFLOAT_PACK32);
+        // The X8 views are B8G8R8A8 images with alpha unused.
+        assert_eq!(f(88, 0).format, vk::Format::B8G8R8A8_UNORM);
+        assert_eq!(f(93, 0).format, vk::Format::B8G8R8A8_SRGB);
+        // R1 has no Vulkan equivalent and is refused, not guessed.
+        assert!(lookup(66, 0).is_none());
     }
 
     #[test]
