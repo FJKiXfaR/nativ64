@@ -628,7 +628,7 @@ impl<'g> VkBackend<'g> {
         }
         for (slot, _, v) in vbufs {
             // SAFETY: the buffer translated above, so its pages are committed and readable.
-            let n = v.size.min(32) as usize;
+            let n = v.size.min(128) as usize;
             let raw = unsafe { std::slice::from_raw_parts(v.address as *const u8, n) };
             super::log_once(format!(
                 "draw vertex: {draw} slot {slot} at {:#x} size {} stride {} first bytes {}",
@@ -663,7 +663,7 @@ impl<'g> VkBackend<'g> {
             if let Some(crate::d3d12::descriptor::View::Constant(a, size)) =
                 crate::d3d12::descriptor::view_at(index as usize)
             {
-                let n = usize::try_from(size).unwrap_or(0).min(32);
+                let n = usize::try_from(size).unwrap_or(0).min(256);
                 // SAFETY: a constant buffer the title made readable.
                 let raw = unsafe { std::slice::from_raw_parts(a as *const u8, n) };
                 super::log_once(format!(
