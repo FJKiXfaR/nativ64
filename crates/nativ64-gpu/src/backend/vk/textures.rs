@@ -960,6 +960,12 @@ impl<'g> VkBackend<'g> {
                 d.destroy_image(image, None);
                 return None;
             };
+            // The barrier and the clear cover every layer: with the index palette the image
+            // has 256 of them, and a layer left UNDEFINED is invalid to sample (a lost device).
+            let all = vk::ImageSubresourceRange {
+                layer_count: layers,
+                ..sub
+            };
             let to_general = [vk::ImageMemoryBarrier::default()
                 .old_layout(vk::ImageLayout::UNDEFINED)
                 .new_layout(vk::ImageLayout::GENERAL)
@@ -967,7 +973,7 @@ impl<'g> VkBackend<'g> {
                 .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
                 .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
                 .image(image)
-                .subresource_range(sub)];
+                .subresource_range(all)];
             d.cmd_pipeline_barrier(
                 cb,
                 vk::PipelineStageFlags::TOP_OF_PIPE,
@@ -982,14 +988,36 @@ impl<'g> VkBackend<'g> {
             // content that a missing texture is behind.
             let white =
                 std::env::var("NATIV64_HOLE_WHITE").is_ok_and(|v| !v.is_empty() && v != "0");
-            let clear = if white { [1.0; 4] } else { [0.0; 4] };
-            d.cmd_clear_color_image(
-                cb,
-                image,
-                vk::ImageLayout::GENERAL,
-                &vk::ClearColorValue { float32: clear },
-                &[sub],
-            );
+            if palette {
+                // Layer k holds alpha k/255, so a draw that samples index i renders with the
+                // alpha of i's low (or high) byte.
+                for k in 0..layers {
+                    let layer = vk::ImageSubresourceRange {
+                        base_array_layer: k,
+                        layer_count: 1,
+                        ..sub
+                    };
+                    let a = if palette { k as f32 / 255.0 } else { 0.0 };
+                    d.cmd_clear_color_image(
+                        cb,
+                        image,
+                        vk::ImageLayout::GENERAL,
+                        &vk::ClearColorValue {
+                            float32: [1.0, 1.0, 1.0, a],
+                        },
+                        &[layer],
+                    );
+                }
+            } else {
+                let clear = if white { [1.0; 4] } else { [0.0; 4] };
+                d.cmd_clear_color_image(
+                    cb,
+                    image,
+                    vk::ImageLayout::GENERAL,
+                    &vk::ClearColorValue { float32: clear },
+                    &[sub],
+                );
+            }
             let mut views = Vec::new();
             if palette {
                 for k in 0..256u32 {
@@ -1028,6 +1056,21 @@ impl<'g> VkBackend<'g> {
         }
     }
 
+    /// Logs a sampled view left empty, at most `HOLE_LOGS` times (a title can refuse thousands
+    /// of buffer views, and one line each buries the log).
+    fn log_hole(msg: String) {
+        const HOLE_LOGS: usize = 40;
+        static SEEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = SEEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if n < HOLE_LOGS {
+            log_once(msg);
+        } else if n == HOLE_LOGS {
+            log_once(format!(
+                "further sampled views left empty are not logged (more than {HOLE_LOGS})"
+            ));
+        }
+    }
+
     /// The palette view that names `i` (`NATIV64_HOLE_INDEX`), if that diagnostic is on.
     fn hole_indexed(&self, i: usize) -> Option<vk::ImageView> {
         let h = self.tex.hole.as_ref()?;
@@ -1056,7 +1099,7 @@ impl<'g> VkBackend<'g> {
                 other => {
                     // A sampled view left empty: naming its resource (or its absence) is how
                     // a missing texture behind invisible content is found.
-                    log_once(format!(
+                    Self::log_hole(format!(
                         "a sampled view is left empty: resource {res:#x} info {other:?} \
                          view words {:x?}",
                         desc
@@ -1077,7 +1120,7 @@ impl<'g> VkBackend<'g> {
                 let desc = placed_desc(rd);
                 let address = u64::from(vd[10]) | u64::from(vd[11]) << 32;
                 if address == 0 || !matches!(desc.dimension, TEXTURE1D | TEXTURE2D | TEXTURE3D) {
-                    log_once(format!(
+                    Self::log_hole(format!(
                         "a placed sampled view is left empty: address {address:#x} desc {desc:?} \
                          view words {vd:x?}"
                     ));
@@ -1094,7 +1137,7 @@ impl<'g> VkBackend<'g> {
                 Spec::of_view(v).map_or(Entry::Hole, Entry::Sampler)
             }
             other => {
-                log_once(format!("a sampled view is left empty (other): {other:?}"));
+                Self::log_hole(format!("a sampled view is left empty (other): {other:?}"));
                 Entry::Hole
             }
         }
