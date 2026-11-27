@@ -217,6 +217,8 @@ pub struct VkBackend<'g> {
     pub(super) swapchains: HashMap<usize, Option<super::Swapchain<'g>>>,
     pub(super) dump: Option<std::path::PathBuf>,
     pub(super) frames: u64,
+    /// `NATIV64_DUMP_DRAWS`: the snapshots of the frame being recorded.
+    pub(super) dd: super::inspect::DrawDump,
     /// Tests: the most device memory the images may hold (a failing allocation beyond it).
     #[cfg(test)]
     pub(super) budget: Option<u64>,
@@ -354,6 +356,7 @@ impl<'g> VkBackend<'g> {
             swapchains: HashMap::new(),
             dump: None,
             frames: 0,
+            dd: Default::default(),
             #[cfg(test)]
             budget: None,
             #[cfg(test)]
@@ -422,6 +425,7 @@ impl<'g> VkBackend<'g> {
                     let tc = super::profile::start();
                     self.record(d, cb, c, &mut staging);
                     super::profile::stop(super::profile::Phase::Cmds, tc);
+                    self.snap_after(d, cb, c);
                     if matches!(c, Command::Dispatch { .. }) {
                         super::profile::stop(super::profile::Phase::Disp, tc);
                     }
@@ -441,6 +445,7 @@ impl<'g> VkBackend<'g> {
         if let Err(e) = r {
             log_once(format!("replay submission failed: {e}"));
         }
+        self.finish_draw_dump();
         self.draw.end();
         free_staging(gpu, staging);
         self.tex.ring.end_submission(gpu);

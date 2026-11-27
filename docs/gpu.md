@@ -308,6 +308,12 @@ The executable imports from `d3d12_xs` only `D3D12XboxCreateDevice` and
 - `NATIV64_DUMP_FROM=<n>` skips the kept frames before `n` (to reach a late frame with
   `NATIV64_DUMP_TARGETS` in reasonable time); `NATIV64_DRAW_ONLY=<a>-<b>` records only draws `a`
   to `b` of each described frame (bisect which draw produces or breaks a pixel).
+- `NATIV64_DUMP_DRAWS=<frame>` (with `NATIV64_DUMP_TARGETS`): for that one presented frame only, prints the
+  draw `inspect:` lines and writes the colour target bound by each draw and dispatch, right after
+  it, as `<dir>/frame_NNNNN_draw_DDD_{draw|disp}_p<pipeline serial>_i<index or vertex count>.png`
+  (a draw the replay skipped prints `not drawn`). The copies stay in host buffers until the
+  frame's submission ends (at most 96 and 2 GiB), then are written and freed. Combine with
+  `NATIV64_DUMP_FROM` to reach the frame sooner.
 - `NATIV64_IMPORT_CAP_MB=<n>` overrides the host-pointer import cap (default 2048).
 - `NATIV64_PROFILE=1` prints, every 60 presented frames, the seconds spent in each phase of a
   submission (texture sync, write watch, hashing, uploads, recording, dump) and their counters.

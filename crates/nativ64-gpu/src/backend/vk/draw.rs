@@ -859,6 +859,7 @@ impl<'g> VkBackend<'g> {
         if self.inspecting() {
             self.inspect_draw(c, pd, &resources, extent, rects);
         }
+        self.note_draw(c, pd.serial, resources.first().map(|t| t.resource));
         if self.skipped_by_filter() {
             return Ok(());
         }
