@@ -51,13 +51,16 @@ pub(super) enum Count {
     Written,
     /// Bottom-of-pipe writes applied to title memory.
     GpuWrites,
+    /// Draws and compute dispatches recorded into Vulkan.
+    Drawn,
+    Dispatched,
 }
 
 const PHASES: [&str; 11] = [
     "sync", "watch", "hash", "upload", "record", "dump", "image", "descr", "syncrec", "hostup",
     "placedup",
 ];
-const COUNTS: [&str; 12] = [
+const COUNTS: [&str; 14] = [
     "looked",
     "skipped",
     "scan_none",
@@ -70,10 +73,12 @@ const COUNTS: [&str; 12] = [
     "visited",
     "descr_written",
     "gpu_writes",
+    "drawn",
+    "dispatched",
 ];
 
 static NANOS: [AtomicU64; 11] = [const { AtomicU64::new(0) }; 11];
-static COUNT: [AtomicU64; 12] = [const { AtomicU64::new(0) }; 12];
+static COUNT: [AtomicU64; 14] = [const { AtomicU64::new(0) }; 14];
 
 pub(super) fn enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();

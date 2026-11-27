@@ -439,7 +439,10 @@ impl<'g> VkBackend<'g> {
     /// Records a `Draw` or `DrawIndexed`.
     pub(super) fn draw_command(&mut self, d: &Device, cb: vk::CommandBuffer, c: &Command) {
         match self.try_draw(d, cb, c, &[]) {
-            Ok(()) => self.stats.drawn += 1,
+            Ok(()) => {
+                self.stats.drawn += 1;
+                super::profile::count(super::profile::Count::Drawn, 1);
+            }
             Err(s) => {
                 let (n, why) = match s {
                     Skip::Pipeline(w) => (&mut self.stats.draw_skips.pipeline, w),

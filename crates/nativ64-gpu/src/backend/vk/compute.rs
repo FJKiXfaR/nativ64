@@ -56,7 +56,10 @@ impl VkBackend<'_> {
             return;
         };
         match self.try_dispatch(d, cb, [*x, *y, *z]) {
-            Ok(()) => self.stats.dispatched += 1,
+            Ok(()) => {
+                self.stats.dispatched += 1;
+                super::profile::count(super::profile::Count::Dispatched, 1);
+            }
             Err(s) => {
                 let (n, why) = match s {
                     Skip::Pipeline(w) => (&mut self.stats.dispatch_skips.pipeline, w),
