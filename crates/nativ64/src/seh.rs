@@ -672,6 +672,15 @@ pub unsafe extern "win64" fn dispatch_fault(rec: *mut ExceptionRecord, ctx: *mut
     nativ64_rtl_restore_context(ctx, std::ptr::null())
 }
 
+/// The `CONTEXT` of the last unhandled exception (0 when none): the loader's fatal report reads
+/// the faulting stack from it.
+static LAST_CONTEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// The `CONTEXT` of the last unhandled exception, or NULL.
+pub fn last_fault_context() -> *const u8 {
+    LAST_CONTEXT.load(std::sync::atomic::Ordering::Relaxed) as *const u8
+}
+
 /// Reports a fatal exception (`fatal exception 0x… at image+0x…`) and ends the process.
 fn stop(code: u32, address: usize) {
     #[cfg(test)]
@@ -855,6 +864,7 @@ unsafe fn escalate(old: *mut ExceptionRecord, ctx: *mut u8, code: u32) -> bool {
 
 /// Nobody handled `rec`: the top-level filter, then report and stop.
 unsafe fn unhandled(rec: *mut ExceptionRecord, ctx: *mut u8) {
+    LAST_CONTEXT.store(ctx as usize, std::sync::atomic::Ordering::Relaxed);
     let ptrs = ExceptionPointers {
         record: rec,
         context: ctx,
@@ -869,7 +879,11 @@ unsafe fn unhandled(rec: *mut ExceptionRecord, ctx: *mut u8) {
 /// The return addresses above the faulting frame of `ctx`, up to `max`, as
 /// `nativ64: backtrace image+0x… image+0x…` (addresses outside every image print bare). Stops
 /// at the first frame no unwind info describes.
-unsafe fn backtrace_line(ctx: *mut u8, max: usize) -> String {
+/// Reports the return addresses above the faulting frame of `ctx`, up to `max`.
+///
+/// # Safety
+/// `ctx` is NULL or a valid `CONTEXT`.
+pub unsafe fn backtrace_line(ctx: *mut u8, max: usize) -> String {
     let mut line = String::from("nativ64: backtrace");
     if ctx.is_null() {
         return line;

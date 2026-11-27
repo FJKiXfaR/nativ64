@@ -70,6 +70,23 @@ fn report_unhandled(rec: *const nativ64::seh::ExceptionRecord) {
     ));
     say_location(r.address as u64);
     say(format_args!("\n"));
+    // The imports called just before the fault and the guest stack above it: what a crash in
+    // the title (no symbols) needs to be diagnosed.
+    let ctx = nativ64::seh::last_fault_context();
+    if !ctx.is_null() {
+        let line = unsafe { nativ64::seh::backtrace_line(ctx as *mut u8, 48) };
+        say(format_args!("{line}\n"));
+    }
+    let recent = crate::stubs::recent_imports();
+    if !recent.is_empty() {
+        say(format_args!(
+            "nativ64: the {} imports before the fault:\n",
+            recent.len()
+        ));
+        for name in recent {
+            say(format_args!("  {name}\n"));
+        }
+    }
     unsafe { libc::_exit(139) }
 }
 

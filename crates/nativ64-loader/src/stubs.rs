@@ -105,14 +105,50 @@ pub fn trace_calls() -> u64 {
     TRACE_CALLS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// The imports called most recently, newest last: what a crash report shows (`--trace-imports`
+/// keeps this even when `NATIV64_TRACE_SILENT` suppresses the per-call lines).
+static RECENT: std::sync::Mutex<std::collections::VecDeque<u32>> =
+    std::sync::Mutex::new(std::collections::VecDeque::new());
+const RECENT_MAX: usize = 64;
+
+/// The last imports called (their names, newest last).
+pub fn recent_imports() -> Vec<String> {
+    let recent = RECENT.lock().unwrap_or_else(|p| p.into_inner());
+    let traced = TRACED.lock().unwrap_or_else(|p| p.into_inner());
+    recent
+        .iter()
+        .map(|&i| {
+            traced
+                .get(i as usize)
+                .cloned()
+                .unwrap_or_else(|| format!("<trace {i}>"))
+        })
+        .collect()
+}
+
+/// True when the per-call lines are wanted (`--trace-imports` without `NATIV64_TRACE_SILENT`).
+fn trace_prints() -> bool {
+    !std::env::var_os("NATIV64_TRACE_SILENT").is_some_and(|v| !v.is_empty() && v != "0")
+}
+
 extern "win64" fn trace_handler(index: u32) {
     TRACE_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let name = match TRACED.try_lock() {
-        Ok(g) => g.get(index as usize).cloned(),
-        Err(std::sync::TryLockError::Poisoned(p)) => p.into_inner().get(index as usize).cloned(),
-        Err(_) => None,
-    };
-    eprintln!("nativ64: call {}", name.as_deref().unwrap_or("<unknown>"));
+    if let Ok(mut recent) = RECENT.try_lock() {
+        if recent.len() == RECENT_MAX {
+            recent.pop_front();
+        }
+        recent.push_back(index);
+    }
+    if trace_prints() {
+        let name = match TRACED.try_lock() {
+            Ok(g) => g.get(index as usize).cloned(),
+            Err(std::sync::TryLockError::Poisoned(p)) => {
+                p.into_inner().get(index as usize).cloned()
+            }
+            Err(_) => None,
+        };
+        eprintln!("nativ64: call {}", name.as_deref().unwrap_or("<unknown>"));
+    }
 }
 
 const TRAMPOLINE_SIZE: usize = 160;
@@ -231,5 +267,27 @@ mod tests {
             unsafe { std::mem::transmute(page.addr(1) as usize) };
         assert_eq!(g(1.0, 2.0, 3.0, 4.0), 1.0 + 4.0 + 9.0 + 16.0);
         assert!(trace_calls() >= before + 2);
+    }
+
+    #[test]
+    fn recent_imports_records_the_last_calls() {
+        let page = TracePage::new(&[
+            ("t!first".into(), sum5 as *const () as usize as u64),
+            ("t!second".into(), scale as *const () as usize as u64),
+        ])
+        .unwrap();
+        let f: extern "win64" fn(u64, u64, u64, u64, u64) -> u64 =
+            unsafe { std::mem::transmute(page.addr(0) as usize) };
+        let g: extern "win64" fn(f64, f64, f64, f64) -> f64 =
+            unsafe { std::mem::transmute(page.addr(1) as usize) };
+        f(0, 0, 0, 0, 0);
+        g(0.0, 0.0, 0.0, 0.0);
+        // Other tests of this module call traced imports in parallel: both names must be in the
+        // ring, not necessarily adjacent to each other.
+        let recent = recent_imports();
+        assert!(recent.iter().any(|n| n == "t!first"));
+        assert!(recent.iter().any(|n| n == "t!second"));
+        // The ring is bounded.
+        assert!(recent.len() <= RECENT_MAX);
     }
 }
