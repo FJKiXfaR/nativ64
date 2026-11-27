@@ -437,6 +437,7 @@ impl<'g> VkBackend<'g> {
                 }
             }
             self.stats.gpu_writes += 1;
+            super::profile::count(super::profile::Count::GpuWrites, 1);
         }
         self.refresh_stats();
         super::profile::stop(super::profile::Phase::Record, tr);

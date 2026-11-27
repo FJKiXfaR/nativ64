@@ -49,13 +49,15 @@ pub(super) enum Count {
     /// Entries of the source lists visited, and descriptors written.
     Visited,
     Written,
+    /// Bottom-of-pipe writes applied to title memory.
+    GpuWrites,
 }
 
 const PHASES: [&str; 11] = [
     "sync", "watch", "hash", "upload", "record", "dump", "image", "descr", "syncrec", "hostup",
     "placedup",
 ];
-const COUNTS: [&str; 11] = [
+const COUNTS: [&str; 12] = [
     "looked",
     "skipped",
     "scan_none",
@@ -67,10 +69,11 @@ const COUNTS: [&str; 11] = [
     "submissions",
     "visited",
     "descr_written",
+    "gpu_writes",
 ];
 
 static NANOS: [AtomicU64; 11] = [const { AtomicU64::new(0) }; 11];
-static COUNT: [AtomicU64; 11] = [const { AtomicU64::new(0) }; 11];
+static COUNT: [AtomicU64; 12] = [const { AtomicU64::new(0) }; 12];
 
 pub(super) fn enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
