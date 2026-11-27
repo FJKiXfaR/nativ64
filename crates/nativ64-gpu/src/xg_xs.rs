@@ -479,6 +479,15 @@ unsafe extern "win64" fn copy_from(
     let Some(len) = linear_len(l, plane, subresource, row_pitch, slice_pitch) else {
         return E_INVALIDARG;
     };
+    if nativ64::api_ms_win_core_memory::has_uncommitted_page(tiled as usize, l.size as usize) {
+        // Reading it would fault in the host: refuse, like a failed copy.
+        eprintln!(
+            "nativ64-gpu: CopyFromSubresource: tiled memory {:#x} (+{:#x}) has uncommitted pages \
+             (plane {plane}, subresource {subresource}, {}x{}x{}, {} mips, mode {:?})",
+            tiled as usize, l.size, l.width, l.height, l.depth_or_array, l.mip_levels, l.mode
+        );
+        return E_INVALIDARG;
+    }
     let tiled = std::slice::from_raw_parts(tiled, l.size as usize);
     let linear = std::slice::from_raw_parts_mut(linear, len);
     match detile(
