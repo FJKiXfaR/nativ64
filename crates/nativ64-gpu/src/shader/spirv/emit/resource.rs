@@ -53,6 +53,9 @@ const KNOWN_FORMATS: &[(u32, &[u32], BufNum)] = &[
     (35, &[16, 16], BufNum::Unorm),
     (49, &[8, 8], BufNum::Unorm),
     (56, &[16], BufNum::Unorm),
+    // R10G10B10A2
+    (24, &[10, 10, 10, 2], BufNum::Unorm),
+    (25, &[10, 10, 10, 2], BufNum::Uint),
 ];
 
 /// Components (bits each) and the numeric convention of an MTBUF format byte.
@@ -81,7 +84,9 @@ fn ufmt(f: u8) -> R<(Vec<u32>, BufNum)> {
     let mut bits = Vec::new();
     for p in parts {
         bits.push(match p {
+            "2" => 2,
             "8" => 8,
+            "10" => 10,
             "16" => 16,
             "32" => 32,
             other => return refuse(&format!("buffer format {name} ({other})")),
@@ -1377,19 +1382,15 @@ impl<'a> Tr<'a> {
         } else {
             ufmt(m.format)?
         };
-        if !runtime {
-            if bits.len() < n {
-                return bad("a buffer format op wider than its format");
-            }
-            if bits.iter().any(|b| b % 8 != 0) {
-                return refuse("a packed buffer format");
-            }
+        if !runtime && bits.len() < n {
+            return bad("a buffer format op wider than its format");
         }
         let elem: u32 = if runtime {
             // the widest format the runtime chain reads
             16
         } else {
-            bits.iter().map(|b| b / 8).sum()
+            // a packed format (2_10_10_10) still covers whole bytes
+            bits.iter().sum::<u32>().div_ceil(8)
         };
         let ns = c.srcs.len();
         if ns < 2 || (load && c.inst.dsts.len() != n) {
@@ -1531,7 +1532,7 @@ impl<'a> Tr<'a> {
                 words[at] = self.g.op(Op::BitwiseOr, tu, &[words[at], raw]);
                 bit += b;
             }
-            let stored: u32 = bits[..n].iter().map(|b| b / 8).sum();
+            let stored: u32 = bits[..n].iter().sum::<u32>().div_ceil(8);
             for (k, &w) in words.iter().enumerate() {
                 let kk = k as u32;
                 let a = self.add_k64(base, u64::from(4 * kk));
