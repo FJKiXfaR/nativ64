@@ -693,19 +693,35 @@ impl<'g> VkBackend<'g> {
                 return None;
             }
         }
-        let ty = self
+        let Some(ty) = self
             .gpu
-            .memory_type(req.memory_type_bits, vk::MemoryPropertyFlags::DEVICE_LOCAL)?;
+            .memory_type(req.memory_type_bits, vk::MemoryPropertyFlags::DEVICE_LOCAL)
+        else {
+            log_once(format!(
+                "no device-local memory type in {:#x} for an image of {} bytes",
+                req.memory_type_bits, req.size
+            ));
+            return None;
+        };
         // SAFETY: a plain allocation; the caller binds or frees it.
-        unsafe {
+        let r = unsafe {
             d.allocate_memory(
                 &vk::MemoryAllocateInfo::default()
                     .allocation_size(req.size)
                     .memory_type_index(ty),
                 None,
             )
+        };
+        match r {
+            Ok(m) => Some(m),
+            Err(e) => {
+                log_once(format!(
+                    "vkAllocateMemory of {} bytes failed: {e}",
+                    req.size
+                ));
+                None
+            }
         }
-        .ok()
     }
 
     /// The counters of the images alive, from the maps.
