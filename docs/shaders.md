@@ -1311,6 +1311,61 @@ it says otherwise.
    * Still without a Vulkan format: DXGI 3, 13, 17, 30, 36, 42, 50, 51, 57, 62, 67, 86, 115, 118
      and a view in format 21 (depth of D32S8). No test yet for the sRGB pipeline variant.
 
+   **Chunk 10c design: compute** (Opus, 2026-11-27, from the first-screen trace and cs
+   1e32f251 of pipeline 51456) **[seen]**: from frame 565 the title dispatches cs 1e32f251
+   once per frame. It is a 3D colour-grading table: RSRC2 `0x138c` (6 user SGPRs, group id
+   x/y/z in s6/s7/s8, no group info, no scratch, 3 thread-id VGPRs), group 8x8x1, LDS 0, one
+   table at user dword 5 read as `s[2:3] = (s5, 0)`; used rows: SRV at table dword 0
+   (`image_load` 2D, `a16`, two texels), UAV at table dword 8 (`image_store` 3D, NSA address
+   `[v0, v1, v6]`, dmask 0xf, at the end), CBVs at table dwords 16 and 24 (`s_buffer_load*`).
+   Its first refusal is `s_load_dwordx4 (chunk 9)` only because a compute blob has no
+   `StageIo` and falls to the probe entry. Corpus: 2718 cs build IR, 693 structure, all 693
+   stop on resources (s_load x4 548, x8 126, other SMEM 9, DS 5). Mesh moves to **10d** (the
+   first screen has none).
+   * **Part 1, translator** (`io.rs`, `spirv/emit/{stage,resource}.rs`):
+     `StageIo::Compute(CsIo)` with `user = 0..user_sgprs()` (from s0: not `ir::user_range`,
+     whose floor of s8 is the VS/PS rule), `tables`, `group`, the SGPR of each enabled group
+     id and the thread-id VGPR count. Entry `GLCompute`, `LocalSize` = group; user SGPR i =
+     `user_data[i]` as for VS/PS; group id x/y/z = `WorkgroupId`; v0..v2 =
+     `LocalInvocationId`; the console lane = `LocalInvocationIndex % 64` (wave64; read the 7a
+     lane model in "Structuring" before wiring it). Refused by name: group info SGPR (bit
+     10), scratch (bit 0), wave32. Resources use the 9a tracing unchanged; the **kind** of a
+     `Loaded` image descriptor is the used row whose table dword × 4 equals the load offset
+     (srv / uav), none = refusal. `image_load` / `image_load_mip`: SRV → `OpImageFetch` on
+     `textures[]` of that dim (Lod 0 or the mip operand), UAV → `OpImageRead` on `images[]`;
+     `image_store` / `image_store_mip` on a UAV → `OpImageWrite` on `images[]`, dmask 0xf only
+     (other masks refused by name). `images[]` (set 0 binding 1) variables per dim, sampled
+     type f32, format `Unknown`, capabilities `StorageImageReadWithoutFormat` /
+     `WriteWithoutFormat`. `a16` on load/store: each address dword holds two u16 coordinates
+     (low half first), zero-extended; `unorm`, `glc`, `slc`, `dlc` ignored on load/store; `d16`,
+     `tfe`, `lwe` refused. NSA addresses as given. DS (`ds_read*`, `ds_write*`, `ds_write2*`,
+     `ds_read2*` b32/b64) → a `Workgroup` u32 array of the record's LDS size (address in bytes
+     + offset, / 4; out of range: write dropped, read 0); `s_barrier` →
+     `OpControlBarrier(Workgroup, Workgroup, AcquireRelease | WorkgroupMemory)`, refused by
+     name under a per-lane branch. Tests: `spirv-val` and real dispatches on lavapipe (the
+     `spirv/gpu.rs` harness): ids written to a root buffer, a 3D `image_store` read back, an
+     `a16` `image_load` of a 2D SRV, LDS through a barrier; cs 1e32f251 translates and
+     validates; corpus report before and after.
+   * **Part 2, backend** (`backend/vk/{pipeline,rootblock,replay,textures,residency}.rs`):
+     compute pipelines from the pipeline's CS (layout = set 0 + set 1 of its static samplers +
+     push constant; cached like graphics); the compute root arguments (`compute: true`) kept
+     apart and turned into the dispatch's root block from the CS's layout table; `Dispatch`
+     binds, pushes, `vkCmdDispatch`, then the global barrier (simple and correct; finer later
+     if a profile asks); skips counted by reason. **UAV views** (`View::Unordered` of a texture
+     resource) → `VkImageView` in binding 1 at the registry index: type from the UAV
+     description (2D, 2D array, 3D with its W range), one mip, format from the view if it has
+     `STORAGE_IMAGE` (an sRGB view takes its UNORM twin, images are `MUTABLE_FORMAT`), else
+     refused with a log; integer-class formats refused too (the shader's variables are f32;
+     upgrade: pick the class per pipeline from the bound views). Images whose resource flags
+     allow unordered access (D3D12 flag 0x4) get `STORAGE` usage when the format supports it.
+     Binding 1 holes: a 1x1 RGBA8 2D storage view. Residency scans dispatches as draws, both
+     bindings. A resource with a UAV view in the ranges a dispatch's CS reads becomes
+     GPU-owned (never re-uploaded). Buffers written by a CS need nothing: title memory through
+     imported host pointers. `Gpu::open` refuses a device without the two formatless storage
+     features (all three drivers here have them). Real validation: the windowed scripted run,
+     frames 565-700 dumped with targets: the 3D table written (not zero), then the intro
+     against what the user saw.
+
 ## Open questions
 
 - Unverified ALU semantics (no hardware data, the table follows the ISA text / LLVM): sign of
