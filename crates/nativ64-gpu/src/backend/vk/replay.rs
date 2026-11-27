@@ -592,7 +592,26 @@ impl<'g> VkBackend<'g> {
             ));
             if lost {
                 self.device_lost = true;
-                gpu.log_device_fault();
+                let named = gpu.log_device_fault();
+                let ranges = self.draw.mem.import_ranges();
+                for pair in named.chunks(2) {
+                    let (addr, precision) = (pair[0], pair.get(1).copied().unwrap_or(0));
+                    for &(start, end, dev) in &ranges {
+                        // the fault address is a device address: find the import whose device
+                        // range holds it (the title range maps to it)
+                        let span = end - start;
+                        if addr >= dev && addr < dev + span {
+                            log_once(format!(
+                                "device fault address {addr:#x} is in the import of title {start:#x}..{end:#x} at device {dev:#x} (+{:#x}, precision {precision:#x})",
+                                addr - dev
+                            ));
+                        } else if addr + precision >= dev && addr < dev + span && precision != 0 {
+                            log_once(format!(
+                                "device fault address {addr:#x} (precision {precision:#x}) touches the import of title {start:#x}..{end:#x} at device {dev:#x}"
+                            ));
+                        }
+                    }
+                }
             }
         }
         self.draw.end();

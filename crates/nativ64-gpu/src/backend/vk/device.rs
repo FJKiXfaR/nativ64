@@ -183,17 +183,19 @@ fn type_rank(t: vk::PhysicalDeviceType) -> u32 {
 }
 
 impl Gpu {
-    /// The fault a lost device reports (`VK_EXT_device_fault`), logged.
-    pub fn log_device_fault(&self) {
+    /// The fault a lost device reports (`VK_EXT_device_fault`), logged; the addresses it names
+    /// are returned so the caller can say which of the imported ranges they fall in.
+    pub fn log_device_fault(&self) -> Vec<u64> {
+        let mut named = Vec::new();
         let Some(f) = self.device_fault else {
-            return;
+            return named;
         };
         let mut counts = vk::DeviceFaultCountsEXT::default();
         // SAFETY: the device exists; a lost device answers this query.
         let r = unsafe { f(self.device.handle(), &mut counts, std::ptr::null_mut()) };
         if r != vk::Result::SUCCESS && r != vk::Result::INCOMPLETE {
             log_once(format!("vkGetDeviceFaultInfoEXT: {r:?}"));
-            return;
+            return named;
         }
         let naddr = counts.address_info_count as usize;
         let nvendor = counts.vendor_info_count as usize;
@@ -213,7 +215,7 @@ impl Gpu {
         let r = unsafe { f(self.device.handle(), &mut counts, &mut info) };
         if r != vk::Result::SUCCESS {
             log_once(format!("vkGetDeviceFaultInfoEXT (filled): {r:?}"));
-            return;
+            return named;
         }
         log_once(format!(
             "device fault: {}",
@@ -221,12 +223,16 @@ impl Gpu {
                 .map(|c| c.to_string_lossy().into_owned())
                 .unwrap_or_default()
         ));
+        let _ = &named;
         for a in &addrs {
             log_once(format!(
                 "device fault address: {:#x} (reported {:#x}, type {:?})",
                 a.reported_address, a.address_precision, a.address_type
             ));
+            named.push(a.reported_address);
+            named.push(a.address_precision);
         }
+        named
     }
 
     /// Open the best device, honouring the `NATIV64_GPU` environment variable.
