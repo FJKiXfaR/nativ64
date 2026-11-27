@@ -70,6 +70,8 @@ pub struct GpuMemory<'g> {
     epoch: u64,
     /// The ranges the last `sync` saw changed (the placed images over them go too).
     changed: Vec<(usize, usize)>,
+    /// The `(start, end)` title ranges of the imports the last `sync` dropped.
+    dropped: Vec<(usize, usize)>,
 }
 
 impl<'g> GpuMemory<'g> {
@@ -82,7 +84,14 @@ impl<'g> GpuMemory<'g> {
             retired: Vec::new(),
             epoch: 0,
             changed: Vec::new(),
+            dropped: Vec::new(),
         }
+    }
+
+    /// The title ranges `(start, end)` of the imports the last `sync` dropped: what was
+    /// translated into them has another device address now.
+    pub fn dropped(&self) -> &[(usize, usize)] {
+        &self.dropped
     }
 
     /// The ranges the last `sync` saw changed.
@@ -101,7 +110,14 @@ impl<'g> GpuMemory<'g> {
     fn retire(&mut self, idle: u64, cap: usize) -> bool {
         let epoch = self.epoch;
         let before = self.imports.len();
-        self.imports.retain(|_, i| epoch - i.used <= idle);
+        let dropped = &mut self.dropped;
+        self.imports.retain(|&s, i| {
+            let keep = epoch - i.used <= idle;
+            if !keep {
+                dropped.push((s, i.end));
+            }
+            keep
+        });
         let mut bytes: usize = self.imports.values().map(|i| i.buffer.len).sum();
         if bytes > cap {
             let mut by_age: Vec<(u64, usize)> =
@@ -113,6 +129,7 @@ impl<'g> GpuMemory<'g> {
                 }
                 if let Some(i) = self.imports.remove(&s) {
                     bytes -= i.buffer.len;
+                    self.dropped.push((s, i.end));
                 }
             }
         }
@@ -135,6 +152,7 @@ impl<'g> GpuMemory<'g> {
     /// Called with the GPU idle. True when anything changed (device addresses may differ now).
     pub fn sync(&mut self) -> bool {
         self.retired.clear();
+        self.dropped.clear();
         self.epoch += 1;
         self.changed = table::take_gpu_changes();
         let mut any = !self.changed.is_empty();
@@ -148,10 +166,15 @@ impl<'g> GpuMemory<'g> {
     }
 
     pub fn forget(&mut self, changes: &[(usize, usize)]) {
+        let dropped = &mut self.dropped;
         self.imports.retain(|&start, i| {
-            !changes
+            let hit = changes
                 .iter()
-                .any(|&(a, n)| a < i.end && start < a.saturating_add(n))
+                .any(|&(a, n)| a < i.end && start < a.saturating_add(n));
+            if hit {
+                dropped.push((start, i.end));
+            }
+            !hit
         });
     }
 

@@ -409,7 +409,8 @@ impl Drop for Bindless<'_> {
 /// What a registry view comes to in the table.
 enum Rec {
     /// A buffer view whose memory translated: the record.
-    Buffer([u8; RECORD]),
+    /// With the title address span it points into.
+    Buffer([u8; RECORD], (u64, u64)),
     /// Kind 0: not a buffer (10b handles images and samplers).
     None,
     /// A buffer view whose memory does not translate (yet).
@@ -427,10 +428,11 @@ fn record_of(view: &View, mem: &mut GpuMemory<'_>) -> Rec {
                 r[0..4].copy_from_slice(&1u32.to_le_bytes());
                 r[4..8].copy_from_slice(&format.to_le_bytes());
                 r[8..16].copy_from_slice(&m.address.to_le_bytes());
+                let len = size.max(1);
                 let size = u32::try_from(size).unwrap_or(u32::MAX);
                 r[16..20].copy_from_slice(&size.to_le_bytes());
                 r[20..24].copy_from_slice(&stride.to_le_bytes());
-                Rec::Buffer(r)
+                Rec::Buffer(r, (address, address.saturating_add(len)))
             }
         },
     }
@@ -536,6 +538,8 @@ pub struct ViewTable<'g> {
     written: usize,
     /// Indices of buffer views whose memory did not translate: tried again.
     retry: Vec<usize>,
+    /// Per index, the title address span its record points into (empty when it has none).
+    spans: Vec<(u64, u64)>,
 }
 
 impl<'g> ViewTable<'g> {
@@ -547,6 +551,7 @@ impl<'g> ViewTable<'g> {
             capacity,
             written: 0,
             retry: Vec::new(),
+            spans: vec![(0, 0); capacity],
         })
     }
 
@@ -555,10 +560,26 @@ impl<'g> ViewTable<'g> {
         self.buf.address
     }
 
-    /// Forget what was written: addresses changed under the records.
-    pub fn reset(&mut self) {
-        self.written = 0;
-        self.retry.clear();
+    /// The records pointing into a dropped import (title ranges `(start, end)`) are written
+    /// again at the next `update`: their addresses changed.
+    pub fn invalidate(&mut self, dropped: &[(usize, usize)]) {
+        if dropped.is_empty() {
+            return;
+        }
+        let mut sorted: Vec<(u64, u64)> =
+            dropped.iter().map(|&(a, b)| (a as u64, b as u64)).collect();
+        sorted.sort_unstable();
+        for index in 0..self.written.min(self.spans.len()) {
+            let (a, b) = self.spans[index];
+            if a >= b {
+                continue;
+            }
+            // the ranges starting before `b`; one of them reaching past `a` overlaps
+            let n = sorted.partition_point(|&(s, _)| s < b);
+            if sorted[..n].iter().any(|&(_, e)| e > a) {
+                self.retry.push(index);
+            }
+        }
     }
 
     fn grow(&mut self, need: usize) -> Result<()> {
@@ -574,7 +595,30 @@ impl<'g> ViewTable<'g> {
         new.write(0, &old);
         self.buf = new;
         self.capacity = capacity;
+        self.spans.resize(capacity, (0, 0));
         Ok(())
+    }
+
+    /// Stores the record of `index`; a record that went (None, memory lost) is zeroed: kind 0.
+    fn put(&mut self, index: usize, rec: Rec) {
+        let had = std::mem::take(&mut self.spans[index]);
+        match rec {
+            Rec::Buffer(r, span) => {
+                self.buf.write(index * RECORD, &r);
+                self.spans[index] = span;
+            }
+            Rec::Retry => {
+                self.retry.push(index);
+                if had.0 < had.1 {
+                    self.buf.write(index * RECORD, &[0u8; RECORD]);
+                }
+            }
+            Rec::None => {
+                if had.0 < had.1 {
+                    self.buf.write(index * RECORD, &[0u8; RECORD]);
+                }
+            }
+        }
     }
 
     /// Writes the records of the views registered since the last call, and retries the ones
@@ -589,24 +633,17 @@ impl<'g> ViewTable<'g> {
             return;
         }
         // views tried before and not translated, then the new ones
-        let again = std::mem::take(&mut self.retry);
+        let mut again = std::mem::take(&mut self.retry);
+        again.sort_unstable();
+        again.dedup();
         for index in again {
-            let v = crate::d3d12::descriptor::views_from(index)
-                .into_iter()
-                .next();
-            match v.as_ref().map_or(Rec::None, |v| record_of(v, mem)) {
-                Rec::Buffer(r) => self.buf.write(index * RECORD, &r),
-                Rec::Retry => self.retry.push(index),
-                Rec::None => {}
-            }
+            let v = crate::d3d12::descriptor::view_at(index);
+            let rec = v.as_ref().map_or(Rec::None, |v| record_of(v, mem));
+            self.put(index, rec);
         }
         for (k, v) in views.iter().enumerate() {
-            let index = first + k;
-            match record_of(v, mem) {
-                Rec::Buffer(r) => self.buf.write(index * RECORD, &r),
-                Rec::Retry => self.retry.push(index),
-                Rec::None => {}
-            }
+            let rec = record_of(v, mem);
+            self.put(first + k, rec);
         }
         self.written = first + views.len();
     }
@@ -749,12 +786,53 @@ mod tests {
         // (the registry is global: other tests' views may be in the list too)
         assert!(table.retry.contains(&index_of(lost)));
         assert!(!table.retry.contains(&index_of(tex)));
-        // a reset rewrites the records (the addresses may have changed)
-        table.reset();
+        // a dropped import rewrites the records into it (the addresses may have changed)
+        mem.forget(&[(base as usize, 1)]);
+        assert!(!mem.dropped().is_empty());
+        table.invalidate(mem.dropped());
+        assert!(table.retry.contains(&index_of(srv)));
+        assert!(table.retry.contains(&index_of(cbv)));
+        assert!(!table.retry.contains(&index_of(tex)));
         table.update(&mut mem);
         assert!(table.retry.contains(&index_of(lost)));
         let r = table.buf.read(index_of(srv) * RECORD, RECORD);
-        assert_eq!(u64_at(&r, 8), first + 32);
+        let again = mem.translate(base, 1).unwrap().address;
+        assert_eq!(u64_at(&r, 8), again + 32);
+    }
+
+    #[test]
+    fn only_records_into_a_dropped_import_are_rewritten() {
+        let Some(g) = gpu_or_skip() else { return };
+        let mut mem = GpuMemory::new(&g);
+        let mut table = ViewTable::new(&g).unwrap();
+        let (a, b) = (title_memory(&[0u8; 4096]), title_memory(&[0u8; 4096]));
+        let (sa, sb) = (
+            Box::leak(Box::new([0u8; 64])),
+            Box::leak(Box::new([0u8; 64])),
+        );
+        let words = |a: u64, size: u32| [a as u32, (a >> 32) as u32, size, 0];
+        // SAFETY: valid descriptions and 64-byte slots.
+        unsafe {
+            create_constant_buffer_view(
+                std::ptr::null_mut(),
+                words(a, 64).as_ptr().cast(),
+                sa.as_mut_ptr() as u64,
+            );
+            create_constant_buffer_view(
+                std::ptr::null_mut(),
+                words(b, 64).as_ptr().cast(),
+                sb.as_mut_ptr() as u64,
+            );
+        }
+        table.update(&mut mem);
+        mem.forget(&[(a as usize, 1)]);
+        table.invalidate(mem.dropped());
+        assert!(table.retry.contains(&index_of(sa)));
+        assert!(!table.retry.contains(&index_of(sb)));
+        // a record whose memory is not translated any more is zeroed, not left stale
+        table.update(&mut mem);
+        let r = table.buf.read(index_of(sa) * RECORD, RECORD);
+        assert_eq!(u64_at(&r, 8), mem.translate(a, 1).unwrap().address);
     }
 
     #[test]

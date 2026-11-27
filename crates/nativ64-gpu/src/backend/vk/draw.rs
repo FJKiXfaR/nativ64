@@ -216,7 +216,7 @@ impl<'g> DrawState<'g> {
     pub(super) fn begin(&mut self, draws: usize) {
         if self.mem.sync() {
             if let Some(v) = &mut self.views {
-                v.reset();
+                v.invalidate(self.mem.dropped());
             }
         }
         self.views_ready = false;
