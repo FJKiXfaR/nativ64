@@ -2798,20 +2798,19 @@ pub(crate) mod stage {
 
     #[test]
     fn chunk_9b_operations_stay_unsupported_by_name() {
-        for (line, name) in [(
+        let (line, name) = (
             "image_sample_b v[4:7], v[2:4], s[0:7], s[12:15] dmask:0xf dim:SQ_RSRC_IMG_2D",
             "image_sample_b",
-        )] {
-            let pre = [
-                "s_mov_b32 s9, 0",
-                "s_load_dwordx8 s[0:7], s[8:9], 0x20",
-                "s_load_dwordx4 s[12:15], s[8:9], 0x40",
-            ];
-            let lines = ps_after(&pre, &[line]);
-            let (chunk, op) = refused(&ps_tables(&lines));
-            assert_eq!(chunk, 9, "{line}");
-            assert!(op.contains(name), "{line}: {op}");
-        }
+        );
+        let pre = [
+            "s_mov_b32 s9, 0",
+            "s_load_dwordx8 s[0:7], s[8:9], 0x20",
+            "s_load_dwordx4 s[12:15], s[8:9], 0x40",
+        ];
+        let lines = ps_after(&pre, &[line]);
+        let (chunk, op) = refused(&ps_tables(&lines));
+        assert_eq!(chunk, 9, "{line}");
+        assert!(op.contains(name), "{line}: {op}");
     }
 
     #[test]
