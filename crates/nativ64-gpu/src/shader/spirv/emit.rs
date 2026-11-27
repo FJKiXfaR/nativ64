@@ -619,9 +619,9 @@ impl Tr<'_> {
         let p = self.g.t_ptr(StorageClass::StorageBuffer, tu);
         let zero = self.g.k(0);
         let ptr = self.g.op(Op::AccessChain, p, &[var, zero, zero]);
-        // Device scope, relaxed, plus one
-        let (scope, relaxed, one) = (self.g.k(1), self.g.k(0), self.g.k(1));
-        self.g.op(Op::AtomicIAdd, tu, &[ptr, scope, relaxed, one]);
+        // Device scope, relaxed
+        let (scope, relaxed) = (self.g.k(1), self.g.k(0));
+        self.g.op(Op::AtomicIAdd, tu, &[ptr, scope, relaxed, inc]);
     }
 }
 
