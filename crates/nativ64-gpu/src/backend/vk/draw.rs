@@ -513,7 +513,10 @@ impl<'g> VkBackend<'g> {
                     } else {
                         "NOT bound (hole)"
                     };
-                    let entry = format!("{bound}; {}", self.tex.describe_entry(index as usize));
+                    let entry = format!(
+                        "index {index} {bound}; {}",
+                        self.tex.describe_entry(index as usize)
+                    );
                     if entry == "hole" {
                         // the reason a hole: the registered view, to name its resource
                         match crate::d3d12::descriptor::view_at(index as usize) {
