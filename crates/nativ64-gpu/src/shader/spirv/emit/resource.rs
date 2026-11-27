@@ -1764,6 +1764,59 @@ impl<'a> Tr<'a> {
         Ok(si)
     }
 
+    /// `image_get_resinfo`: width, height, depth or layers and the level count of the level
+    /// the address names (a channel the dmask leaves out reads 1).
+    fn image_resinfo(&mut self, c: &Ctx<Gen>) -> R<Option<Vec<Opd<Gen>>>> {
+        let i = &c.inst.instr;
+        let m = i.img;
+        let Some((dim, _arrayed, _ncoord)) = Self::image_dim(m.dim) else {
+            return refuse(&format!("image_get_resinfo on dimension {}", m.dim));
+        };
+        let ns = c.srcs.len();
+        if ns < 2 {
+            return bad("image_get_resinfo without its operands");
+        }
+        let addr = &c.srcs[ns - 2];
+        if addr.is_empty() {
+            return bad("image_get_resinfo without its level");
+        }
+        let rsrc = &c.inst.srcs[ns - 1];
+        let loaded = |t: &mut Self, s: Option<&Src>| matches!(s, Some(Src::Val(v)) if t.res().analysis.loaded.contains(v));
+        if !loaded(self, rsrc.first()) {
+            return refuse("image_get_resinfo of an image that is not loaded from a table");
+        }
+        let (tex, img) = self.texture_array(m.dim);
+        let index = self.bits_of(c.srcs[ns - 1][0]);
+        self.non_uniform(index);
+        let image = self.array_element(tex, img, index);
+        let mip = self.bits_of(addr[0]);
+        self.g.m.capability(Capability::ImageQuery);
+        let tu = self.g.t_u32();
+        let ncomp = if dim == 1 { 2 } else { 3 };
+        let size_ty = self.g.m.global(Op::TypeVector, None, &[tu, ncomp]);
+        let size = self.g.op(Op::ImageQuerySizeLod, size_ty, &[image, mip]);
+        let levels = self.g.op(Op::ImageQueryLevels, tu, &[image]);
+        let one = self.g.k(1);
+        let chans: Vec<u32> = (0..4).filter(|ch| m.dmask >> ch & 1 != 0).collect();
+        if chans.len() != c.inst.dsts.len() {
+            return bad("image_get_resinfo whose results do not match its dmask");
+        }
+        let mut out = Vec::new();
+        for (j, ch) in chans.into_iter().enumerate() {
+            let v = match ch {
+                0 | 1 => {
+                    let x = self.g.op(Op::CompositeExtract, tu, &[size, ch]);
+                    x
+                }
+                2 if ncomp == 3 => self.g.op(Op::CompositeExtract, tu, &[size, 2]),
+                2 => one,
+                _ => levels,
+            };
+            out.push(self.lane_result(c, j, v));
+        }
+        Ok(Some(out))
+    }
+
     /// `image_gather4_lz`: four texels at LOD 0 of the channel a dmask bit selects (four dwords
     /// per channel) with `OpImageGather`.
     fn image_gather(&mut self, c: &Ctx<Gen>) -> R<Option<Vec<Opd<Gen>>>> {
@@ -1833,6 +1886,9 @@ impl<'a> Tr<'a> {
     fn image_sample(&mut self, c: &Ctx<Gen>) -> R<Option<Vec<Opd<Gen>>>> {
         let i = &c.inst.instr;
         let name = i.name();
+        if name == "image_get_resinfo" {
+            return self.image_resinfo(c);
+        }
         if name.starts_with("image_gather4") {
             return self.image_gather(c);
         }
