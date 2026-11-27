@@ -247,6 +247,27 @@ mod tests {
     }
 
     #[test]
+    fn the_single_and_two_channel_families_follow_the_dxgi_numbering() {
+        // The DXGI values (dxgiformat.h): a typeless form first, then the typed ones.
+        assert_eq!(lookup(60, 0).unwrap().format, vk::Format::R8_UNORM); // R8_TYPELESS
+        assert_eq!(lookup(61, 0).unwrap().format, vk::Format::R8_UNORM);
+        assert_eq!(lookup(62, 0).unwrap().format, vk::Format::R8_UINT);
+        assert_eq!(lookup(63, 0).unwrap().format, vk::Format::R8_SNORM);
+        assert_eq!(lookup(64, 0).unwrap().format, vk::Format::R8_SINT);
+        // 65 is A8_UNORM: an R8 image whose views swizzle red into alpha.
+        assert_eq!(lookup(65, 0).unwrap().format, vk::Format::R8_UNORM);
+        assert_eq!(lookup(48, 0).unwrap().format, vk::Format::R8G8_UNORM); // typeless
+        assert_eq!(lookup(49, 0).unwrap().format, vk::Format::R8G8_UNORM);
+        assert_eq!(lookup(50, 0).unwrap().format, vk::Format::R8G8_UINT);
+        assert_eq!(lookup(51, 0).unwrap().format, vk::Format::R8G8_SNORM);
+        assert_eq!(lookup(52, 0).unwrap().format, vk::Format::R8G8_SINT);
+        assert_eq!(lookup(56, 0).unwrap().format, vk::Format::R16_UNORM); // typeless
+        assert_eq!(lookup(57, 0).unwrap().format, vk::Format::R16_UINT);
+        assert_eq!(lookup(58, 0).unwrap().format, vk::Format::R16_SNORM);
+        assert_eq!(lookup(59, 0).unwrap().format, vk::Format::R16_SINT);
+    }
+
+    #[test]
     fn common_formats() {
         let f = lookup(28, FLAG_RENDER_TARGET).unwrap();
         assert_eq!(f.format, vk::Format::R8G8B8A8_UNORM);
