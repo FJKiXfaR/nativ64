@@ -756,10 +756,23 @@ impl<'a> Tr<'a> {
                     .get(e.target as usize)
                     .copied()
                     .unwrap_or(Class::Float);
+                let a8 = ps.a8.get(e.target as usize).copied().unwrap_or(false);
                 let var = self.out_var(u32::from(e.target), class);
                 self.guarded(c.active, |t| {
                     let ty = t.scalar(class);
                     for &(ch, bits) in &chans {
+                        // A8 is stored as R8: the exported alpha is the stored value, in red
+                        // (and stays in alpha for the blend factors that read it).
+                        let ch = if a8 && ch == 3 {
+                            let p = t.out_chan(var, ty, 0);
+                            let x = t.typed_from_bits(class, bits);
+                            t.g.store(p, x);
+                            3
+                        } else if a8 {
+                            continue;
+                        } else {
+                            ch
+                        };
                         let p = t.out_chan(var, ty, ch);
                         let x = t.typed_from_bits(class, bits);
                         t.g.store(p, x);
