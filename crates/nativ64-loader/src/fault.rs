@@ -71,10 +71,10 @@ pub fn location(rip: u64) -> String {
 static HOST_BASE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// The process's mappings, readable from the signal handler (one read, no allocation).
-struct MapsCell(std::cell::UnsafeCell<[u8; 262144]>);
+struct MapsCell(std::cell::UnsafeCell<[u8; 1048576]>);
 // SAFETY: only the signal handler and the reader below touch it, and a crash ends the process.
 unsafe impl Sync for MapsCell {}
-static MAPS: MapsCell = MapsCell(std::cell::UnsafeCell::new([0; 262144]));
+static MAPS: MapsCell = MapsCell(std::cell::UnsafeCell::new([0; 1048576]));
 static MAPS_LEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Reads `/proc/self/maps` into [`MAPS`] (open/read only: safe in a signal handler).
@@ -178,16 +178,28 @@ fn say_host_backtrace() {
     // SAFETY: `buf` is a valid array of pointers; `backtrace` is glibc's.
     let n = unsafe { libc::backtrace(buf.as_mut_ptr(), buf.len() as libc::c_int) };
     say(format_args!("nativ64: host stack ({n} frames):"));
+    let base = HOST_BASE.load(Ordering::Relaxed);
     for frame in buf.iter().take(n as usize) {
         let addr = *frame as u64;
         if let Some((start, off, path)) = mapping_of(addr) {
             let k = path.iter().position(|&b| b == 0).unwrap_or(path.len());
             let file = String::from_utf8_lossy(&path[..k]).into_owned();
             say(format_args!(" {file}+{:#x}", addr - start + off));
+        } else if base != 0 && addr >= base && addr - base < (16 << 20) {
+            say(format_args!(" nativ64+{:#x}", addr - base));
         } else {
             say(format_args!(" {addr:#x}"));
         }
     }
+    say(format_args!(
+        "\n (maps {} bytes{})",
+        MAPS_LEN.load(Ordering::Relaxed),
+        if MAPS_LEN.load(Ordering::Relaxed) >= 1048576 {
+            ", truncated"
+        } else {
+            ""
+        }
+    ));
     say(format_args!("\n"));
 }
 

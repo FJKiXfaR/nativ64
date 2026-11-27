@@ -1832,6 +1832,11 @@ impl<'a> Tr<'a> {
         if dim != 1 {
             return refuse(&format!("{name} on a non-2D image"));
         }
+        if !matches!(self.io(), StageIo::Pixel(_)) {
+            // `OpImageGather` takes its LOD implicitly, which needs a pixel program's quad
+            // derivatives (a compute program has none)
+            return refuse(&format!("{name} outside a pixel program"));
+        }
         let ns = c.srcs.len();
         if ns < 3 || c.srcs[ns - 2].len() < 8 || c.srcs[ns - 1].len() < 4 {
             return bad("a gather whose operands do not match its form");
@@ -1848,29 +1853,28 @@ impl<'a> Tr<'a> {
             return bad("a gather whose results do not match its dmask");
         }
         let si = self.sampled_image(c)?;
-        let ti = self.g.m.global(Op::TypeInt, None, &[32, 1]);
-        let coord = if addr.len() == 1 {
-            let bits = self.bits_of(addr[0]);
-            self.g.op(Op::Bitcast, ti, &[bits])
+        // the coordinates are floats (the console keeps them as dwords)
+        let tf = self.g.t_f32();
+        let mut cs = Vec::new();
+        for &a in addr {
+            let bits = self.bits_of(a);
+            cs.push(self.g.as_f32(bits));
+        }
+        let coord = if cs.len() == 1 {
+            cs[0]
         } else {
-            let mut cs = Vec::new();
-            for &a in addr {
-                let bits = self.bits_of(a);
-                cs.push(self.g.op(Op::Bitcast, ti, &[bits]));
-            }
             let tv = self
                 .g
                 .m
-                .global(Op::TypeVector, None, &[ti, cs.len() as u32]);
+                .global(Op::TypeVector, None, &[tf, cs.len() as u32]);
             self.g.op(Op::CompositeConstruct, tv, &cs)
         };
         let v4 = self.vec4(Class::Float);
         let tf = self.g.t_f32();
-        let lod = self.g.fconst(0.0);
         let mut out = Vec::new();
         for (j, ch) in chans.into_iter().enumerate() {
             let ch = self.g.k(ch);
-            let res = self.g.op(Op::ImageGather, v4, &[si, coord, ch, 2, lod]);
+            let res = self.g.op(Op::ImageGather, v4, &[si, coord, ch]);
             for k in 0..4 {
                 let x = self.g.op(Op::CompositeExtract, tf, &[res, k]);
                 let bits = self.g.as_bits(x);

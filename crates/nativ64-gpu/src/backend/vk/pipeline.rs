@@ -102,6 +102,13 @@ impl<'g> Pipelines<'g> {
             // The first use of a pipeline translates and creates it; one that takes most of a
             // second is what a frame's stall is made of, so name it.
             let started = std::time::Instant::now();
+            if std::env::var_os("NATIV64_PIPELINE_TRACE").is_some() {
+                let bytes: usize = pd.stages.iter().map(|s| s.bytes.len()).sum();
+                eprintln!(
+                    "nativ64-gpu: building pipeline {} ({bytes} shader bytes, rect {rect})",
+                    pd.serial
+                );
+            }
             let outcome = match build(gpu, bindless, samplers, pd, rect, formats) {
                 Ok(b) => Outcome::Built(b),
                 Err(why) => {

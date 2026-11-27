@@ -79,6 +79,8 @@ pub struct Gen {
     locals: Vec<u32>,
     terminated: bool,
     glsl: u32,
+    /// The type of every value id this builder made (for the operators that need it).
+    types: std::collections::HashMap<u32, u32>,
     /// Builtin variables made here, by builtin: the entry point must list them.
     builtins: std::collections::HashMap<u32, u32>,
     /// Builtin variables to add to the entry point's interface.
@@ -101,6 +103,7 @@ impl Gen {
             locals: Vec::new(),
             terminated: false,
             glsl,
+            types: std::collections::HashMap::new(),
             builtins: std::collections::HashMap::new(),
             extra_iface: Vec::new(),
         }
@@ -157,6 +160,20 @@ impl Gen {
         let mut ops = vec![ty, id];
         ops.extend_from_slice(operands);
         self.body.extend(inst(op, &ops));
+        // a result type is not a value; the operators that name it are the arithmetic ones
+        if !matches!(
+            op,
+            Op::TypeInt
+                | Op::TypeFloat
+                | Op::TypeBool
+                | Op::TypeVector
+                | Op::TypeArray
+                | Op::TypeRuntimeArray
+                | Op::TypeStruct
+                | Op::TypePointer
+        ) {
+            self.types.insert(id, ty);
+        }
         id
     }
 
@@ -189,7 +206,9 @@ impl Gen {
 
     fn fconst(&mut self, x: f32) -> u32 {
         let t = self.t_f32();
-        self.m.global(Op::Constant, Some(t), &[x.to_bits()])
+        let id = self.m.global(Op::Constant, Some(t), &[x.to_bits()]);
+        self.types.insert(id, t);
+        id
     }
 
     fn load(&mut self, ty: u32, ptr: u32) -> u32 {
@@ -238,12 +257,8 @@ impl Backend for Gen {
         let tv4 = self.m.global(Op::TypeVector, None, &[t, 4]);
         let one = self.kb(true);
         let ballot = self.op(Op::GroupNonUniformBallot, tv4, &[scope, one]);
-        let reduce = self.k(0);
-        self.op(
-            Op::GroupNonUniformBallotBitCount,
-            t,
-            &[scope, reduce, ballot],
-        )
+        // the group operation (Reduce) is an immediate operand after the scope
+        self.op(Op::GroupNonUniformBallotBitCount, t, &[scope, 0, ballot])
     }
 
     fn active_first(&mut self) -> u32 {
@@ -277,12 +292,14 @@ impl Backend for Gen {
 
     fn k(&mut self, x: u32) -> u32 {
         let t = self.t_u32();
-        self.m.global(Op::Constant, Some(t), &[x])
+        let id = self.m.global(Op::Constant, Some(t), &[x]);
+        self.types.insert(id, t);
+        id
     }
 
     fn kb(&mut self, x: bool) -> u32 {
         let t = self.t_bool();
-        self.m.global(
+        let id = self.m.global(
             if x {
                 Op::ConstantTrue
             } else {
@@ -290,7 +307,9 @@ impl Backend for Gen {
             },
             Some(t),
             &[],
-        )
+        );
+        self.types.insert(id, t);
+        id
     }
 
     fn ibin(&mut self, op: IBin, a: u32, b: u32) -> u32 {
@@ -480,7 +499,19 @@ impl Backend for Gen {
     }
 
     fn select(&mut self, c: u32, a: u32, b: u32) -> u32 {
-        let t = self.t_u32();
+        let ta = self.types.get(&a).copied();
+        let tb = self.types.get(&b).copied();
+        let t = ta.unwrap_or_else(|| self.t_u32());
+        // the two values can be the same dwords under a different (signed / unsigned, integer
+        // / float) type: a bit cast makes them agree with the result type
+        let b = match tb {
+            Some(tb) if tb != t => self.op(Op::Bitcast, t, &[b]),
+            _ => b,
+        };
+        let a = match ta {
+            Some(ta) if ta != t => self.op(Op::Bitcast, t, &[a]),
+            _ => a,
+        };
         self.op(Op::Select, t, &[c, a, b])
     }
 
