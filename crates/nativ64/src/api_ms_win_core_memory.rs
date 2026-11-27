@@ -788,8 +788,12 @@ mod tests {
             assert!(VirtualAlloc(p, 0x1000, MEM_RESERVE, RW).is_null());
             assert_eq!(err(), ERROR_INVALID_ADDRESS);
             // reserve at an address: rounded down to the granularity
-            let q = VirtualAlloc(0x6000_0001_3000, 0x1000, MEM_RESERVE | MEM_COMMIT, RW) as usize;
-            assert_eq!(q, 0x6000_0001_0000);
+            // The spot comes from a throwaway reservation: a hard-coded one can sit inside
+            // what a sanitizer reserves for itself (ThreadSanitizer's shadow), where it fails.
+            let spot = VirtualAlloc(0, 0x2_0000, MEM_RESERVE, RW) as usize;
+            assert_eq!(VirtualFree(spot, 0, MEM_RELEASE), 1);
+            let q = VirtualAlloc(spot + 0x3000, 0x1000, MEM_RESERVE | MEM_COMMIT, RW) as usize;
+            assert_eq!(q, spot);
             assert_eq!(VirtualFree(q, 0, MEM_RELEASE), 1);
             assert_eq!(VirtualFree(p, 0, MEM_RELEASE), 1);
         }

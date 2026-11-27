@@ -128,6 +128,41 @@ pub(super) struct Staging {
     memory: vk::DeviceMemory,
 }
 
+fn status_mib(key: &str) -> u64 {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|t| {
+            t.lines().find_map(|l| {
+                l.strip_prefix(key)?
+                    .trim()
+                    .trim_end_matches("kB")
+                    .trim()
+                    .parse::<u64>()
+                    .ok()
+            })
+        })
+        .unwrap_or(0)
+        >> 10
+}
+
+/// The host memory of the process, for the memory line: anonymous and shared (memfd) resident
+/// sizes, the pool's pages held by the title against what its file really holds, and what
+/// returning the allocator's free pages to the system gave back (`malloc_trim`).
+fn host_memory_note() -> String {
+    let before = status_mib("RssAnon:");
+    // SAFETY: plain glibc call; nothing else reads the arenas' free memory.
+    unsafe { libc::malloc_trim(0) };
+    let after = status_mib("RssAnon:");
+    let (held, file) = crate::xmem::pool_usage();
+    format!(
+        "host: anon {after} MiB (trim freed {} MiB), shmem {} MiB, xmem pages {} MiB, xmem file {} MiB",
+        before.saturating_sub(after),
+        status_mib("RssShmem:"),
+        held >> 20,
+        file >> 20
+    )
+}
+
 /// Frees staging buffers whose submission has completed (or failed before using them).
 fn free_staging(gpu: &Gpu, staging: Vec<Staging>) {
     for s in staging {
@@ -323,56 +358,58 @@ pub(super) fn stage_bytes(g: &Gpu, data: &[u8], staging: &mut Vec<Staging>) -> R
 /// The title's hang watchdog progress counter (`sub_1422159F0` writes `QueryPerformanceCounter`
 /// values to this VA; `sub_142215A60` fails the title after ~30 s without a change). A
 /// synchronous replay that runs for a long time here is slow, not hung, so while one runs a
-/// helper thread keeps the counter moving; `NATIV64_WATCHDOG_POKE=0` turns that off.
+/// helper thread keeps the counter moving; `NATIV64_WATCHDOG_POKE=1` turns that on (off by
+/// default: with the watchdog thread patched out it is not needed).
 const WATCHDOG_COUNTER_VA: usize = 0x1471_B6338;
 
-struct WatchdogPoke {
-    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    thread: Option<std::thread::JoinHandle<()>>,
+static POKE_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static POKE_STARTED: std::sync::Once = std::sync::Once::new();
+
+/// A `QueryPerformanceCounter`-like value (our implementation reports monotonic nanoseconds).
+fn qpc_now() -> u64 {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `ts` is ours and CLOCK_MONOTONIC is valid.
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+    ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
 }
+
+/// A once-per-process thread that writes the progress counter while a replay runs. It is not
+/// joined (one sleeping thread for the process); `WatchdogPoke` only flips the flag, so an
+/// execute never waits for it.
+struct WatchdogPoke;
 
 impl WatchdogPoke {
     fn start() -> Self {
-        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let off = std::env::var("NATIV64_WATCHDOG_POKE").is_ok_and(|v| v == "0");
-        let address = if off {
-            None
-        } else {
-            nativ64::process::image_base_of(WATCHDOG_COUNTER_VA)
-                .map(|base| base + WATCHDOG_COUNTER_VA - 0x1_4000_0000)
+        if std::env::var("NATIV64_WATCHDOG_POKE").map_or(true, |v| v == "0") {
+            return WatchdogPoke;
+        }
+        let Some(address) = nativ64::process::image_base_of(WATCHDOG_COUNTER_VA)
+            .map(|base| base + WATCHDOG_COUNTER_VA - 0x1_4000_0000)
+        else {
+            return WatchdogPoke;
         };
-        let Some(address) = address else {
-            return WatchdogPoke { stop, thread: None };
-        };
-        let stop2 = stop.clone();
-        let thread = std::thread::spawn(move || {
-            while !stop2.load(std::sync::atomic::Ordering::Relaxed) {
-                std::thread::sleep(std::time::Duration::from_secs(1));
-                if stop2.load(std::sync::atomic::Ordering::Relaxed) {
-                    break;
+        POKE_STARTED.call_once(move || {
+            std::thread::spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_millis(250));
+                if !POKE_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
+                    continue;
                 }
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_nanos() as u64)
-                    .unwrap_or(0);
                 // SAFETY: the counter is the title image's own .data (mapped and writable); an
                 // 8-byte aligned store is atomic for the title's readers.
-                unsafe { (address as *mut u64).write_volatile(now) };
-            }
+                unsafe { (address as *mut u64).write_volatile(qpc_now()) };
+            });
         });
-        WatchdogPoke {
-            stop,
-            thread: Some(thread),
-        }
+        POKE_ACTIVE.store(true, std::sync::atomic::Ordering::Relaxed);
+        WatchdogPoke
     }
 }
 
 impl Drop for WatchdogPoke {
     fn drop(&mut self) {
-        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
-        if let Some(t) = self.thread.take() {
-            let _ = t.join();
-        }
+        POKE_ACTIVE.store(false, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -415,6 +452,8 @@ impl<'g> VkBackend<'g> {
             })
             .count();
         self.draw.begin(draws);
+        let changed = self.draw.mem.changed().to_vec();
+        self.drop_placed_over(&changed);
         // A submission that takes seconds is what starves the title's frame loop (its watchdog
         // fails after ~30 s without progress): name it with its sizes.
         let started = std::time::Instant::now();
@@ -797,12 +836,13 @@ impl<'g> VkBackend<'g> {
     /// A line of memory counters (every 600 frames, and with `NATIV64_PROFILE`).
     pub(super) fn memory_line(&mut self) -> String {
         self.refresh_stats();
+        let host = host_memory_note();
         let keys = self.tex.placed_keys();
         let addresses = keys.iter().map(|k| k.0).collect::<HashSet<_>>().len();
         let s = &self.stats;
         format!(
             "nativ64-gpu: frame {}: images {} ({} MiB), placed {} ({} MiB), arena {} KiB, \
-             released {}, evictions {}, wanted {}, placed keys {} over {} addresses",
+             released {}, evictions {}, wanted {}, placed keys {} over {} addresses; {host}",
             self.frames,
             s.images,
             s.image_bytes >> 20,

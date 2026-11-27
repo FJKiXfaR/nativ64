@@ -130,38 +130,52 @@ mod tests {
         );
     }
 
+    /// A 64 KiB-aligned address nothing is mapped at. A fixed fake one can fall inside what a
+    /// sanitizer reserves for itself (ThreadSanitizer's shadow), where `mincore` reports it
+    /// mapped and reading the fake image header faults.
+    fn unmapped_base() -> usize {
+        // SAFETY: maps and unmaps an anonymous range of our own.
+        unsafe {
+            let size = 0x4_0000;
+            let p = libc::mmap(
+                std::ptr::null_mut(),
+                size,
+                libc::PROT_NONE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
+                -1,
+                0,
+            );
+            assert_ne!(p, libc::MAP_FAILED);
+            libc::munmap(p, size);
+            (p as usize + 0xffff) & !0xffff
+        }
+    }
+
     #[test]
     fn finds_the_image_of_an_address() {
-        register_image_range(0x7000_0000_0000, 0x1000);
-        register_image_range(0x7000_0001_0000, 0x2000);
+        let b0 = unmapped_base();
+        register_image_range(b0, 0x1000);
+        register_image_range(b0 + 0x1_0000, 0x2000);
         unsafe {
             let mut b = 1usize;
-            assert_eq!(
-                RtlPcToFileHeader(0x7000_0000_0000, &mut b),
-                0x7000_0000_0000
-            );
-            assert_eq!(b, 0x7000_0000_0000);
-            assert_eq!(
-                RtlPcToFileHeader(0x7000_0001_1fff, &mut b),
-                0x7000_0001_0000
-            );
-            assert_eq!(b, 0x7000_0001_0000);
+            assert_eq!(RtlPcToFileHeader(b0, &mut b), b0);
+            assert_eq!(b, b0);
+            assert_eq!(RtlPcToFileHeader(b0 + 0x1_1fff, &mut b), b0 + 0x1_0000);
+            assert_eq!(b, b0 + 0x1_0000);
         }
     }
 
     #[test]
     fn address_outside_every_image() {
-        register_image_range(0x7000_0000_0000, 0x1000);
+        let b0 = unmapped_base();
+        register_image_range(b0, 0x1000);
         unsafe {
             let mut b = 1usize;
-            assert_eq!(RtlPcToFileHeader(0x7000_0000_1000, &mut b), 0);
+            assert_eq!(RtlPcToFileHeader(b0 + 0x1000, &mut b), 0);
             assert_eq!(b, 0);
             assert_eq!(RtlPcToFileHeader(0x10, &mut b), 0);
             // NULL out pointer is allowed
-            assert_eq!(
-                RtlPcToFileHeader(0x7000_0000_0800, std::ptr::null_mut()),
-                0x7000_0000_0000
-            );
+            assert_eq!(RtlPcToFileHeader(b0 + 0x800, std::ptr::null_mut()), b0);
         }
     }
 }
