@@ -2508,7 +2508,7 @@ impl<'a> Tr<'a> {
         if i.mem.seg == 1 {
             return refuse(&format!("{name} on scratch"));
         }
-        let (spirv_op, operand) = match op {
+        let (spirv_op, _operand) = match op {
             "add" => (Op::AtomicIAdd, true),
             "sub" => (Op::AtomicISub, true),
             "smin" => (Op::AtomicSMin, true),
