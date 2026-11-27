@@ -164,6 +164,18 @@ impl TexState {
 pub(super) const UPLOAD_CAP: u64 = 256 << 20;
 
 impl TexState {
+    /// A one-line description of the entry at sampled index `i` (a diagnostic).
+    pub(super) fn describe_entry(&self, i: usize) -> String {
+        match self.entries.get(i) {
+            None => "unregistered".to_owned(),
+            Some(Entry::Hole) => "hole".to_owned(),
+            Some(Entry::Texture { res, desc }) => format!("texture {res:#x} {desc:x?}"),
+            Some(Entry::Storage { res, .. }) => format!("storage {res:#x}"),
+            Some(Entry::Placed { key, desc }) => format!("placed {key:?} {desc:x?}"),
+            Some(Entry::Sampler(_)) => "sampler".to_owned(),
+        }
+    }
+
     /// The keys of the placed views registered so far.
     pub(super) fn placed_keys(&self) -> Vec<PlacedKey> {
         self.by_placed.keys().copied().collect()
@@ -1208,6 +1220,33 @@ impl<'g> VkBackend<'g> {
         }
     }
 
+    /// `NATIV64_HOLE_LIST=1`: every so many submissions, list the sampled-descriptor slots that
+    /// hold no view (the stand-in) - the indices content that samples a missing texture names.
+    fn log_hole_list(&self, count: usize) {
+        static TICKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        if std::env::var("NATIV64_HOLE_LIST")
+            .ok()
+            .is_none_or(|v| v.is_empty())
+        {
+            return;
+        }
+        let n = TICKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if !n.is_multiple_of(300) {
+            return;
+        }
+        let mut holes = Vec::new();
+        for i in 0..count {
+            if matches!(self.tex.entries.get(i), None | Some(Entry::Hole)) {
+                holes.push(i);
+            }
+        }
+        log_once(format!(
+            "hole list: {} empty sampled slots of {count} (first 48: {:?})",
+            holes.len(),
+            &holes[..holes.len().min(48)]
+        ));
+    }
+
     /// The first step of a submission with draws: see the module documentation.
     pub(super) fn sync_textures(
         &mut self,
@@ -1218,6 +1257,7 @@ impl<'g> VkBackend<'g> {
         let Some(count) = self.draw.bindless().map(|b| b.count as usize) else {
             return;
         };
+        self.log_hole_list(count);
         // 1. the registry entries added since the last time
         let new = views_from(self.tex.scanned);
         for v in &new {

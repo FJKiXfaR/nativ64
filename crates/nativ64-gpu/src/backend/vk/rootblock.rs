@@ -48,6 +48,16 @@ pub struct RootArgs {
 }
 
 impl RootArgs {
+    /// The start address of the bound resource heap (0 when none is bound).
+    pub(super) fn resource_heap(&self) -> u64 {
+        self.resource_heap
+    }
+
+    /// The descriptor table bound at root parameter `slot` (0 when unset).
+    pub(super) fn table(&self, slot: u32) -> u64 {
+        self.tables.get(&slot).copied().unwrap_or(0)
+    }
+
     /// The arguments of the compute root signature.
     pub fn compute() -> Self {
         RootArgs {

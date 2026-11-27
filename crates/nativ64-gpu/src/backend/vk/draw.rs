@@ -442,6 +442,57 @@ impl<'g> VkBackend<'g> {
     }
 
     /// Records a `Draw` or `DrawIndexed`.
+    /// `NATIV64_DRAW_ROWS=<pipeline serial>`: once per dumped frame, describe the descriptor
+    /// table rows of that pipeline's draw and the view registry entry each one names - which
+    /// is how a slot nothing fills is told apart from a missing texture.
+    fn log_rows_once(
+        &mut self,
+        pd: &crate::d3d12::pipeline::PipelineData,
+        built: &super::pipeline::Built,
+    ) {
+        use std::sync::Mutex;
+        static LAST: Mutex<u64> = Mutex::new(u64::MAX);
+        let Ok(want) = std::env::var("NATIV64_DRAW_ROWS") else {
+            return;
+        };
+        let Ok(serial) = want.parse::<u32>() else {
+            return;
+        };
+        if pd.serial != u64::from(serial) || !super::present::dump_wanted(self.frames + 1) {
+            return;
+        }
+        let frame = self.frames + 1;
+        {
+            let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+            if *last == frame {
+                return;
+            }
+            *last = frame;
+        }
+        let heap = self.draw.list.root.resource_heap();
+        for row in &built.rows {
+            if !matches!(row.root_type, 3 | 5) {
+                continue;
+            }
+            let addr = if row.root_type == 5 {
+                heap
+            } else {
+                self.draw.list.root.table(row.root_slot as u32)
+            };
+            let index = addr
+                .saturating_sub(heap)
+                .saturating_div(32)
+                .saturating_add(u64::from(row.table_offset) / 8);
+            super::log_once(format!(
+                "draw rows: pipeline {serial} row root_type {} slot {} table_offset {} addr {addr:#x} heap {heap:#x} -> index {index} is {}",
+                row.root_type,
+                row.root_slot,
+                row.table_offset,
+                self.tex.describe_entry(index as usize),
+            ));
+        }
+    }
+
     pub(super) fn draw_command(&mut self, d: &Device, cb: vk::CommandBuffer, c: &Command) {
         match self.try_draw(d, cb, c, &[]) {
             Ok(()) => {
@@ -763,6 +814,7 @@ impl<'g> VkBackend<'g> {
         if self.inspecting() {
             self.inspect_draw(c, pd, &resources, extent, rects);
         }
+        self.log_rows_once(pd, &built);
         if self.skipped_by_filter() || self.skipped_by_serial(pd.serial as usize) {
             return Ok(());
         }
