@@ -2053,6 +2053,14 @@ impl<K: Backend> X<'_, K> {
         match name {
             // -- moves and bit operations
             "v_mov_b32" => Ok(Res::v(self.v(0)?)),
+            // the two values trade registers
+            "v_swap_b32" => {
+                let (a, b) = (self.v(0)?, self.v(1)?);
+                Ok(Res {
+                    data: vec![Opd::V(b), Opd::V(a)],
+                    scc: None,
+                })
+            }
             "v_readfirstlane_b32" => {
                 let v = self.v(0)?;
                 Ok(Res::v(self.b.broadcast_first(v)))

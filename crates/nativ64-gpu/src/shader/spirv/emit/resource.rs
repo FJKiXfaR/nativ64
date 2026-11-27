@@ -1399,9 +1399,6 @@ impl<'a> Tr<'a> {
             // a packed format (2_10_10_10) still covers whole bytes
             bits.iter().sum::<u32>().div_ceil(8)
         };
-        if half && !load {
-            return refuse("a d16 buffer format store");
-        }
         // a half result packs two components per dword
         let words = if half { n.div_ceil(2) } else { n };
         let ns = c.srcs.len();
@@ -1478,10 +1475,7 @@ impl<'a> Tr<'a> {
                     let mut words = vec![self.g.k(0); dwords];
                     let mut bit = 0u32;
                     for (j, &b) in cbits.iter().take(n).enumerate() {
-                        let Some(&d) = c.srcs[0].get(j) else {
-                            return bad("a buffer store with too few data dwords");
-                        };
-                        let d = self.bits_of(d);
+                        let d = self.store_data(c, j, half)?;
                         let raw = self.pack_component(d, b, cnum);
                         let shift = bit % 32;
                         let at = (bit / 32) as usize;
@@ -1528,10 +1522,7 @@ impl<'a> Tr<'a> {
             let mut words = vec![self.g.k(0); dwords as usize];
             let mut bit = 0u32;
             for (j, &b) in bits.iter().take(n).enumerate() {
-                let Some(&d) = c.srcs[0].get(j) else {
-                    return bad("a buffer store with too few data dwords");
-                };
-                let d = self.bits_of(d);
+                let d = self.store_data(c, j, half)?;
                 let raw = self.pack_component(d, b, num);
                 let shift = bit % 32;
                 let at = (bit / 32) as usize;
@@ -1641,6 +1632,28 @@ impl<'a> Tr<'a> {
             words.push(Opd::V(v));
         }
         Ok(words)
+    }
+
+    /// Component `j` of a format store's data: a d16 store packs two halves per dword, so the
+    /// half is unpacked to the f32 bits the component conversion takes.
+    fn store_data(&mut self, c: &Ctx<Gen>, j: usize, half: bool) -> R<u32> {
+        let Some(&d) = c.srcs[0].get(if half { j / 2 } else { j }) else {
+            return bad("a buffer store with too few data dwords");
+        };
+        let d = self.bits_of(d);
+        if !half {
+            return Ok(d);
+        }
+        let tu = self.g.t_u32();
+        let x = if j.is_multiple_of(2) {
+            d
+        } else {
+            let sh = self.g.k(16);
+            self.g.op(Op::ShiftRightLogical, tu, &[d, sh])
+        };
+        let mask = self.g.k(0xffff);
+        let x = self.g.op(Op::BitwiseAnd, tu, &[x, mask]);
+        Ok(self.g.unpack_half(x))
     }
 
     /// The dword a format load leaves for one component (float bits for the normalized and
