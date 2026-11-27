@@ -651,8 +651,24 @@ extern "win64" fn ui_navigation(this: Reading, out: *mut u32) -> bool {
     // SAFETY: a reading we handed out; `out` has room for the state.
     let buttons = unsafe { (*this).data.buttons };
     let p = physical();
+    let ui = ui_navigation_buttons(buttons, &p);
+    // `NATIV64_UI_LOG=1` prints each change of the state, with the time since the first query:
+    // the input scripts press blind, this says what the title's menus actually consumed.
+    if std::env::var_os("NATIV64_UI_LOG").is_some() {
+        static LAST: std::sync::Mutex<Option<u32>> = std::sync::Mutex::new(None);
+        static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+        let t0 = *START.get_or_init(std::time::Instant::now);
+        let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+        if *last != Some(ui) {
+            eprintln!(
+                "nativ64: ui navigation 0x{ui:03x} at {:.2} s",
+                t0.elapsed().as_secs_f64()
+            );
+            *last = Some(ui);
+        }
+    }
     // SAFETY: as above.
-    unsafe { out.write(ui_navigation_buttons(buttons, &p)) };
+    unsafe { out.write(ui) };
     true
 }
 
