@@ -439,9 +439,8 @@ fn record_of(view: &View, mem: &mut GpuMemory<'_>) -> Rec {
 /// `(dxgi format, title address, size in bytes, stride)` of a view of a buffer.
 fn buffer_view(view: &View) -> Option<(u32, u64, u64, u32)> {
     Some(match view {
-        // a constant buffer is read by vec4 index (`idxen`): the console runtime gives its V# a
-        // stride of 16
-        View::Constant(address, size) => (0, *address, u64::from(*size), 16),
+        // a constant buffer's V# is a raw buffer (stride 0): shaders index it in bytes
+        View::Constant(address, size) => (0, *address, u64::from(*size), 0),
         View::Shader(res, desc) => {
             // the registry keeps resource pointers the title created views of, released or not
             let (rd, base) = info_of_checked(*res as *mut _)?;
@@ -802,10 +801,13 @@ mod tests {
     }
 
     #[test]
-    fn a_constant_buffer_view_is_indexed_by_vec4() {
+    fn a_constant_buffer_view_is_a_raw_buffer() {
+        // the paragraph's vertex shader indexes a CBV with `idxen` and offsets that exceed the
+        // declared size when scaled by 16, so a CBV's V# is a raw buffer (stride 0: the index is
+        // a byte offset)
         assert_eq!(
             buffer_view(&View::Constant(0x1000, 1536)),
-            Some((0, 0x1000, 1536, 16))
+            Some((0, 0x1000, 1536, 0))
         );
     }
 
@@ -864,8 +866,8 @@ mod tests {
             (u32_at(&r, 0), u64_at(&r, 8), u32_at(&r, 16)),
             (1, first + 256, 64)
         );
-        // read by vec4 index (`idxen`): the record's stride is 16
-        assert_eq!(u32_at(&r, 20), 16);
+        // a CBV is a raw buffer: the record's stride is 0
+        assert_eq!(u32_at(&r, 20), 0);
         // memory that is not GPU memory and a texture stay kind 0; only the first is retried
         for slot in [&*lost, &*tex] {
             let r = table.buf.read(index_of(slot) * RECORD, RECORD);
