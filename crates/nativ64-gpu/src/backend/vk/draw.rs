@@ -592,6 +592,7 @@ impl<'g> VkBackend<'g> {
     fn log_vertex(
         &mut self,
         pd: &crate::d3d12::pipeline::PipelineData,
+        rows: &[crate::shader::native::RootLayout],
         vbufs: &[(
             u32,
             super::gpumem::Mapped,
@@ -602,15 +603,16 @@ impl<'g> VkBackend<'g> {
         let Ok(want) = std::env::var("NATIV64_DRAW_VERTEX_PS") else {
             return;
         };
-        let Ok(hash) = u64::from_str_radix(want.trim(), 16) else {
-            return;
-        };
+        let hashes: Vec<u64> = want
+            .split(',')
+            .filter_map(|h| u64::from_str_radix(h.trim(), 16).ok())
+            .collect();
         let ps = pd
             .stages
             .iter()
             .find(|s| s.name == "pixel")
             .map(|s| crate::shader::fnv1a64(&s.bytes));
-        if ps != Some(hash) {
+        if !ps.is_some_and(|h| hashes.contains(&h)) {
             return;
         }
         let draw = format!("{c:?}");
@@ -625,6 +627,32 @@ impl<'g> VkBackend<'g> {
                 v.stride,
                 raw.iter().map(|b| format!("{b:02x}")).collect::<String>()
             ));
+        }
+        // The constant buffers behind the draw's rows (a vertex shader that reads a wrong
+        // transform puts every vertex off screen).
+        let mut seen = Vec::new();
+        for row in rows {
+            let addr = self.draw.list.root.table(row.root_slot as u32);
+            let slot = addr.saturating_add(u64::from(row.table_offset) * 4);
+            // SAFETY: a slot of the title's descriptor heap (see the residency scan).
+            let Some(index) = (unsafe { crate::d3d12::descriptor::registry_index_at(slot) }) else {
+                continue;
+            };
+            if seen.contains(&index) {
+                continue;
+            }
+            seen.push(index);
+            if let Some(crate::d3d12::descriptor::View::Constant(a, size)) =
+                crate::d3d12::descriptor::view_at(index as usize)
+            {
+                let n = usize::try_from(size).unwrap_or(0).min(32);
+                // SAFETY: a constant buffer the title made readable.
+                let raw = unsafe { std::slice::from_raw_parts(a as *const u8, n) };
+                super::log_once(format!(
+                    "draw cbv: {draw} index {index} at {a:#x} size {size} first {}",
+                    raw.iter().map(|b| format!("{b:02x}")).collect::<String>()
+                ));
+            }
         }
         if let Some(iv) = self.draw.list.index {
             // D3D12 index format 57 is R16_UINT, anything else is R32_UINT.
@@ -896,7 +924,7 @@ impl<'g> VkBackend<'g> {
         let (stencil_ref, blend, viewport, scissor) =
             (list.stencil_ref, list.blend, list.viewport, list.scissor);
         let vbufs: Vec<_> = vbufs.into_iter().map(|(s, m, v)| (s, m, *v)).collect();
-        self.log_vertex(pd, &vbufs, c);
+        self.log_vertex(pd, &built.rows, &vbufs, c);
         // Quads draw as triangle lists through an index buffer: (buffer, indices).
         let quad_index = if quads {
             match (c, index) {
