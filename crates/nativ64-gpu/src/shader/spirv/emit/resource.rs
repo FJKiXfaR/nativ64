@@ -1894,6 +1894,8 @@ impl<'a> Tr<'a> {
         // program is taken as a read of an SRV (a typed texture fetch) [unverified: a UAV
         // load in a graphics stage would be read through the wrong binding]; a load whose
         // table offset is not a constant is taken as one too (a store must name a UAV).
+        // a store can only reach a UAV (D3D12 has no SRV stores): when the used rows do not
+        // name the slot, a load is read as an SRV and a store as a UAV
         let kind = origin
             .and_then(|(sgpr, offset)| self.io().descriptor_kind(sgpr, offset))
             .or(Some(if store { 3 } else { 0 }));

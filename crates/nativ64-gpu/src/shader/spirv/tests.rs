@@ -3091,11 +3091,10 @@ pub(crate) mod stage {
         c.used = vec![(0, 0, 5), (3, 8, 5)];
         let (_, op) = refused_cs(&cs_blob(&lines, &c));
         assert!(op.contains("image_store") && op.contains("kind 0"), "{op}");
-        // a slot no used row names
+        // a load whose slot no used row names is read as an SRV
         c.used = vec![(3, 8, 5)];
         lines[9] = "image_load v[8:11], v[0:1], s[24:31] dmask:0xf dim:SQ_RSRC_IMG_2D unorm";
-        let (_, op) = refused_cs(&cs_blob(&lines, &c));
-        assert!(op.contains("no used-resource row"), "{op}");
+        translate_full(&cs_blob(&lines, &c), None);
     }
 
     #[test]
