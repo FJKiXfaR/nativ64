@@ -120,6 +120,12 @@ pub fn lookup(dxgi: u32, flags: u32) -> Option<FormatInfo> {
         91 | 93 => info(F::B8G8R8A8_SRGB, COLOR, 4),
         // XR bias is not modelled: the same memory layout, sampled as plain UNORM.
         89 => info(F::A2B10G10R10_UNORM_PACK32, COLOR, 4),
+        // Console-only formats the title creates (XCL/VIctory facts): B4G4R4A4, the R10G10B10
+        // 7e3/6e4 HDR targets (approximated by a 16-bit float target) and the 16-bit
+        // depth-stencil texture (depth + 8-bit stencil, as VIctory's 2-plane model says).
+        115 => info(F::B4G4R4A4_UNORM_PACK16, COLOR, 2),
+        116 | 117 => info(F::R16G16B16A16_SFLOAT, COLOR, 8),
+        118 => info(F::D16_UNORM_S8_UINT, DEPTH_STENCIL, 3),
         // Block-compressed colour (BC1 to BC7).
         70 | 71 => block(F::BC1_RGBA_UNORM_BLOCK, 8),
         72 => block(F::BC1_RGBA_SRGB_BLOCK, 8),
@@ -283,6 +289,11 @@ mod tests {
         assert_eq!(f(93, 0).format, vk::Format::B8G8R8A8_SRGB);
         // R1 has no Vulkan equivalent and is refused, not guessed.
         assert!(lookup(66, 0).is_none());
+        // The console-only formats the title creates.
+        assert_eq!(f(115, 0).format, vk::Format::B4G4R4A4_UNORM_PACK16);
+        assert_eq!(f(116, 0).format, vk::Format::R16G16B16A16_SFLOAT);
+        assert_eq!(f(117, 0).format, vk::Format::R16G16B16A16_SFLOAT);
+        assert_eq!(f(118, 0).format, vk::Format::D16_UNORM_S8_UINT);
     }
 
     #[test]
