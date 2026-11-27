@@ -621,6 +621,9 @@ fn buffer_view(view: &View) -> Option<(u32, u64, u64, u32)> {
 /// `D3D12_RESOURCE_DIMENSION_BUFFER`.
 const BUFFER_DIMENSION: u32 = 1;
 
+/// How many views whose memory did not translate are retried in one submission.
+const RETRY_BUDGET: usize = 512;
+
 /// The view records in a buffer, indexed like the descriptor registry.
 pub struct ViewTable<'g> {
     gpu: &'g Gpu,
@@ -631,6 +634,8 @@ pub struct ViewTable<'g> {
     written: usize,
     /// Indices of buffer views whose memory did not translate: tried again.
     retry: Vec<usize>,
+    /// Where the next update starts in `retry` (a rotation, so the budget reaches every view).
+    retry_from: usize,
     /// Per index, the title address span its record points into (empty when it has none).
     spans: Vec<(u64, u64)>,
 }
@@ -644,6 +649,7 @@ impl<'g> ViewTable<'g> {
             capacity,
             written: 0,
             retry: Vec::new(),
+            retry_from: 0,
             spans: vec![(0, 0); capacity],
         })
     }
@@ -726,10 +732,21 @@ impl<'g> ViewTable<'g> {
             log_once("view table: cannot grow the buffer".into());
             return;
         }
-        // views tried before and not translated, then the new ones
+        // views tried before and not translated, then the new ones. A title that keeps
+        // registering views whose memory does not translate (the loading stage's placed
+        // resources) would otherwise retry thousands of them on every submission; the budget
+        // spreads that over submissions, rotating so that none is forgotten.
         let mut again = std::mem::take(&mut self.retry);
         again.sort_unstable();
         again.dedup();
+        if again.len() > RETRY_BUDGET {
+            let start = self.retry_from % again.len();
+            again.rotate_left(start);
+            self.retry_from = self.retry_from.wrapping_add(RETRY_BUDGET);
+            let rest: Vec<usize> = again.drain(RETRY_BUDGET..).collect();
+            self.retry.extend(rest);
+            log_once(format!("view table: {} views still waiting to translate, retrying {RETRY_BUDGET} a submission", again.len() + RETRY_BUDGET));
+        }
         for index in again {
             let v = crate::d3d12::descriptor::view_at(index);
             let rec = v.as_ref().map_or(Rec::None, |v| record_of(v, mem));

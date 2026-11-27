@@ -456,11 +456,36 @@ pub(in crate::shader::spirv) fn analyze(
         }
     }
     // a phi may carry such numbers (the words of two descriptors, say), but not a descriptor
-    // a descriptor operand still resolves by its slot
+    // a descriptor operand still resolves by its slot. A phi nothing reads cannot be one: the
+    // title's programs keep dead phis of half-built descriptors.
     let numeric = |s: &Src| matches!(s, Src::Val(v) if numbers.contains(v));
+    let mut used: HashSet<Val> = HashSet::new();
+    for blk in &f.blocks {
+        for i in &blk.insts {
+            for s in i.srcs.iter().flatten() {
+                if let Src::Val(v) = s {
+                    used.insert(*v);
+                }
+            }
+        }
+        for p in &blk.phis {
+            for (_, s) in &p.args {
+                if let Src::Val(v) = s {
+                    used.insert(*v);
+                }
+            }
+        }
+        if let Term::Branch { cond, .. } = &blk.term {
+            for (_, s) in cond {
+                if let Src::Val(v) = s {
+                    used.insert(*v);
+                }
+            }
+        }
+    }
     for blk in &f.blocks {
         for p in &blk.phis {
-            if a.loaded.contains(&p.dst) {
+            if a.loaded.contains(&p.dst) || !used.contains(&p.dst) {
                 continue;
             }
             let sources = |f: &dyn Fn(&Src) -> bool| p.args.iter().any(|(_, s)| f(s));
