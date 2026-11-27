@@ -78,6 +78,7 @@ impl VkBackend<'_> {
         cb: vk::CommandBuffer,
         groups: [u32; 3],
     ) -> Result<(), Skip> {
+        let started = std::time::Instant::now();
         let ptr = self.draw.list.pipeline;
         if ptr == 0 {
             return Err(Skip::Pipeline("no pipeline bound".into()));
@@ -103,14 +104,26 @@ impl VkBackend<'_> {
             Outcome::Built(b) => b.clone(),
             Outcome::Failed(w) => return Err(Skip::Pipeline(w.clone())),
         };
+        let pipe_ms = started.elapsed().as_millis();
+        if pipe_ms >= 1 {
+            eprintln!(
+                "nativ64-gpu: compute pipeline {} took {pipe_ms} ms",
+                pd.serial
+            );
+        }
         if groups.iter().any(|&g| g > MAX_GROUPS) {
             return Err(Skip::State(format!(
                 "group counts {groups:?} above {MAX_GROUPS}"
             )));
         }
+        let vt_started = std::time::Instant::now();
         let Some(view_table) = self.draw.view_table() else {
             return Err(Skip::State("no view table".into()));
         };
+        let vt_ms = vt_started.elapsed().as_millis();
+        if vt_ms >= 1 {
+            eprintln!("nativ64-gpu: the view table of a dispatch took {vt_ms} ms");
+        }
         let mem = &mut self.draw.mem;
         let block = rootblock::fill(&built.rows, &self.draw.list.croot, view_table, &mut |a| {
             mem.translate(a, 1).map(|m| m.address)
@@ -119,6 +132,10 @@ impl VkBackend<'_> {
             rootblock::FillError::Memory(w) => Skip::Memory(w),
             rootblock::FillError::Layout(w) => Skip::State(w),
         })?;
+        let rb_ms = vt_started.elapsed().as_millis();
+        if rb_ms >= 1 {
+            eprintln!("nativ64-gpu: the root block of a dispatch took {rb_ms} ms");
+        }
         let Some((arena, at)) = self.draw.arena_slot() else {
             return Err(Skip::State("no room for the root block".into()));
         };
@@ -127,6 +144,7 @@ impl VkBackend<'_> {
         if groups.contains(&0) {
             return Ok(());
         }
+        let cmd_started = std::time::Instant::now();
         let bind = vk::PipelineBindPoint::COMPUTE;
         let layout = built.layouts.layout;
         // SAFETY: `cb` is recording outside a rendering instance (`record` ended it); every
@@ -148,6 +166,13 @@ impl VkBackend<'_> {
             d.cmd_dispatch(cb, groups[0], groups[1], groups[2]);
         }
         global_barrier(d, cb);
+        let total = started.elapsed().as_millis();
+        if total >= 2 {
+            eprintln!(
+                "nativ64-gpu: dispatch recorded in {total} ms (pipeline {pipe_ms} ms, view table {vt_ms} ms, root {rb_ms} ms, commands {} ms)",
+                cmd_started.elapsed().as_millis()
+            );
+        }
         Ok(())
     }
 }

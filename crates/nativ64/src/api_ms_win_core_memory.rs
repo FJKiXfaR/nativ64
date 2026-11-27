@@ -23,7 +23,7 @@
 use crate::api_ms_win_core_errorhandling::set_last_error;
 use std::collections::BTreeMap;
 use std::ffi::c_void;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 pub const MEM_COMMIT: u32 = 0x1000;
 pub const MEM_RESERVE: u32 = 0x2000;
@@ -84,12 +84,19 @@ struct Table {
     cursors: BTreeMap<usize, usize>,
 }
 
-fn table() -> MutexGuard<'static, Table> {
-    static T: Mutex<Table> = Mutex::new(Table {
-        regions: BTreeMap::new(),
-        cursors: BTreeMap::new(),
-    });
-    T.lock().unwrap_or_else(|e| e.into_inner())
+static TABLE: RwLock<Table> = RwLock::new(Table {
+    regions: BTreeMap::new(),
+    cursors: BTreeMap::new(),
+});
+
+fn table() -> RwLockReadGuard<'static, Table> {
+    TABLE.read().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The table for writes (allocations, commits, decommits, releases): readers keep running in
+/// parallel, so the GPU's `is_committed`/`committed_run` no longer queue behind each other.
+fn table_mut() -> RwLockWriteGuard<'static, Table> {
+    TABLE.write().unwrap_or_else(|e| e.into_inner())
 }
 
 /// Ranges the GPU backend must forget (see [`take_gpu_changes`]).
@@ -238,7 +245,7 @@ pub fn alloc(
     if !valid_protect(protect) {
         return Err(ERROR_INVALID_PARAMETER);
     }
-    let mut t = table();
+    let mut t = table_mut();
     if base != 0 && kind & MEM_RESERVE == 0 {
         // Commit inside an existing reservation.
         let start = base & !(PAGE - 1);
@@ -294,7 +301,7 @@ pub fn alloc(
 /// `MEM_RESERVE | MEM_REPLACE_PLACEHOLDER`: turns the placeholder `base..base+size` (an
 /// allocation of exactly that size, all pages reserved) into an ordinary reservation.
 pub fn replace_placeholder(base: usize, size: usize, protect: u32) -> Result<usize, u32> {
-    let mut t = table();
+    let mut t = table_mut();
     let r = t.regions.get_mut(&base).ok_or(ERROR_INVALID_ADDRESS)?;
     if r.size != align_up(size, PAGE) || r.pages.iter().any(|&p| p != 0) {
         return Err(ERROR_INVALID_ADDRESS);
@@ -312,7 +319,7 @@ pub fn replace_placeholder(base: usize, size: usize, protect: u32) -> Result<usi
 /// Records that `addr..addr+len` (inside one allocation) now holds memory mapped over it by the
 /// caller (`protect` pages, as `MEM_COMMIT` would), so `VirtualQuery` reports it committed.
 pub fn mark_mapped(addr: usize, len: usize, protect: u32) -> Result<(), u32> {
-    let mut t = table();
+    let mut t = table_mut();
     let b = find(&t, addr).ok_or(ERROR_INVALID_ADDRESS)?;
     let region = t.regions.get_mut(&b).unwrap();
     let end = addr + len;
@@ -327,7 +334,7 @@ pub fn mark_mapped(addr: usize, len: usize, protect: u32) -> Result<(), u32> {
 
 /// `MEM_RELEASE`: unmaps the allocation that starts exactly at `base`.
 pub fn release(base: usize) -> Result<(), u32> {
-    let mut t = table();
+    let mut t = table_mut();
     let r = t.regions.remove(&base).ok_or(ERROR_INVALID_ADDRESS)?;
     // SAFETY: the whole mapping `alloc` made.
     unsafe { libc::munmap(base as *mut c_void, r.size) };
@@ -347,7 +354,7 @@ pub fn free(addr: usize, size: usize, kind: u32) -> Result<(), u32> {
         }
         _ if kind == MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER && size != 0 => placeholder(addr, size),
         MEM_DECOMMIT => {
-            let mut t = table();
+            let mut t = table_mut();
             let b = find(&t, addr).ok_or(ERROR_INVALID_ADDRESS)?;
             let (start, end) = if size == 0 {
                 if addr != b {
@@ -378,7 +385,7 @@ pub fn free(addr: usize, size: usize, kind: u32) -> Result<(), u32> {
 /// placeholder: reserved pages, released later by its base) and the rest of the allocation it
 /// was in is split around it.
 fn placeholder(addr: usize, size: usize) -> Result<(), u32> {
-    let mut t = table();
+    let mut t = table_mut();
     let b = find(&t, addr).ok_or(ERROR_INVALID_ADDRESS)?;
     let end = addr.checked_add(size).ok_or(ERROR_INVALID_PARAMETER)?;
     if !addr.is_multiple_of(PAGE) || !end.is_multiple_of(PAGE) {
@@ -498,7 +505,7 @@ pub fn protect(addr: usize, size: usize, new: u32) -> Result<u32, u32> {
         .checked_add(size)
         .map(|e| align_up(e, PAGE))
         .ok_or(ERROR_INVALID_PARAMETER)?;
-    let mut t = table();
+    let mut t = table_mut();
     if let Some(b) = find(&t, start) {
         let region = t.regions.get_mut(&b).unwrap();
         if end > b + region.size {
