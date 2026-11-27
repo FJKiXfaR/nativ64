@@ -195,7 +195,6 @@ pub fn non_alu_chunk(i: &Instr) -> Option<u8> {
     let n = i.name();
     // a DPP instruction is translated before the table runs: its source is a shuffle
     if n.starts_with("v_readfirstlane")
-        || n.starts_with("v_permlane")
         || n.starts_with("ds_permute")
         || n.starts_with("ds_bpermute")
     {

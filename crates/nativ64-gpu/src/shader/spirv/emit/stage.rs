@@ -454,7 +454,75 @@ impl<'a> Tr<'a> {
         if name == "v_readlane_b32" || name == "v_writelane_b32" {
             return self.lane_exchange(c).map(Some);
         }
+        if name.starts_with("v_permlane16") || name.starts_with("v_permlanex16") {
+            return self.permlane(c).map(Some);
+        }
         self.resource_exec(c, b, k)
+    }
+
+    /// `v_permlane16_b32` / `v_permlanex16_b32`: each lane takes its value from the lane the
+    /// 64-bit selector (`{src2, src1}`, four bits per lane position) names in its 16-lane row
+    /// (`permlane16`) or in the other row of its 32-lane group (`permlanex16`).
+    fn permlane(&mut self, c: &Ctx<Gen>) -> R<Vec<Opd<Gen>>> {
+        let name = c.inst.instr.name();
+        let (Some(val), Some(s1), Some(s2)) = (
+            c.srcs.first().and_then(|s| s.first()).copied(),
+            c.srcs.get(1).and_then(|s| s.first()).copied(),
+            c.srcs.get(2).and_then(|s| s.first()).copied(),
+        ) else {
+            return bad("a permlane without its operands");
+        };
+        let tu = self.g.t_u32();
+        let tb = self.g.t_bool();
+        let (zero, one, two, four, fifteen, sixteen, thirty_two, not15, not31) = (
+            self.g.k(0),
+            self.g.k(1),
+            self.g.k(2),
+            self.g.k(4),
+            self.g.k(15),
+            self.g.k(16),
+            self.g.k(32),
+            self.g.k(!15u32),
+            self.g.k(!31u32),
+        );
+        let val = self.plain(val)?;
+        let (s1, s2) = (self.plain(s1)?, self.plain(s2)?);
+        let lane = <Gen as super::alu::Backend>::lane_id(&mut self.g);
+        // the lane position (0-15) picks the selector's byte
+        let pos = self.g.op(Op::BitwiseAnd, tu, &[lane, fifteen]);
+        let sh = self.g.op(Op::ShiftLeftLogical, tu, &[pos, two]);
+        let too_far = self.g.op(Op::UGreaterThanEqual, tb, &[sh, thirty_two]);
+        let sh_lo = self.g.select(too_far, zero, sh);
+        let rel = self.g.op(Op::ISub, tu, &[sh, thirty_two]);
+        let sh_hi = self.g.select(too_far, rel, zero);
+        let a = self.g.op(Op::ShiftRightLogical, tu, &[s1, sh_lo]);
+        let b = self.g.op(Op::ShiftRightLogical, tu, &[s2, sh_hi]);
+        let pick = self.g.select(too_far, b, a);
+        let sel = self.g.op(Op::BitwiseAnd, tu, &[pick, fifteen]);
+        // the row: this one, or the other of the 32-lane group
+        let row = if name.starts_with("v_permlanex16") {
+            let bit = self.g.op(Op::BitwiseAnd, tu, &[lane, sixteen]);
+            let flipped = self.g.op(Op::BitwiseXor, tu, &[bit, sixteen]);
+            let base = self.g.op(Op::BitwiseAnd, tu, &[lane, not31]);
+            let r = self.g.op(Op::BitwiseOr, tu, &[base, flipped]);
+            self.g.op(Op::BitwiseAnd, tu, &[r, not15])
+        } else {
+            self.g.op(Op::BitwiseAnd, tu, &[lane, not15])
+        };
+        let src_lane = self.g.op(Op::BitwiseOr, tu, &[row, sel]);
+        let _ = (one, four);
+        Ok(vec![Opd::V(self.g.shuffle(val, src_lane))])
+    }
+
+    /// A source value as a number (a mask becomes its lane's zero or one).
+    fn plain(&mut self, o: Opd<Gen>) -> R<u32> {
+        Ok(match o {
+            Opd::V(v) => v,
+            Opd::B(b) => {
+                let (one, zero) = (self.g.k(1), self.g.k(0));
+                self.g.select(b, one, zero)
+            }
+        })
     }
 
     /// `v_readlane_b32` / `v_writelane_b32`: one lane's value moved to (or from) the lane the
