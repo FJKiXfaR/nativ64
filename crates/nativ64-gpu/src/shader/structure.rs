@@ -178,9 +178,7 @@ fn takes_lane_mask(name: &str) -> bool {
 pub fn cross_lane_by_nature(i: &Instr) -> bool {
     let n = i.name();
     i.dpp.is_some()
-        || n.starts_with("v_readlane")
         || n.starts_with("v_readfirstlane")
-        || n.starts_with("v_writelane")
         || n.starts_with("v_permlane")
         || n.starts_with("ds_swizzle")
         || n.starts_with("ds_permute")
@@ -532,6 +530,10 @@ pub fn cross_lane_use(m: &Masks, inst: &Inst) -> Option<String> {
         i.name(),
         "s_bcnt1_i32_b32" | "s_bcnt1_i32_b64" | "s_ff1_i32_b32" | "s_ff1_i32_b64"
     ) {
+        return None;
+    }
+    // a lane exchange the emitter translates with a subgroup shuffle
+    if matches!(i.name(), "v_readlane_b32" | "v_writelane_b32") {
         return None;
     }
     Some(i.name().to_string())

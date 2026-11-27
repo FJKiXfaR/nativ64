@@ -449,7 +449,50 @@ impl<'a> Tr<'a> {
         if name.starts_with("v_interp") {
             return self.interp(c).map(|v| Some(vec![v]));
         }
+        // lane exchange: `v_readlane_b32` reads another lane's register, `v_writelane_b32`
+        // writes one lane's register (the others keep theirs)
+        if name == "v_readlane_b32" || name == "v_writelane_b32" {
+            return self.lane_exchange(c).map(Some);
+        }
         self.resource_exec(c, b, k)
+    }
+
+    /// `v_readlane_b32` / `v_writelane_b32`: one lane's value moved to (or from) the lane the
+    /// scalar selector names.
+    fn lane_exchange(&mut self, c: &Ctx<Gen>) -> R<Vec<Opd<Gen>>> {
+        let name = c.inst.instr.name();
+        let value = c.srcs.first().and_then(|s| s.first()).copied();
+        let lane = c.srcs.get(1).and_then(|s| s.first()).copied();
+        let (Some(value), Some(lane)) = (value, lane) else {
+            return bad("a lane exchange without its operand");
+        };
+        let tu = self.g.t_u32();
+        let (one, zero) = (self.g.k(1), self.g.k(0));
+        let value = match value {
+            Opd::V(v) => v,
+            Opd::B(b) => self.g.select(b, one, zero),
+        };
+        let lane = match lane {
+            Opd::V(v) => v,
+            Opd::B(b) => self.g.select(b, one, zero),
+        };
+        if name == "v_readlane_b32" {
+            self.g.m.capability(Capability::GroupNonUniformShuffle);
+            let scope = self.g.k(3);
+            let t = self.g.t_u32();
+            let v = self
+                .g
+                .op(Op::GroupNonUniformShuffle, t, &[scope, value, lane]);
+            return Ok(vec![Opd::V(v)]);
+        }
+        let (reg, _) = c.inst.dsts[0];
+        let var = self.var(reg, false)?;
+        let old = self.g.load(tu, var);
+        let me = <Gen as super::alu::Backend>::lane_id(&mut self.g);
+        let tb = self.g.t_bool();
+        let is = self.g.op(Op::IEqual, tb, &[me, lane]);
+        let v = self.g.select(is, value, old);
+        Ok(vec![Opd::V(v)])
     }
 
     /// `s_andn2 live, live, exec`: the lanes in EXEC are killed. They become helper lanes.

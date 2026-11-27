@@ -188,9 +188,7 @@ pub struct Ctx<'a, K: Backend> {
 pub fn non_alu_chunk(i: &Instr) -> Option<u8> {
     let n = i.name();
     if i.dpp.is_some()
-        || n.starts_with("v_readlane")
         || n.starts_with("v_readfirstlane")
-        || n.starts_with("v_writelane")
         || n.starts_with("v_permlane")
         || n.starts_with("ds_swizzle")
         || n.starts_with("ds_permute")
