@@ -26,6 +26,7 @@ pub mod api_ms_win_core_psm_appnotify;
 pub mod api_ms_win_core_registry;
 pub mod api_ms_win_core_rtlsupport;
 pub mod api_ms_win_core_string;
+pub mod api_ms_win_core_string_obsolete;
 pub mod api_ms_win_core_synch;
 pub mod api_ms_win_core_sysinfo;
 pub mod api_ms_win_core_timezone;
@@ -91,6 +92,7 @@ pub static TABLES: &[&[Export]] = &[
     api_ms_win_core_rtlsupport::EXPORTS,
     api_ms_win_core_rtlsupport::ASM_EXPORTS,
     api_ms_win_core_string::EXPORTS,
+    api_ms_win_core_string_obsolete::EXPORTS,
     api_ms_win_core_processenvironment::EXPORTS,
     api_ms_win_core_processthreads::EXPORTS,
     api_ms_win_core_processthreads::ALIASES,
