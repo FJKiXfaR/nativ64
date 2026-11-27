@@ -1092,6 +1092,8 @@ impl<'a> Tr<'a> {
             "buffer_store_dwordx2" => (false, 2),
             "buffer_store_dwordx3" => (false, 3),
             "buffer_store_dwordx4" => (false, 4),
+            "buffer_load_ubyte" | "buffer_load_sbyte" | "buffer_load_ushort"
+            | "buffer_load_sshort" => (true, 1),
             _ => {
                 if let Some(op) = name.strip_prefix("buffer_atomic_") {
                     return self.mubuf_atomic(c, op);
@@ -1174,6 +1176,14 @@ impl<'a> Tr<'a> {
             if load {
                 let ok = self.and(valid, c.active);
                 let v = self.guarded_load(a, ok)?;
+                // a byte or a word of the view: its low bits, extended
+                let v = match name {
+                    "buffer_load_ubyte" => self.narrow(v, 8, false),
+                    "buffer_load_sbyte" => self.narrow(v, 8, true),
+                    "buffer_load_ushort" => self.narrow(v, 16, false),
+                    "buffer_load_sshort" => self.narrow(v, 16, true),
+                    _ => v,
+                };
                 out.push(self.lane_result(c, j, v));
             } else {
                 let Some(&d) = c.srcs[0].get(j) else {
@@ -2062,10 +2072,12 @@ impl<'a> Tr<'a> {
         if name.starts_with("image_gather4") {
             return self.image_gather(c);
         }
-        let (explicit, zero_lod) = match name {
-            "image_sample" => (false, false),
-            "image_sample_l" => (true, false),
-            "image_sample_lz" | "image_get_lod" => (true, true),
+        let (explicit, zero_lod, dref) = match name {
+            "image_sample" => (false, false, false),
+            "image_sample_l" => (true, false, false),
+            "image_sample_lz" | "image_get_lod" => (true, true, false),
+            // a depth compare: the address carries the comparison value after the coordinates
+            "image_sample_c_lz" | "image_sample_c_l" => (true, true, true),
             _ => return Ok(None),
         };
         let m = i.img;
@@ -2081,7 +2093,7 @@ impl<'a> Tr<'a> {
         }
         let nlod = usize::from(name == "image_sample_l");
         let addr = &c.srcs[ns - 3];
-        if addr.len() != ncoord as usize + nlod {
+        if addr.len() != ncoord as usize + nlod + usize::from(dref) {
             return refuse(&format!("{name} with an address of {} dwords", addr.len()));
         }
         let is_vertex = matches!(self.io(), StageIo::Vertex(_));
@@ -2133,7 +2145,22 @@ impl<'a> Tr<'a> {
             return Ok(Some(out));
         }
         let v4 = self.vec4(Class::Float);
-        let res = if !explicit && !compute_implicit {
+        let res = if dref {
+            // the compare value follows the coordinates; the level is 0
+            let bits = self.bits_of(addr[ncoord as usize]);
+            let d = self.g.as_f32(bits);
+            let lod = self.g.fconst(0.0);
+            let tf = self.g.t_f32();
+            let r = self
+                .g
+                .op(Op::ImageSampleDrefExplicitLod, tf, &[si, coord, d, 2, lod]);
+            let mut out = Vec::new();
+            let bits = self.g.as_bits(r);
+            for j in 0..chans.len() {
+                out.push(self.lane_result(c, j, bits));
+            }
+            return Ok(Some(out));
+        } else if !explicit && !compute_implicit {
             self.g.op(Op::ImageSampleImplicitLod, v4, &[si, coord])
         } else if compute_implicit {
             let lod = self.g.fconst(0.0);
@@ -2596,8 +2623,12 @@ impl<'a> Tr<'a> {
     fn ds_atomic(&mut self, c: &Ctx<Gen>, rest: &str) -> R<Option<Vec<Opd<Gen>>>> {
         let i = &c.inst.instr;
         let name = i.name();
-        let (spirv_op, operand) = match rest {
+        // the `_rtn` forms return the old value (a destination), the plain ones write nothing
+        let rest = rest.replace("_rtn", "");
+        let (spirv_op, operand) = match rest.as_str() {
             "add_u32" => (Op::AtomicIAdd, true),
+            "wrxchg_b32" => (Op::AtomicExchange, true),
+            "wrxchg2_b32" => (Op::AtomicExchange, true),
             "sub_u32" => (Op::AtomicISub, true),
             "min_i32" => (Op::AtomicSMin, true),
             "min_u32" => (Op::AtomicUMin, true),
@@ -2660,6 +2691,7 @@ impl<'a> Tr<'a> {
         }
         if [
             "add_", "sub_", "min_", "max_", "and_", "or_", "xor_", "inc_", "dec_", "cmpst_",
+            "wrxchg",
         ]
         .iter()
         .any(|p| rest.starts_with(p))

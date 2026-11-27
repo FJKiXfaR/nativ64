@@ -395,6 +395,11 @@ impl Backend for Gen {
             FBin::Add => Op::FAdd,
             FBin::Sub => Op::FSub,
             FBin::Mul => Op::FMul,
+            // a min or a max is a GLSL ext instruction
+            FBin::Min | FBin::Max => {
+                let e = if op == FBin::Min { GL::FMin } else { GL::FMax };
+                return self.ext(t, e, &[fa, fb]);
+            }
         };
         let r = self.op(o, t, &[fa, fb]);
         self.as_bits(r)

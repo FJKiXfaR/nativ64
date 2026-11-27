@@ -76,6 +76,8 @@ pub enum FBin {
     Add,
     Sub,
     Mul,
+    Min,
+    Max,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -386,6 +388,8 @@ impl Backend for Cpu {
             FBin::Add => a + b,
             FBin::Sub => a - b,
             FBin::Mul => a * b,
+            FBin::Min => a.min(b),
+            FBin::Max => a.max(b),
         }
         .to_bits()
     }
@@ -2510,10 +2514,12 @@ impl<K: Backend> X<'_, K> {
                 Ok(Res::v(self.f2i(fl)))
             }
             // f16 arithmetic: the halves are converted to f32, computed and packed back
-            "v_add_f16" | "v_sub_f16" | "v_mul_f16" => {
+            "v_add_f16" | "v_sub_f16" | "v_mul_f16" | "v_min_f16" | "v_max_f16" => {
                 let op = match name {
                     "v_add_f16" => FBin::Add,
                     "v_sub_f16" => FBin::Sub,
+                    "v_min_f16" => FBin::Min,
+                    "v_max_f16" => FBin::Max,
                     _ => FBin::Mul,
                 };
                 let a = self.v(0)?;
@@ -2523,10 +2529,12 @@ impl<K: Backend> X<'_, K> {
                 let r = self.b.fbin(op, a, b);
                 Ok(Res::v(self.b.pack_half(r)))
             }
-            "v_pk_add_f16" | "v_pk_sub_f16" | "v_pk_mul_f16" => {
+            "v_pk_add_f16" | "v_pk_sub_f16" | "v_pk_mul_f16" | "v_pk_min_f16" | "v_pk_max_f16" => {
                 let op = match name {
                     "v_pk_add_f16" => FBin::Add,
                     "v_pk_sub_f16" => FBin::Sub,
+                    "v_pk_min_f16" => FBin::Min,
+                    "v_pk_max_f16" => FBin::Max,
                     _ => FBin::Mul,
                 };
                 let (a, b) = (self.v(0)?, self.v(1)?);
@@ -2534,6 +2542,15 @@ impl<K: Backend> X<'_, K> {
                 let (b0, b1) = self.b.unpack_half2(b);
                 let r0 = self.b.fbin(op, a0, b0);
                 let r1 = self.b.fbin(op, a1, b1);
+                Ok(Res::v(self.b.pack_half2(r0, r1)))
+            }
+            "v_pk_fma_f16" | "v_pk_mad_f16" => {
+                let (a, b, cc) = (self.v(0)?, self.v(1)?, self.v(2)?);
+                let (a0, a1) = self.b.unpack_half2(a);
+                let (b0, b1) = self.b.unpack_half2(b);
+                let (c0, c1) = self.b.unpack_half2(cc);
+                let r0 = self.b.fma(a0, b0, c0);
+                let r1 = self.b.fma(a1, b1, c1);
                 Ok(Res::v(self.b.pack_half2(r0, r1)))
             }
             "v_cvt_f32_f16" => {
