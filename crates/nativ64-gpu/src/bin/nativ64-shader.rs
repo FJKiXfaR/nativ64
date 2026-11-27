@@ -432,50 +432,7 @@ fn wave_uniform(
     v: shader::ir::Val,
     seen: &mut std::collections::HashSet<shader::ir::Val>,
 ) -> bool {
-    use shader::gfx10::Enc;
-    use shader::ir::{Reg, Src, ValDef};
-    if !seen.insert(v) {
-        return true;
-    }
-    if m.is_mask(v) {
-        return false;
-    }
-    let info = f.vals[v.0 as usize];
-    if !matches!(info.reg, Reg::V(_)) {
-        return matches!(info.reg, Reg::S(_) | Reg::T(_) | Reg::M0);
-    }
-    let src_ok = |s: &Src, seen: &mut std::collections::HashSet<_>| match s {
-        Src::Val(x) => wave_uniform(f, m, *x, seen),
-        _ => true,
-    };
-    match info.def {
-        ValDef::Arg => false,
-        ValDef::Phi { block, index } => {
-            let phi = &f.blocks[block].phis[index];
-            phi.args.iter().all(|(_, s)| src_ok(s, seen))
-        }
-        ValDef::Inst { block, index } => {
-            let inst = &f.blocks[block].insts[index];
-            let i = &inst.instr;
-            let n = i.name();
-            if n.starts_with("v_readfirstlane") || n.starts_with("v_readlane") {
-                return true;
-            }
-            let alu = matches!(
-                i.enc,
-                Enc::Vop1 | Enc::Vop2 | Enc::Vop3 | Enc::Vop3p | Enc::Vopc
-            );
-            if !alu
-                || i.dpp.is_some()
-                || n.starts_with("v_mbcnt")
-                || n.starts_with("v_permlane")
-                || n.starts_with("v_writelane")
-            {
-                return false;
-            }
-            inst.srcs.iter().flatten().all(|s| src_ok(s, seen))
-        }
-    }
+    shader::structure::wave_uniform(f, m, v, seen)
 }
 
 /// The category of one cross-lane use (`wave_survey`).
@@ -650,7 +607,7 @@ fn wave_survey(files: &[String]) -> ExitCode {
             let mut has_whole = false;
             for (b, blk) in f.blocks.iter().enumerate() {
                 for (k, inst) in blk.insts.iter().enumerate() {
-                    if structure::cross_lane_use(&m, inst).is_some() {
+                    if structure::cross_lane_use(&f, &m, inst).is_some() {
                         *counts
                             .entry(wave_category(&f, &m, inst, &eq_cmps))
                             .or_default() += 1;
@@ -702,7 +659,7 @@ fn wave_survey(files: &[String]) -> ExitCode {
             let mut in_whole = 0;
             for blk in &f.blocks {
                 for inst in &blk.insts {
-                    if structure::cross_lane_use(&m, inst).is_some()
+                    if structure::cross_lane_use(&f, &m, inst).is_some()
                         && inside.contains(&inst.instr.at)
                     {
                         in_whole += 1;

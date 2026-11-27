@@ -224,6 +224,16 @@ fn cross_lane_use_names_the_instruction() {
 }
 
 #[test]
+fn uniform_readfirstlane_passes_structuring() {
+    // s_mov_b32 s1, 1 ; v_readfirstlane_b32 s2, s1 ; s_endpgm
+    let words = [0xbe810381, 0x7e040401, 0xbf810000];
+    let f = func(&words);
+    let m = type_masks(&f);
+    assert!(m.cross_lane.is_empty(), "{:?}", m.cross_lane);
+    assert!(structure(&f).is_ok(), "{:?}", structure(&f));
+}
+
+#[test]
 fn mask_typing_follows_the_allowed_uses() {
     let words = [
         0x7c020300, // v_cmp_lt_f32 vcc, v0, v1

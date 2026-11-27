@@ -511,6 +511,17 @@ const ABS: u32 = 0x7fff_ffff;
 pub fn exec<K: Backend>(b: &mut K, c: &Ctx<K>) -> Result<Vec<Opd<K>>, Unsupported> {
     let i = &c.inst.instr;
     let name = i.name();
+    // Structuring lets `v_readfirstlane_b32` through only when its source is the same in every
+    // lane (`structure::wave_uniform`), so the first lane's value is that value: a copy.
+    if name.starts_with("v_readfirstlane") {
+        return match c.srcs.first().and_then(|d| d.first()).copied() {
+            Some(v) => Ok(vec![v]),
+            None => Err(Unsupported {
+                chunk: 7,
+                op: name.to_string(),
+            }),
+        };
+    }
     if let Some(chunk) = non_alu_chunk(i) {
         return Err(Unsupported {
             chunk,

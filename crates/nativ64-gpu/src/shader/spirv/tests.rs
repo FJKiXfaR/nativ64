@@ -2385,6 +2385,20 @@ pub(crate) mod stage {
     }
 
     #[test]
+    fn uniform_readfirstlane_translates_to_a_copy() {
+        // s1 = 1; s2 = readfirstlane(s1) (uniform, so the first lane holds s1); v0 = s2
+        let lines = [
+            "s_mov_b32 s1, 1",
+            "v_readfirstlane_b32 s2, s1",
+            "v_mov_b32 v0, s2",
+            "exp mrt0, v0, v0, v0, v0 done",
+        ];
+        let p = ps_blob(0x2, &lines);
+        let w = translate(&p, None);
+        assert_eq!(entry_model(&w), 4); // Fragment
+    }
+
+    #[test]
     fn barycentrics_used_other_than_by_interp_are_refused() {
         let p = ps_blob(0x2, &["v_add_f32 v8, v0, v1"]);
         match io::translate_stage(&p, &[], None) {

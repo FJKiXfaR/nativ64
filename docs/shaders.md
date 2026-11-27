@@ -702,6 +702,12 @@ it says otherwise.
    above, in three sub-chunks (7a IR and speculation, 7b uniformity / spill slots / waterfall /
    lane index, 7c whole-wave sections / quad ops / ballots). Acceptance: `--structure --stats`
    near the IR count, the remaining refusals named by `--structure --waves`.
+   **As built (chunk 7b, part): uniform `v_readfirstlane_b32`.** Structuring asks
+   `structure::wave_uniform` for the source: a value that is the same in every lane (a scalar, a
+   constant, or such values combined by ALU and earlier readlanes) is already what the first
+   lane holds, so the instruction is not a cross-lane use and the emitter translates it as a
+   copy of the source dword. A per-lane source, lane ids, DPP, swizzles and the mask reads stay
+   refused by name.
 8. **I/O** (`io.rs`): user SGPRs and root block; VS system VGPRs and vertex attributes; PS
    input VGPRs and `v_interp` raising; exports and linking by semantic; CS (`GLCompute`,
    `LocalSize` from the group size, thread id VGPRs, group id SGPRs); mesh (`MeshEXT`, one
@@ -854,6 +860,10 @@ it says otherwise.
      instead of the hardware's index and offset checks; the out-of-range rule is applied per
      dword (a dword that straddles the end reads 0); helper invocations are not excluded from
      stores.
+   * VS and PS used-resource rows are parsed too (`io::used_rows`): `StageIo::descriptor_kind`
+     answers for every stage, which is what an `image_load`/`image_store` needs to tell an SRV
+     from a UAV. Before that only a compute program knew its descriptor kinds, so a pixel shader
+     that loaded an image from a table slot stopped on chunk 9.
    * Tests (synthetic VS/PS from `fixtures.txt`, each validated with `spirv-val`): loaded
      CBV + `s_buffer_load`, dynamic table and buffer offsets, Built V# from a root descriptor
      with offen / idxen loads and a store, raw `s_load`, loaded T# + constant S# (and

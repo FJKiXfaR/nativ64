@@ -407,3 +407,8 @@ bf00064c	v_sub_nc_u32 v3, 63, v0
 8002107e	v_mov_b32 v8, 0
 8002127e	v_mov_b32 v9, 0
 8002147e	v_mov_b32 v10, 0
+810381be	s_mov_b32 s1, 1
+0104047e	v_readfirstlane_b32 s2, s1
+0102007e	v_mov_b32 v0, s1
+0202007e	v_mov_b32 v0, s2
+0f0800f800000000	exp mrt0, v0, v0, v0, v0 done

@@ -323,7 +323,7 @@ pub fn type_masks(f: &Func) -> Masks {
     uniform_masks(f, &mut m);
     for blk in &f.blocks {
         for inst in &blk.insts {
-            if let Some(name) = cross_lane_use(&m, inst) {
+            if let Some(name) = cross_lane_use(f, &m, inst) {
                 m.cross_lane.push(CrossLane {
                     at: inst.instr.at,
                     name,
@@ -431,10 +431,24 @@ fn uniform_masks(f: &Func, m: &mut Masks) {
 }
 
 /// The name under which `inst` crosses lanes, when it does.
-pub fn cross_lane_use(m: &Masks, inst: &Inst) -> Option<String> {
+pub fn cross_lane_use(f: &Func, m: &Masks, inst: &Inst) -> Option<String> {
     let i = &inst.instr;
+    let n = i.name();
     if i.dpp.is_some() {
-        return Some(format!("{} (dpp)", i.name()));
+        return Some(format!("{} (dpp)", n));
+    }
+    // `v_readfirstlane_b32` of a value that is already the same in every lane reads it: no
+    // cross-lane move happens (`structure/tests.rs`, chunk 7b partial). A per-lane source still
+    // crosses lanes.
+    if n.starts_with("v_readfirstlane") {
+        let src = inst.srcs.first().and_then(|d| d.first()).copied();
+        match src {
+            Some(Src::Const(_) | Src::Undef) => return None,
+            Some(Src::Val(v)) if wave_uniform(f, m, v, &mut std::collections::HashSet::new()) => {
+                return None
+            }
+            _ => {}
+        }
     }
     if cross_lane_by_nature(i) {
         return Some(i.name().to_string());
@@ -462,6 +476,59 @@ pub fn cross_lane_use(m: &Masks, inst: &Inst) -> Option<String> {
         }
     }
     Some(i.name().to_string())
+}
+
+/// Whether `v` is the same in every lane: a scalar, a constant, or a vector value computed
+/// from such values by ALU instructions (and by earlier readlanes, which broadcast).
+pub fn wave_uniform(
+    f: &Func,
+    m: &Masks,
+    v: Val,
+    seen: &mut std::collections::HashSet<Val>,
+) -> bool {
+    use crate::shader::gfx10::Enc;
+    if !seen.insert(v) {
+        return true;
+    }
+    if m.is_mask(v) {
+        return false;
+    }
+    let info = f.vals[v.0 as usize];
+    if !matches!(info.reg, Reg::V(_)) {
+        return matches!(info.reg, Reg::S(_) | Reg::T(_) | Reg::M0);
+    }
+    let src_ok = |s: &Src, seen: &mut std::collections::HashSet<Val>| match s {
+        Src::Val(x) => wave_uniform(f, m, *x, seen),
+        _ => true,
+    };
+    match info.def {
+        ValDef::Arg => false,
+        ValDef::Phi { block, index } => {
+            let phi = &f.blocks[block].phis[index];
+            phi.args.iter().all(|(_, s)| src_ok(s, seen))
+        }
+        ValDef::Inst { block, index } => {
+            let inst = &f.blocks[block].insts[index];
+            let i = &inst.instr;
+            let n = i.name();
+            if n.starts_with("v_readfirstlane") || n.starts_with("v_readlane") {
+                return true;
+            }
+            let alu = matches!(
+                i.enc,
+                Enc::Vop1 | Enc::Vop2 | Enc::Vop3 | Enc::Vop3p | Enc::Vopc
+            );
+            if !alu
+                || i.dpp.is_some()
+                || n.starts_with("v_mbcnt")
+                || n.starts_with("v_permlane")
+                || n.starts_with("v_writelane")
+            {
+                return false;
+            }
+            inst.srcs.iter().flatten().all(|s| src_ok(s, seen))
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------------------
