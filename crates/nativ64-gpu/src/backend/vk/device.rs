@@ -465,8 +465,9 @@ impl Gpu {
         })?;
         let fault_fn = if faults {
             // SAFETY: the device exists; the name is the extension's one function.
+            // the command name, not the extension name
             let f = unsafe {
-                instance.get_device_proc_addr(device.handle(), vk::EXT_DEVICE_FAULT_NAME.as_ptr())
+                instance.get_device_proc_addr(device.handle(), c"vkGetDeviceFaultInfoEXT".as_ptr())
             };
             // SAFETY: the extension's function has this signature.
             f.map(|f| unsafe {
