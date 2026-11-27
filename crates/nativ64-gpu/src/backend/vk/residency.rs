@@ -20,7 +20,7 @@ use super::log_once;
 use super::pipeline::HeapReads;
 use super::rootblock::RootArgs;
 use crate::d3d12::command::Command;
-use crate::d3d12::descriptor::{DescriptorHeapData, registry_index_at};
+use crate::d3d12::descriptor::{registry_index_at, DescriptorHeapData};
 use crate::d3d12::rootobj::RootSignatureData;
 use crate::d3d12::rootsig::{Binding, Range, RootSignature};
 use crate::xobj::XObject;
@@ -61,10 +61,7 @@ pub(super) struct Scanner {
 }
 
 /// The registry indices that the draws of `lists` can read.
-pub(super) fn scan(
-    lists: &[Vec<Command>],
-    reads: &mut HashMap<u64, HeapReads>,
-) -> HashSet<u32> {
+pub(super) fn scan(lists: &[Vec<Command>], reads: &mut HashMap<u64, HeapReads>) -> HashSet<u32> {
     let mut s = Scanner {
         wanted: HashSet::new(),
         seen: HashSet::new(),
@@ -195,13 +192,7 @@ impl Scanner {
     }
 
     /// The slots of the shader resource ranges of root parameter `slot`.
-    pub(super) fn table(
-        &mut self,
-        m: &RootSignature,
-        slot: u32,
-        handle: u64,
-        heap: Option<&Heap>,
-    ) {
+    pub(super) fn table(&mut self, m: &RootSignature, slot: u32, handle: u64, heap: Option<&Heap>) {
         let Some(Binding::Table(ranges)) = m.parameters.get(slot as usize).map(|p| &p.binding)
         else {
             return;
@@ -246,7 +237,9 @@ impl Scanner {
     fn slots(&mut self, first: u64, n: u64, heap: Option<Heap>) {
         let n = match heap {
             Some(h) if first < h.start || first >= h.end => {
-                log_once(format!("a descriptor range at {first:#x} is outside its heap"));
+                log_once(format!(
+                    "a descriptor range at {first:#x} is outside its heap"
+                ));
                 return;
             }
             Some(h) => n.min((h.end - first) / VIEW_SLOT),
@@ -272,4 +265,3 @@ impl Scanner {
         }
     }
 }
-
