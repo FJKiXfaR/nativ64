@@ -389,6 +389,18 @@ fn class_of(t: vk::PrimitiveTopology) -> u8 {
     }
 }
 
+/// What `clear_rects` writes.
+#[derive(Clone, Copy)]
+pub(super) enum ClearValue {
+    Color([f32; 4]),
+    Depth {
+        depth: f32,
+        stencil: u8,
+        do_depth: bool,
+        do_stencil: bool,
+    },
+}
+
 impl<'g> VkBackend<'g> {
     /// Ends the open rendering instance, if any.
     pub(super) fn end_rendering(&mut self, d: &Device, cb: vk::CommandBuffer) {
@@ -433,6 +445,101 @@ impl<'g> VkBackend<'g> {
                 None
             }
         }
+    }
+
+    /// Clears the parts of one mip and layer inside `rects` with a rendering instance per
+    /// rectangle (a clear command cannot be scissored). `depth` is `Some((depth, stencil value,
+    /// clear depth, clear stencil))` for a depth view. Returns false when no view exists.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn clear_rects(
+        &mut self,
+        d: &Device,
+        cb: vk::CommandBuffer,
+        res: usize,
+        img: Img,
+        (mip, layer): (u32, u32),
+        rects: &[[i32; 4]],
+        value: ClearValue,
+    ) -> bool {
+        let depth = matches!(value, ClearValue::Depth { .. });
+        let Some(view) = self.image_view(res, img, mip, layer, depth) else {
+            return false;
+        };
+        let (w, h) = (
+            (img.width >> mip).max(1) as i32,
+            (img.height >> mip).max(1) as i32,
+        );
+        self.end_rendering(d, cb);
+        for r in rects {
+            let (x0, y0) = (r[0].clamp(0, w), r[1].clamp(0, h));
+            let (x1, y1) = (r[2].clamp(x0, w), r[3].clamp(y0, h));
+            if x1 == x0 || y1 == y0 {
+                continue;
+            }
+            let area = vk::Rect2D {
+                offset: vk::Offset2D { x: x0, y: y0 },
+                extent: vk::Extent2D {
+                    width: (x1 - x0) as u32,
+                    height: (y1 - y0) as u32,
+                },
+            };
+            let att = |clear: bool, v: vk::ClearValue| {
+                vk::RenderingAttachmentInfo::default()
+                    .image_view(view)
+                    .image_layout(vk::ImageLayout::GENERAL)
+                    .load_op(if clear {
+                        vk::AttachmentLoadOp::CLEAR
+                    } else {
+                        vk::AttachmentLoadOp::LOAD
+                    })
+                    .store_op(vk::AttachmentStoreOp::STORE)
+                    .clear_value(v)
+            };
+            let mut info = vk::RenderingInfo::default()
+                .render_area(area)
+                .layer_count(1);
+            let color;
+            let (dep, ste);
+            match value {
+                ClearValue::Color(c) => {
+                    color = [att(
+                        true,
+                        vk::ClearValue {
+                            color: vk::ClearColorValue { float32: c },
+                        },
+                    )];
+                    info = info.color_attachments(&color);
+                }
+                ClearValue::Depth {
+                    depth: dv,
+                    stencil: sv,
+                    do_depth,
+                    do_stencil,
+                } => {
+                    let v = vk::ClearValue {
+                        depth_stencil: vk::ClearDepthStencilValue {
+                            depth: dv,
+                            stencil: u32::from(sv),
+                        },
+                    };
+                    if img.info.aspect.contains(vk::ImageAspectFlags::DEPTH) {
+                        dep = att(do_depth, v);
+                        info = info.depth_attachment(&dep);
+                    }
+                    if img.info.aspect.contains(vk::ImageAspectFlags::STENCIL) {
+                        ste = att(do_stencil, v);
+                        info = info.stencil_attachment(&ste);
+                    }
+                }
+            }
+            // SAFETY: `cb` is recording outside a rendering instance; the view is ours.
+            unsafe {
+                d.cmd_begin_rendering(cb, &info);
+                d.cmd_end_rendering(cb);
+            }
+        }
+        global_barrier(d, cb);
+        true
     }
 
     /// Whether `image(res)` would reuse an image (so it records nothing).

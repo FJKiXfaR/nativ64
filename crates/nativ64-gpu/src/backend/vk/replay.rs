@@ -12,6 +12,7 @@
 //! `textures.rs` when it is sampled or copied from) until it has been a render or depth target,
 //! a clear or copy destination (then the GPU's: its host memory is stale and never read again).
 
+use super::draw::ClearValue;
 use super::format::{self, FormatInfo};
 use super::textures::TexState;
 use super::{log_once, vk_try, Gpu, Result, VkError};
@@ -833,7 +834,21 @@ impl<'g> VkBackend<'g> {
                 let desc = (v.described != 0).then_some(v.desc);
                 let (mip, layer, n) = view_range(img, desc, false);
                 if !covers(rects, mip_size(img.width, mip), mip_size(img.height, mip)) {
-                    return self.skip(c, "partial rectangles");
+                    for l in layer..layer + n {
+                        if !self.clear_rects(
+                            d,
+                            cb,
+                            v.resource,
+                            img,
+                            (mip, l),
+                            rects,
+                            ClearValue::Color(*color),
+                        ) {
+                            return self.skip(c, "no view for a partial clear");
+                        }
+                    }
+                    self.stats.clears += 1;
+                    return;
                 }
                 // SAFETY: `cb` is recording; the image is in GENERAL.
                 unsafe {
@@ -875,7 +890,26 @@ impl<'g> VkBackend<'g> {
                 let desc = (v.described != 0).then_some(v.desc);
                 let (mip, layer, n) = view_range(img, desc, true);
                 if !covers(rects, mip_size(img.width, mip), mip_size(img.height, mip)) {
-                    return self.skip(c, "partial rectangles");
+                    for l in layer..layer + n {
+                        if !self.clear_rects(
+                            d,
+                            cb,
+                            v.resource,
+                            img,
+                            (mip, l),
+                            rects,
+                            ClearValue::Depth {
+                                depth: *depth,
+                                stencil: *stencil,
+                                do_depth: aspect.contains(vk::ImageAspectFlags::DEPTH),
+                                do_stencil: aspect.contains(vk::ImageAspectFlags::STENCIL),
+                            },
+                        ) {
+                            return self.skip(c, "no view for a partial clear");
+                        }
+                    }
+                    self.stats.clears += 1;
+                    return;
                 }
                 // SAFETY: as above.
                 unsafe {
@@ -1519,16 +1553,27 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn partial_rectangles_are_skipped() {
+    fn partial_rectangles_clear_only_inside() {
         let Some(g) = gpu_or_skip() else { return };
         let mut b = VkBackend::new(&g);
         let res = texture(16, 8, 28, 1);
-        b.execute(&[vec![Command::ClearRenderTarget {
-            handle: rtv(res),
-            color: [1.0; 4],
-            rects: vec![[0, 0, 4, 4]],
-        }]]);
-        assert_eq!((b.stats.clears, b.stats.skipped), (0, 1));
+        b.execute(&[vec![
+            Command::ClearRenderTarget {
+                handle: rtv(res),
+                color: [0.0; 4],
+                rects: vec![],
+            },
+            Command::ClearRenderTarget {
+                handle: rtv(res),
+                color: [1.0; 4],
+                rects: vec![[0, 0, 4, 4], [8, 6, 100, 100]],
+            },
+        ]]);
+        assert_eq!((b.stats.clears, b.stats.skipped), (2, 0));
+        let px = b.read_back(res).unwrap().bytes;
+        let at = |x: usize, y: usize| px[(y * 16 + x) * 4];
+        assert_eq!((at(0, 0), at(3, 3), at(4, 0), at(0, 4)), (255, 255, 0, 0));
+        assert_eq!((at(8, 6), at(15, 7), at(7, 6), at(8, 5)), (255, 255, 0, 0));
     }
 
     #[test]
