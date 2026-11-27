@@ -416,6 +416,7 @@ impl Image {
             return Err(LoadError::NoEntryPoint);
         }
         self.register_dlls();
+        crate::patches::apply(self.base() as usize);
         if let Some(hooks) = self.export(ExportRef::Name("__XMemAllocationHooks__")) {
             nativ64_gpu::xmem::set_allocation_hooks(hooks as usize);
         }

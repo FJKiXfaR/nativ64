@@ -5,7 +5,9 @@
 mod error;
 mod exports;
 pub mod fault;
+pub use patches::{apply as apply_patches, parse as parse_patches, Patch};
 mod image;
+mod patches;
 mod pe;
 mod stubs;
 pub mod teb;
