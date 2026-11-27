@@ -449,10 +449,42 @@ impl<'g> VkBackend<'g> {
         &mut self,
         pd: &crate::d3d12::pipeline::PipelineData,
         built: &super::pipeline::Built,
+        c: &Command,
     ) {
         use std::sync::Mutex;
         static LAST: Mutex<u64> = Mutex::new(u64::MAX);
         static LAST_SEEN: Mutex<Vec<u64>> = Mutex::new(Vec::new());
+        // `NATIV64_DRAW_ROWS_PS=<hex hash>`: every draw whose pixel shader is that hash, per
+        // draw (up to two a frame), with the draw itself - a pipeline's rows alone cannot say
+        // which table the draw bound.
+        if let Ok(want_ps) = std::env::var("NATIV64_DRAW_ROWS_PS") {
+            let Ok(hash) = u64::from_str_radix(want_ps.trim(), 16) else {
+                return;
+            };
+            let ps = pd
+                .stages
+                .iter()
+                .find(|s| s.name == "pixel")
+                .map(|s| crate::shader::fnv1a64(&s.bytes));
+            if ps != Some(hash) {
+                return;
+            }
+            static PS_FRAME: Mutex<(u64, u32)> = Mutex::new((u64::MAX, 0));
+            let frame = self.frames + 1;
+            {
+                let mut f = PS_FRAME.lock().unwrap_or_else(|e| e.into_inner());
+                if f.0 != frame {
+                    *f = (frame, 0);
+                }
+                if f.1 >= 2 {
+                    return;
+                }
+                f.1 += 1;
+            }
+            super::log_once(format!("draw {c:?}"));
+            self.log_rows(pd, built);
+            return;
+        }
         let Ok(want) = std::env::var("NATIV64_DRAW_ROWS") else {
             return;
         };
@@ -486,6 +518,15 @@ impl<'g> VkBackend<'g> {
                 *last = frame;
             }
         }
+        self.log_rows(pd, built);
+    }
+
+    /// Prints the descriptor rows of one draw with the registry entry each names.
+    fn log_rows(
+        &mut self,
+        pd: &crate::d3d12::pipeline::PipelineData,
+        built: &super::pipeline::Built,
+    ) {
         let heap = self.draw.list.root.resource_heap();
         let ps = pd
             .stages
@@ -866,7 +907,7 @@ impl<'g> VkBackend<'g> {
         if self.inspecting() {
             self.inspect_draw(c, pd, &resources, extent, rects);
         }
-        self.log_rows_once(pd, &built);
+        self.log_rows_once(pd, &built, c);
         if self.skipped_by_filter() || self.skipped_by_serial(pd.serial as usize) {
             return Ok(());
         }
