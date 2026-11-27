@@ -503,7 +503,16 @@ impl<'g> VkBackend<'g> {
                     if self.inspecting() {
                         self.inspect_command(c);
                     }
+                    // A command that takes milliseconds names a replay hot spot (the frame
+                    // budget of a fast frame here is a few tens of them).
+                    let command_started = std::time::Instant::now();
                     self.record(d, cb, c, &mut staging);
+                    let took = command_started.elapsed();
+                    if took.as_millis() >= 2 {
+                        let mut what = format!("{c:?}");
+                        what.truncate(120);
+                        eprintln!("nativ64-gpu: recording {what} took {} ms", took.as_millis());
+                    }
                     if matches!(
                         c,
                         Command::ClearRenderTarget { .. }
@@ -1114,11 +1123,22 @@ impl<'g> VkBackend<'g> {
                 wide,
                 ..
             } => {
+                let t0 = std::time::Instant::now();
                 let (Ok(a), size) = (usize::try_from(*address), if *wide { 8 } else { 4 }) else {
                     return self.skip(c, "an address out of range");
                 };
+                let t1 = std::time::Instant::now();
                 if !committed(a, size) {
                     return self.skip(c, "a write to memory that is not committed");
+                }
+                let t2 = std::time::Instant::now();
+                if t2.duration_since(t0).as_millis() >= 2 {
+                    eprintln!(
+                        "nativ64-gpu: writebottom setup {} ms (committed {} ms) at {:#x}",
+                        t2.duration_since(t0).as_millis(),
+                        t2.duration_since(t1).as_millis(),
+                        a
+                    );
                 }
                 // Written at record time: the title's other threads poll these fence values
                 // while this replay runs (a frame can take a second during a load, and a wait

@@ -483,10 +483,18 @@ impl<'g> VkBackend<'g> {
             return skip(Skip::State("no bindless descriptor set".into()));
         };
         let set = bl.set;
+        let pipe_started = std::time::Instant::now();
         let built = match draw.pipelines.get(bl, &mut draw.samplers, pd, rects, over) {
             Outcome::Built(b) => b.clone(),
             Outcome::Failed(w) => return skip(Skip::Pipeline(w.clone())),
         };
+        if pipe_started.elapsed().as_millis() >= 1 {
+            eprintln!(
+                "nativ64-gpu: pipeline {} for a draw took {} ms",
+                pd.serial,
+                pipe_started.elapsed().as_millis()
+            );
+        }
         let layout = built.layouts.layout;
 
         // Targets: the images of the bound views, in the formats the pipeline was made for.
@@ -524,6 +532,7 @@ impl<'g> VkBackend<'g> {
         {
             self.end_rendering(d, cb);
         }
+        let images_started = std::time::Instant::now();
         let mut color_views = Vec::new();
         let mut extent = None;
         for (&(i, _), v) in colors.iter().zip(&resources) {
@@ -595,6 +604,7 @@ impl<'g> VkBackend<'g> {
         };
         let mem = &mut self.draw.mem;
         let list = &self.draw.list;
+        let root_started = std::time::Instant::now();
         let block = rootblock::fill(&built.rows, &list.root, view_table, &mut |a| {
             mem.translate(a, 1).map(|m| m.address)
         })
@@ -602,6 +612,12 @@ impl<'g> VkBackend<'g> {
             rootblock::FillError::Memory(w) => Skip::Memory(w),
             rootblock::FillError::Layout(w) => Skip::State(w),
         })?;
+        if root_started.elapsed().as_millis() >= 1 {
+            eprintln!(
+                "nativ64-gpu: the root block of a draw took {} ms",
+                root_started.elapsed().as_millis()
+            );
+        }
         let mut vbufs = Vec::new();
         for &slot in &built.vertex_slots {
             let Some(v) = list.vertex.get(&slot) else {
@@ -825,6 +841,7 @@ impl<'g> VkBackend<'g> {
                 },
             },
         );
+        let commands_started = std::time::Instant::now();
         // SAFETY: `cb` is recording inside a rendering instance; every handle is live until
         // the submission completes (imports are only dropped between submissions).
         unsafe {
@@ -920,6 +937,12 @@ impl<'g> VkBackend<'g> {
                 }
                 _ => unreachable!("draw_command is called for draws"),
             }
+        }
+        if commands_started.elapsed().as_millis() >= 1 {
+            eprintln!(
+                "nativ64-gpu: the commands of a draw took {} ms",
+                commands_started.elapsed().as_millis()
+            );
         }
         Ok(())
     }
