@@ -435,24 +435,63 @@ impl State {
         let seconds = elapsed.as_secs_f64();
         let buttons = self.buttons_at(seconds);
         *SCRIPT_AXES.lock().unwrap_or_else(|e| e.into_inner()) = self.script.axes_at(seconds);
-        let mut history = self.history.lock().unwrap_or_else(|e| e.into_inner());
-        match history.last() {
-            Some(last) if last.buttons == buttons => *last,
-            _ => {
-                let entry = Entry {
-                    sequence: self.next_sequence.fetch_add(1, Ordering::Relaxed),
-                    timestamp,
-                    buttons,
-                };
-                eprintln!(
-                    "nativ64: gamepad buttons {buttons:#x} at {:.2} s after the first query",
-                    elapsed.as_secs_f64()
-                );
-                history.push(entry);
-                if history.len() > HISTORY {
-                    history.remove(0);
+        let fresh = {
+            let mut history = self.history.lock().unwrap_or_else(|e| e.into_inner());
+            match history.last() {
+                Some(last) if last.buttons == buttons => None,
+                _ => {
+                    let entry = Entry {
+                        sequence: self.next_sequence.fetch_add(1, Ordering::Relaxed),
+                        timestamp,
+                        buttons,
+                    };
+                    eprintln!(
+                        "nativ64: gamepad buttons {buttons:#x} at {:.2} s after the first query",
+                        elapsed.as_secs_f64()
+                    );
+                    history.push(entry);
+                    if history.len() > HISTORY {
+                        history.remove(0);
+                    }
+                    Some(entry)
                 }
-                entry
+            }
+        };
+        if let Some(entry) = fresh {
+            // the history lock is released before the title's callbacks run (they may query a
+            // reading again)
+            self.fire_reading_callbacks(entry);
+            entry
+        } else {
+            *self
+                .history
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .last()
+                .expect("an entry")
+        }
+    }
+
+    /// The new reading goes to every `RegisterReadingCallback` registration, as the title sees it
+    /// (the reading is valid for the call; the caller keeps its own references).
+    fn fire_reading_callbacks(&self, entry: Entry) {
+        let targets: Vec<(u64, usize, usize)> = self
+            .regs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .filter(|r| matches!(r.kind, Kind::Reading))
+            .map(|r| (r.token, r.context, r.callback))
+            .collect();
+        for (token, context, callback) in targets {
+            let reading = new_reading(entry);
+            // SAFETY: the callback the title registered, with its own context and a reading of
+            // ours; the reading is released afterwards as the API's borrowed one is.
+            unsafe {
+                let f: unsafe extern "win64" fn(u64, *mut c_void, *mut c_void) =
+                    std::mem::transmute(callback);
+                f(token, context as *mut c_void, reading);
+                release_reading(reading);
             }
         }
     }
@@ -592,6 +631,29 @@ pub fn keyboard_device() -> *mut c_void {
     *KEYBOARD_DEVICE as *mut c_void
 }
 
+/// `NATIV64_KB_LOG=1`: print what the title asks the keyboard device for (throttled per call
+/// site), so a run says why a menu ignores the keys.
+fn kb_log(what: &str) {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var_os("NATIV64_KB_LOG").is_some()) {
+        return;
+    }
+    static SEEN: std::sync::Mutex<[u32; 8]> = std::sync::Mutex::new([0; 8]);
+    let slot = match what {
+        "device info" => 0,
+        "current reading" => 1,
+        "key count" => 2,
+        "key state" => 3,
+        "reading callback" => 4,
+        _ => 5,
+    };
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    seen[slot] += 1;
+    if seen[slot] <= 8 {
+        eprintln!("nativ64: kb {what} #{}", seen[slot]);
+    }
+}
+
 /// The keys a reading holds down, from its buttons.
 fn keys_of(buttons: u32) -> Vec<KeyState> {
     KEY_MAP
@@ -621,7 +683,13 @@ extern "win64" fn unsupported<const WHICH: u8, const SLOT: usize>(_: *mut c_void
 
 extern "win64" fn device_info(this: Device) -> *const DeviceInfo {
     // SAFETY: the device object.
-    unsafe { &(*this).data }
+    let info = unsafe { &(*this).data };
+    kb_log(if info.supported_input == KIND_KEYBOARD {
+        "device info (keyboard)"
+    } else {
+        "device info"
+    });
+    info
 }
 extern "win64" fn device_status(_: Device) -> u32 {
     STATUS_CONNECTED
@@ -753,6 +821,12 @@ fn new_reading(entry: Entry) -> *mut c_void {
     ReadingObject::create(&READING_VTBL, &[], entry) as *mut c_void
 }
 
+/// Drops a reference of a reading this module made.
+fn release_reading(reading: *mut c_void) {
+    // SAFETY: a reading of ours.
+    unsafe { crate::com::release(reading as Reading) };
+}
+
 extern "win64" fn reading_kind(_: Reading) -> u32 {
     PAD_KINDS | KIND_KEYBOARD
 }
@@ -865,6 +939,7 @@ extern "win64" fn reading_trap<const SLOT: usize>(_: Reading) -> usize {
 extern "win64" fn key_count(this: Reading) -> u32 {
     // SAFETY: a reading we handed out.
     let buttons = unsafe { (*this).data.buttons };
+    kb_log("key count");
     keys_of(buttons).len() as u32
 }
 /// `GetKeyState(index, out)`: one of the keys the reading holds down.
@@ -1010,6 +1085,9 @@ unsafe extern "win64" fn get_current_reading(
     }
     let entry = (*this).data.poll();
     let wanted = selects_pad(kinds, dev) || selects_keyboard(kinds, dev);
+    if kinds & KIND_KEYBOARD != 0 {
+        kb_log("current reading (keyboard)");
+    }
     hand(out, wanted.then_some(entry))
 }
 /// The reading after (`forward`) or before `reference`, in the history.
@@ -1082,6 +1160,7 @@ unsafe extern "win64" fn register_reading_callback(
     out: *mut u64,
 ) -> HRESULT {
     (*this).data.register(Kind::Reading, context, callback, out);
+    kb_log("reading callback");
     S_OK
 }
 /// (token, context, device, timestamp, current status, previous status)
@@ -1685,6 +1764,53 @@ mod tests {
             let battery: unsafe extern "win64" fn(*mut c_void) -> HRESULT =
                 crate::xgameruntime::method(d, 5);
             assert_eq!(battery(d), E_NOTIMPL);
+        }
+    }
+
+    static READ: Mutex<Vec<(u64, usize, u32)>> = Mutex::new(Vec::new());
+    unsafe extern "win64" fn on_reading(token: u64, ctx: *mut c_void, reading: *mut c_void) {
+        let buttons: unsafe extern "win64" fn(*mut c_void) -> u32 =
+            crate::xgameruntime::method(reading, 22);
+        let pad: unsafe extern "win64" fn(*mut c_void, *mut u32) -> bool =
+            crate::xgameruntime::method(reading, 22);
+        let _ = (buttons, pad);
+        let kind: unsafe extern "win64" fn(*mut c_void) -> u32 =
+            crate::xgameruntime::method(reading, 3);
+        READ.lock()
+            .unwrap()
+            .push((token, ctx as usize, kind(reading)));
+    }
+
+    #[test]
+    fn a_reading_callback_sees_each_change() {
+        unsafe {
+            let (o, v) = create();
+            (*o).data = State::new(Script::parse("4@1+1"));
+            let mut token = 0u64;
+            assert_eq!(
+                (v.register_reading_callback)(
+                    o,
+                    std::ptr::null_mut(),
+                    KIND_GAMEPAD,
+                    0.0,
+                    0x77 as *mut c_void,
+                    on_reading as *const c_void,
+                    &mut token
+                ),
+                S_OK
+            );
+            let st = &(*o).data;
+            st.poll_at(Duration::ZERO, 1);
+            st.poll_at(Duration::from_secs_f64(1.5), 2);
+            let seen = READ.lock().unwrap().clone();
+            let mine: Vec<_> = seen.iter().filter(|e| e.1 == 0x77).collect();
+            assert_eq!(mine.len(), 2, "two changes: rest, then A");
+            assert_eq!(
+                mine[1].2 & KIND_KEYBOARD,
+                KIND_KEYBOARD,
+                "the reading is a keyboard too"
+            );
+            (v.unknown.release)(o);
         }
     }
 
