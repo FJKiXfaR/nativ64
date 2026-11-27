@@ -59,7 +59,21 @@ struct Import<'g> {
 /// pages of an import, so an import nobody reads any more only holds host memory.
 const IDLE_SUBMISSIONS: u64 = 300;
 /// Most bytes kept imported across submissions: past it, the least recently used imports go.
-const IMPORT_CAP: usize = 512 << 20;
+/// An import maps memory the title already has (no copy, no VRAM), but a cap below the working
+/// set of the view records made every submission drop dozens of windows and rewrite thousands
+/// of view records to import them again (tens of ms per frame). `NATIV64_IMPORT_CAP_MB`
+/// overrides it for measurement.
+const IMPORT_CAP: usize = 2048 << 20;
+
+fn import_cap() -> usize {
+    static CAP: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *CAP.get_or_init(|| {
+        std::env::var("NATIV64_IMPORT_CAP_MB")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .map_or(IMPORT_CAP, |mb| mb << 20)
+    })
+}
 
 pub struct GpuMemory<'g> {
     gpu: &'g Gpu,
@@ -161,7 +175,7 @@ impl<'g> GpuMemory<'g> {
             self.forget(&changes);
             self.changed = changes;
         }
-        any |= self.retire(IDLE_SUBMISSIONS, IMPORT_CAP);
+        any |= self.retire(IDLE_SUBMISSIONS, import_cap());
         any
     }
 

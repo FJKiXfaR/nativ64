@@ -91,7 +91,7 @@ APIs only (libc as its only dependency).
   the console). `MEM_DECOMMIT`/`MEM_RELEASE` are `mmap(PROT_NONE)`/`munmap`. The CRT heap and the
   default `XMemAlloc` are glibc: thresholds are fixed (`xmem::return_big_blocks_to_the_host`) so
   blocks of 1 MiB or more are `munmap`ped by `free`. The GPU keeps host-pointer imports
-  (`gpumem.rs`: dropped on a recorded change, after 300 idle submissions, or LRU past 512 MiB) and
+  (`gpumem.rs`: dropped on a recorded change, after 300 idle submissions, or LRU past `IMPORT_CAP`, 2 GiB: a lower cap churned dozens of imports and view records per frame) and
   placed images (dropped when memory under them changes). The memory line (every 600 frames) ends
   with `host: anon .. (trim freed ..), shmem .., xmem pages .., xmem file ..`: `xmem file` above
   `xmem pages` means freed pages stayed in the file.
@@ -308,6 +308,7 @@ The executable imports from `d3d12_xs` only `D3D12XboxCreateDevice` and
 - `NATIV64_DUMP_FROM=<n>` skips the kept frames before `n` (to reach a late frame with
   `NATIV64_DUMP_TARGETS` in reasonable time); `NATIV64_DRAW_ONLY=<a>-<b>` records only draws `a`
   to `b` of each described frame (bisect which draw produces or breaks a pixel).
+- `NATIV64_IMPORT_CAP_MB=<n>` overrides the host-pointer import cap (default 2048).
 - `NATIV64_PROFILE=1` prints, every 60 presented frames, the seconds spent in each phase of a
   submission (texture sync, write watch, hashing, uploads, recording, dump) and their counters.
 
