@@ -272,6 +272,10 @@ impl Gpu {
                     .unwrap_or_default()
                     .iter()
                     .any(|e| e.extension_name_as_c_str() == Ok(memory_budget::NAME));
+                log_once(format!(
+                    "device fault reporting: {}",
+                    if device_fault.is_some() { "on" } else { "off" }
+                ));
                 Ok(Gpu {
                     caps,
                     device_fault,

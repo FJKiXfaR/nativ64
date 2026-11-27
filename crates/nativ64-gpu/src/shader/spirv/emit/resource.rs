@@ -1110,6 +1110,7 @@ impl<'a> Tr<'a> {
             "buffer_store_dwordx4" => (false, 4),
             "buffer_load_ubyte" | "buffer_load_sbyte" | "buffer_load_ushort"
             | "buffer_load_sshort" => (true, 1),
+            "buffer_store_short" | "buffer_store_byte" => (false, 1),
             _ => {
                 if let Some(op) = name.strip_prefix("buffer_atomic_") {
                     return self.mubuf_atomic(c, op);
@@ -1207,10 +1208,41 @@ impl<'a> Tr<'a> {
                 };
                 let d = self.bits_of(d);
                 let ok = self.and(valid, c.active);
-                self.guarded(Some(ok), |t| {
-                    t.bda_store_u32(a, d);
-                    Ok(())
-                })?;
+                match name {
+                    "buffer_store_short" | "buffer_store_byte" => {
+                        // the 16-bit (or 8-bit) field of the dword the address names
+                        let (bits, at_mask) = if name == "buffer_store_short" {
+                            (16u32, 2u32)
+                        } else {
+                            (8u32, 3u32)
+                        };
+                        let old = self.guarded_load(a, ok)?;
+                        let tu = self.g.t_u32();
+                        let tb = self.g.t_bool();
+                        let mask_k = self.g.k(at_mask);
+                        let at = self.g.op(Op::BitwiseAnd, tu, &[a, mask_k]);
+                        let three = self.g.k(3);
+                        let sh = self.g.op(Op::ShiftLeftLogical, tu, &[at, three]);
+                        let field = self.g.k((1u32 << bits) - 1);
+                        let value = self.g.op(Op::BitwiseAnd, tu, &[d, field]);
+                        let value = self.g.op(Op::ShiftLeftLogical, tu, &[value, sh]);
+                        let keep = self.g.op(Op::ShiftLeftLogical, tu, &[field, sh]);
+                        let keep = self.g.op(Op::Not, tu, &[keep]);
+                        let kept = self.g.op(Op::BitwiseAnd, tu, &[old, keep]);
+                        let new = self.g.op(Op::BitwiseOr, tu, &[kept, value]);
+                        let _ = tb;
+                        self.guarded(Some(ok), |t| {
+                            t.bda_store_u32(a, new);
+                            Ok(())
+                        })?;
+                    }
+                    _ => {
+                        self.guarded(Some(ok), |t| {
+                            t.bda_store_u32(a, d);
+                            Ok(())
+                        })?;
+                    }
+                }
             }
         }
         Ok(Some(out))
@@ -2708,6 +2740,42 @@ impl<'a> Tr<'a> {
         Ok(Some(Vec::new()))
     }
 
+    /// `ds_read_u16`: the 16-bit field the byte address names, zero-extended.
+    fn ds_read_u16(&mut self, c: &Ctx<Gen>) -> R<Option<Vec<Opd<Gen>>>> {
+        let i = &c.inst.instr;
+        let name = i.name();
+        if i.mem.gds {
+            return refuse(&format!("{name} on GDS"));
+        }
+        let (var, n) = self.lds()?;
+        let tu = self.g.t_u32();
+        let tb = self.g.t_bool();
+        let Some(&addr) = c.srcs.first().and_then(|s| s.first()) else {
+            return bad("a DS read without its address");
+        };
+        let addr = self.bits_of(addr);
+        let off = self.g.k(i.mem.offset as u32 & 0xffff);
+        let byte = self.g.op(Op::IAdd, tu, &[addr, off]);
+        let two = self.g.k(2);
+        let word = self.g.op(Op::ShiftRightLogical, tu, &[byte, two]);
+        let nn = self.g.k(n);
+        let inside = self.g.op(Op::ULessThan, tb, &[word, nn]);
+        let zero = self.g.k(0);
+        let safe = self.g.select(inside, word, zero);
+        let p = self.g.t_ptr(StorageClass::Workgroup, tu);
+        let ptr = self.g.op(Op::AccessChain, p, &[var, safe]);
+        let v = self.g.load(tu, ptr);
+        let v = self.g.select(inside, v, zero);
+        // the half: bit 1 of the byte address
+        let bit = self.g.op(Op::BitwiseAnd, tu, &[byte, two]);
+        let one = self.g.k(1);
+        let sh = self.g.op(Op::ShiftLeftLogical, tu, &[bit, one]);
+        let half = self.g.op(Op::ShiftRightLogical, tu, &[v, sh]);
+        let mask = self.g.k(0xffff);
+        let half = self.g.op(Op::BitwiseAnd, tu, &[half, mask]);
+        Ok(Some(vec![self.lane_result(c, 0, half)]))
+    }
+
     /// `ds_swizzle_b32`: the LDS read address comes from the lane the swizzle immediate picks
     /// (`((lane & and) | or) ^ xor`, or a quad permutation), a subgroup shuffle of the address.
     fn ds_swizzle(&mut self, c: &Ctx<Gen>) -> R<Option<Vec<Opd<Gen>>>> {
@@ -2858,7 +2926,10 @@ impl<'a> Tr<'a> {
             "_b16" if !read => {
                 return self.ds_write_b16(c);
             }
-            "_b16" => return refuse(name),
+            "_u16" if read => {
+                return self.ds_read_u16(c);
+            }
+            "_b16" | "_u16" => return refuse(name),
             _ => return Ok(None),
         };
         if i.mem.gds {
