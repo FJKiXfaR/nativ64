@@ -28,6 +28,22 @@ pub fn rgba8(rb: &Readback) -> Option<Vec<u8>> {
                 .for_each(|p| p.swap(0, 2));
             Some(v)
         }
+        // Single- and two-channel images (an A8 mask target, R8 glyph atlases, R8G8 masks): the
+        // channels are shown as grey and alpha, so a mask's coverage is visible in a PNG.
+        vk::Format::R8_UNORM => {
+            let mut v = Vec::with_capacity(rb.bytes.len() * 4);
+            for &r in &rb.bytes {
+                v.extend_from_slice(&[r, r, r, 255]);
+            }
+            Some(v)
+        }
+        vk::Format::R8G8_UNORM => {
+            let mut v = Vec::with_capacity(rb.bytes.len() * 2);
+            for &[r, g] in rb.bytes.as_chunks::<2>().0 {
+                v.extend_from_slice(&[r, g, 0, 255]);
+            }
+            Some(v)
+        }
         _ => None,
     }
 }
