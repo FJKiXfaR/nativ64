@@ -1133,8 +1133,8 @@ impl<'a> Tr<'a> {
                             .map(|r| (false, r))
                     })
                 {
-                    let n = Self::format_components(rest)?;
-                    return self.mubuf_format(c, load, n, false);
+                    let (n, half) = Self::format_components(rest)?;
+                    return self.mubuf_format(c, load, n, false, half);
                 }
                 // a typed buffer load (`tbuffer_*`) carries its format in the instruction and
                 // always uses its address VGPR
@@ -1146,8 +1146,8 @@ impl<'a> Tr<'a> {
                             .map(|r| (false, r))
                     })
                 {
-                    let n = Self::format_components(rest)?;
-                    return self.mubuf_format(c, load, n, true);
+                    let (n, half) = Self::format_components(rest)?;
+                    return self.mubuf_format(c, load, n, true, half);
                 }
                 return Ok(None);
             }
@@ -1353,14 +1353,20 @@ impl<'a> Tr<'a> {
     }
 
     /// The component count of a `*_format_x/y/z/w` opcode suffix.
-    fn format_components(suffix: &str) -> R<usize> {
-        Ok(match suffix {
+    fn format_components(suffix: &str) -> R<(usize, bool)> {
+        // `d16_*` converts the format's components to halves, two to a dword
+        let (suffix, half) = match suffix.strip_prefix("d16_") {
+            Some(r) => (r, true),
+            None => (suffix, false),
+        };
+        let n = match suffix {
             "x" => 1,
             "xy" => 2,
             "xyz" => 3,
             "xyzw" => 4,
             other => return refuse(&format!("buffer format op '{other}'")),
-        })
+        };
+        Ok((n, half))
     }
 
     /// `buffer_load_format_*` / `buffer_store_format_*`: `n` components of the instruction's
@@ -1371,6 +1377,7 @@ impl<'a> Tr<'a> {
         load: bool,
         n: usize,
         address_used: bool,
+        half: bool,
     ) -> R<Option<Vec<Opd<Gen>>>> {
         let i = &c.inst.instr;
         let m = i.mem;
@@ -1392,8 +1399,13 @@ impl<'a> Tr<'a> {
             // a packed format (2_10_10_10) still covers whole bytes
             bits.iter().sum::<u32>().div_ceil(8)
         };
+        if half && !load {
+            return refuse("a d16 buffer format store");
+        }
+        // a half result packs two components per dword
+        let words = if half { n.div_ceil(2) } else { n };
         let ns = c.srcs.len();
-        if ns < 2 || (load && c.inst.dsts.len() != n) {
+        if ns < 2 || (load && c.inst.dsts.len() != words) {
             return bad("a buffer format op whose operands do not match its width");
         }
         let buf = self.buffer_of(&c.inst.srcs[ns - 2], &c.srcs[ns - 2])?;
@@ -1590,6 +1602,9 @@ impl<'a> Tr<'a> {
                 }
                 out.push(self.lane_result(c, j, selected));
             }
+            if half {
+                out = self.half_words(out)?;
+            }
             return Ok(Some(out));
         }
         let mut bit = 0u32;
@@ -1599,7 +1614,33 @@ impl<'a> Tr<'a> {
             out.push(self.lane_result(c, j, v));
             bit += b;
         }
+        if half {
+            out = self.half_words(out)?;
+        }
         Ok(Some(out))
+    }
+
+    /// Pack a d16 load's component dwords two halves per word (a lone component leaves the high
+    /// half zero).
+    fn half_words(&mut self, out: Vec<Opd<Gen>>) -> R<Vec<Opd<Gen>>> {
+        let mut vals = Vec::new();
+        for o in out {
+            match o {
+                Opd::V(v) => vals.push(v),
+                Opd::B(_) => return bad("a half component that is a mask"),
+            }
+        }
+        let mut words = Vec::new();
+        for pair in vals.chunks(2) {
+            let lo = pair[0];
+            let hi = match pair.get(1) {
+                Some(&h) => h,
+                None => self.g.k(0),
+            };
+            let v = self.g.pack_half2(lo, hi);
+            words.push(Opd::V(v));
+        }
+        Ok(words)
     }
 
     /// The dword a format load leaves for one component (float bits for the normalized and
