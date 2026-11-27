@@ -17,6 +17,8 @@ pub(super) enum Phase {
     Upload,
     /// Recording and executing the lists (the wait for the GPU included).
     Record,
+    /// Only the CPU recording of a list; the rest of `Record` is the submission and its wait.
+    Replay,
     /// Frame dumps (PNG).
     Dump,
     /// Making the images of the textures.
@@ -56,9 +58,9 @@ pub(super) enum Count {
     Dispatched,
 }
 
-const PHASES: [&str; 11] = [
-    "sync", "watch", "hash", "upload", "record", "dump", "image", "descr", "syncrec", "hostup",
-    "placedup",
+const PHASES: [&str; 12] = [
+    "sync", "watch", "hash", "upload", "record", "replay", "dump", "image", "descr", "syncrec",
+    "hostup", "placedup",
 ];
 const COUNTS: [&str; 14] = [
     "looked",
@@ -77,7 +79,7 @@ const COUNTS: [&str; 14] = [
     "dispatched",
 ];
 
-static NANOS: [AtomicU64; 11] = [const { AtomicU64::new(0) }; 11];
+static NANOS: [AtomicU64; 12] = [const { AtomicU64::new(0) }; 12];
 static COUNT: [AtomicU64; 14] = [const { AtomicU64::new(0) }; 14];
 
 pub(super) fn enabled() -> bool {

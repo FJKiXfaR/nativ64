@@ -494,6 +494,7 @@ impl<'g> VkBackend<'g> {
         let sync_done = started.elapsed();
         let tr = super::profile::start();
         let r = gpu.submit_once(|d, cb| {
+            let replay_started = super::profile::start();
             for list in lists {
                 self.stats.lists += 1;
                 self.draw.reset_list();
@@ -515,6 +516,7 @@ impl<'g> VkBackend<'g> {
                 }
                 self.end_rendering(d, cb);
             }
+            super::profile::stop(super::profile::Phase::Replay, replay_started);
         });
         if let Err(e) = r {
             log_once(format!("replay submission failed: {e}"));
