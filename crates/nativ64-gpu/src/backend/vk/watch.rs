@@ -12,6 +12,13 @@
 //! every write since its own previous look. When the log is trimmed, or a run is registered
 //! again, the older cursors answer "written".
 //!
+//! Write protection is per mapping: pages of the physical pool that the title maps at a second
+//! address (`xmem::alias_pages`, a second map) are written through that other address without
+//! the watch seeing it. Enumerating and watching every alias (and the ones made later) would
+//! need a registry per run and a re-registration at each remap; instead a range with a page
+//! that is aliased anywhere is never answered "unchanged" (`xmem::is_aliased`, a lookup per
+//! 64 KiB page in a table bounded by the pool): the caller hashes it, as it did before the watch.
+//!
 //! Where the kernel refuses (no `userfaultfd`, no `PAGEMAP_SCAN`, a run that was unmapped and
 //! mapped again) the answer is None: the caller treats it as written and keeps its old path.
 
@@ -296,7 +303,7 @@ pub(super) fn written(range: (usize, usize), cursor: &mut Cursor) -> Option<bool
     let t = profile::start();
     let (start, end) = (range.0 & !(PAGE - 1), range.1.next_multiple_of(PAGE));
     let answer = with(|w| {
-        if !w.covered(start, end) {
+        if !w.covered(start, end) || crate::xmem::is_aliased(start, end) {
             return None;
         }
         w.epoch += 1;
@@ -434,6 +441,46 @@ mod tests {
         assert_eq!(written((a + PAGE, a + 2 * PAGE), &mut c), Some(true));
         assert_eq!(written(run, &mut c), Some(false));
         unmap(a, 2);
+    }
+
+    #[test]
+    fn pages_aliased_elsewhere_are_never_unchanged() {
+        use crate::xmem::*;
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        const PP: usize = 64 << 10;
+        const RW: u32 = 0x04;
+        // SAFETY: the pool and reservations of this test only.
+        unsafe {
+            let mut count = 1usize;
+            let mut pages = [0usize; 1];
+            assert_eq!(
+                XMemAllocatePhysicalPages(0, &mut count, pages.as_mut_ptr()),
+                1
+            );
+            let pool = XMemVirtualAlloc(std::ptr::null_mut(), PP, 0x2000, 3, RW) as usize;
+            let dst = XMemVirtualAlloc(std::ptr::null_mut(), PP, 0x2000, 3, RW) as usize;
+            assert_eq!(
+                XMemMapPhysicalPages(pool as *mut _, 1, pages.as_ptr()) as usize,
+                pool
+            );
+            let run = (pool, pool + PP);
+            if unavailable(run) {
+                return;
+            }
+            let mut c = Cursor::default();
+            assert_eq!(written(run, &mut c), Some(true));
+            assert_eq!(written(run, &mut c), Some(false));
+            assert!(alias_pages(dst, &[pool]));
+            // a write through the alias is invisible to the watch of `pool`
+            (dst as *mut u8).write(5);
+            assert_ne!(written(run, &mut c), Some(false));
+            assert_ne!(written(run, &mut c), Some(false));
+            assert!(unmap_pages(dst, 1));
+            let _ = written(run, &mut c);
+            assert_eq!(written(run, &mut c), Some(false));
+            let _ = with(|w| w.forget(pool, pool + PP));
+            XMemFreePhysicalPages(1, pages.as_ptr());
+        }
     }
 
     #[test]
