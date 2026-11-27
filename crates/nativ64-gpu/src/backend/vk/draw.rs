@@ -632,7 +632,15 @@ impl<'g> VkBackend<'g> {
         // transform puts every vertex off screen).
         let mut seen = Vec::new();
         for row in rows {
+            // Only a bound view descriptor table names readable title memory (a heap row's
+            // "table" is 0, and reading near address 0 faults).
+            if row.root_type != 3 {
+                continue;
+            }
             let addr = self.draw.list.root.table(row.root_slot as u32);
+            if addr == 0 {
+                continue;
+            }
             let slot = addr.saturating_add(u64::from(row.table_offset) * 4);
             // SAFETY: a slot of the title's descriptor heap (see the residency scan).
             let Some(index) = (unsafe { crate::d3d12::descriptor::registry_index_at(slot) }) else {
