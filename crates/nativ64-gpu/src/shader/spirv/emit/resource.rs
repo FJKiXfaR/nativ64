@@ -984,44 +984,13 @@ impl<'a> Tr<'a> {
         self.g.op(Op::CompositeConstruct, v3, &[x, y, z])
     }
 
-    fn image_sample(&mut self, c: &Ctx<Gen>) -> R<Option<Vec<Opd<Gen>>>> {
-        let i = &c.inst.instr;
-        let name = i.name();
-        let (explicit, zero_lod) = match name {
-            "image_sample" => (false, false),
-            "image_sample_l" => (true, false),
-            "image_sample_lz" | "image_get_lod" => (true, true),
-            _ => return Ok(None),
-        };
-        let m = i.img;
-        if m.a16 || m.d16 || m.tfe || m.lwe || m.unorm {
-            return refuse(&format!("{name} with a16, d16, tfe, lwe or unorm"));
-        }
-        let Some((_, _, ncoord)) = Self::image_dim(m.dim) else {
-            return refuse(&format!("{name} on dimension {}", m.dim));
-        };
+    /// The sampled image a sample or gather instruction reads: the image of the resource row
+    /// (a table slot) with the sampler of the next row (or four constant words).
+    fn sampled_image(&mut self, c: &Ctx<Gen>) -> R<u32> {
+        let name = c.inst.instr.name();
+        let m = c.inst.instr.img;
         let ns = c.srcs.len();
-        if ns < 3 || c.srcs[ns - 2].len() < 8 || c.srcs[ns - 1].len() < 4 {
-            return bad("an image sample whose operands do not match its form");
-        }
-        let nlod = usize::from(name == "image_sample_l");
-        let addr = &c.srcs[ns - 3];
-        if addr.len() != ncoord as usize + nlod {
-            return refuse(&format!("{name} with an address of {} dwords", addr.len()));
-        }
-        let is_vertex = matches!(self.io(), StageIo::Vertex(_));
-        if is_vertex && !explicit {
-            return refuse("image_sample in a vertex stage");
-        }
-        if matches!(self.io(), StageIo::Compute(_)) && !explicit {
-            // quad derivatives need DerivativeGroupLinearKHR (an extension and a device check)
-            return refuse("image_sample with implicit derivatives in a compute program");
-        }
-        let chans: Vec<u32> = (0..4).filter(|ch| m.dmask >> ch & 1 != 0).collect();
-        if chans.len() != c.inst.dsts.len() {
-            return bad("an image sample whose results do not match its dmask");
-        }
-        // the resource: only a table slot has an image we can name
+        let loaded = |t: &mut Self, s: Option<&Src>| matches!(s, Some(Src::Val(v)) if t.res().analysis.loaded.contains(v));
         let rsrc = &c.inst.srcs[ns - 2];
         let loaded = |t: &mut Self, s: Option<&Src>| matches!(s, Some(Src::Val(v)) if t.res().analysis.loaded.contains(v));
         if !loaded(self, rsrc.first()) {
@@ -1077,6 +1046,116 @@ impl<'a> Tr<'a> {
         let tsi = self.g.m.global(Op::TypeSampledImage, None, &[img]);
         let si = self.g.op(Op::SampledImage, tsi, &[image, sampler]);
         self.non_uniform(si);
+        Ok(si)
+    }
+
+    /// `image_gather4_lz`: four texels at LOD 0 of the channel a dmask bit selects (four dwords
+    /// per channel) with `OpImageGather`.
+    fn image_gather(&mut self, c: &Ctx<Gen>) -> R<Option<Vec<Opd<Gen>>>> {
+        let i = &c.inst.instr;
+        let name = i.name();
+        let m = i.img;
+        if name != "image_gather4_lz" {
+            return refuse(&format!("{name}"));
+        }
+        if m.a16 || m.d16 || m.tfe || m.lwe || m.unorm {
+            return refuse(&format!("{name} with a16, d16, tfe, lwe or unorm"));
+        }
+        let Some((dim, _arrayed, ncoord)) = Self::image_dim(m.dim) else {
+            return refuse(&format!("{name} on dimension {}", m.dim));
+        };
+        if dim != 1 {
+            return refuse(&format!("{name} on a non-2D image"));
+        }
+        let ns = c.srcs.len();
+        if ns < 3 || c.srcs[ns - 2].len() < 8 || c.srcs[ns - 1].len() < 4 {
+            return bad("a gather whose operands do not match its form");
+        }
+        let addr = &c.srcs[ns - 3];
+        if addr.len() != ncoord as usize {
+            return refuse(&format!("{name} with an address of {} dwords", addr.len()));
+        }
+        let chans: Vec<u32> = (0..4).filter(|ch| m.dmask >> ch & 1 != 0).collect();
+        if chans.is_empty() {
+            return bad("a gather without a channel");
+        }
+        if c.inst.dsts.len() != 4 * chans.len() {
+            return bad("a gather whose results do not match its dmask");
+        }
+        let si = self.sampled_image(c)?;
+        let ti = self.g.m.global(Op::TypeInt, None, &[32, 1]);
+        let coord = if addr.len() == 1 {
+            let bits = self.bits_of(addr[0]);
+            self.g.op(Op::Bitcast, ti, &[bits])
+        } else {
+            let mut cs = Vec::new();
+            for &a in addr {
+                let bits = self.bits_of(a);
+                cs.push(self.g.op(Op::Bitcast, ti, &[bits]));
+            }
+            let tv = self
+                .g
+                .m
+                .global(Op::TypeVector, None, &[ti, cs.len() as u32]);
+            self.g.op(Op::CompositeConstruct, tv, &cs)
+        };
+        let v4 = self.vec4(Class::Float);
+        let tf = self.g.t_f32();
+        let lod = self.g.fconst(0.0);
+        let mut out = Vec::new();
+        for (j, ch) in chans.into_iter().enumerate() {
+            let ch = self.g.k(ch);
+            let res = self.g.op(Op::ImageGather, v4, &[si, coord, ch, 2, lod]);
+            for k in 0..4 {
+                let x = self.g.op(Op::CompositeExtract, tf, &[res, k]);
+                let bits = self.g.as_bits(x);
+                out.push(self.lane_result(c, j * 4 + k as usize, bits));
+            }
+        }
+        Ok(Some(out))
+    }
+
+    fn image_sample(&mut self, c: &Ctx<Gen>) -> R<Option<Vec<Opd<Gen>>>> {
+        let i = &c.inst.instr;
+        let name = i.name();
+        if name.starts_with("image_gather4") {
+            return self.image_gather(c);
+        }
+        let (explicit, zero_lod) = match name {
+            "image_sample" => (false, false),
+            "image_sample_l" => (true, false),
+            "image_sample_lz" | "image_get_lod" => (true, true),
+            _ => return Ok(None),
+        };
+        let m = i.img;
+        if m.a16 || m.d16 || m.tfe || m.lwe || m.unorm {
+            return refuse(&format!("{name} with a16, d16, tfe, lwe or unorm"));
+        }
+        let Some((_, _, ncoord)) = Self::image_dim(m.dim) else {
+            return refuse(&format!("{name} on dimension {}", m.dim));
+        };
+        let ns = c.srcs.len();
+        if ns < 3 || c.srcs[ns - 2].len() < 8 || c.srcs[ns - 1].len() < 4 {
+            return bad("an image sample whose operands do not match its form");
+        }
+        let nlod = usize::from(name == "image_sample_l");
+        let addr = &c.srcs[ns - 3];
+        if addr.len() != ncoord as usize + nlod {
+            return refuse(&format!("{name} with an address of {} dwords", addr.len()));
+        }
+        let is_vertex = matches!(self.io(), StageIo::Vertex(_));
+        if is_vertex && !explicit {
+            return refuse("image_sample in a vertex stage");
+        }
+        if matches!(self.io(), StageIo::Compute(_)) && !explicit {
+            // quad derivatives need DerivativeGroupLinearKHR (an extension and a device check)
+            return refuse("image_sample with implicit derivatives in a compute program");
+        }
+        let chans: Vec<u32> = (0..4).filter(|ch| m.dmask >> ch & 1 != 0).collect();
+        if chans.len() != c.inst.dsts.len() {
+            return bad("an image sample whose results do not match its dmask");
+        }
+        let si = self.sampled_image(c)?;
         // the coordinates
         let tf = self.g.t_f32();
         let mut cs = Vec::new();
