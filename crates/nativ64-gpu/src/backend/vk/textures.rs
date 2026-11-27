@@ -796,7 +796,8 @@ impl<'g> VkBackend<'g> {
             };
             let mut kept = Vec::new();
             for i in indices {
-                let entry = view_at(i as usize).map_or(Entry::Hole, |v| self.classify(&v));
+                let entry =
+                    view_at(i as usize).map_or(Entry::Hole, |v| self.classify_at(&v, i as usize));
                 if let Entry::Texture { res: r, .. } | Entry::Storage { res: r, .. } = &entry {
                     // a live resource at the same address
                     if self.tex.source_set.insert(*r) {
@@ -1071,7 +1072,7 @@ impl<'g> VkBackend<'g> {
     /// Logs a sampled view left empty, at most `HOLE_LOGS` times (a title can refuse thousands
     /// of buffer views, and one line each buries the log).
     fn log_hole(msg: String) {
-        const HOLE_LOGS: usize = 40;
+        const HOLE_LOGS: usize = 400;
         static SEEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let n = SEEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if n < HOLE_LOGS {
@@ -1100,6 +1101,11 @@ impl<'g> VkBackend<'g> {
 
     /// The entry a registry view comes to.
     fn classify(&self, v: &View) -> Entry {
+        self.classify_at(v, usize::MAX)
+    }
+
+    /// `classify`, with the registry index in the log line (so a draw's row can be matched).
+    fn classify_at(&self, v: &View, index: usize) -> Entry {
         match v {
             View::Shader(res, desc) => match info_of_checked(*res as *mut _) {
                 Some((rd, _)) if matches!(rd.dimension, TEXTURE1D | TEXTURE2D | TEXTURE3D) => {
@@ -1112,7 +1118,7 @@ impl<'g> VkBackend<'g> {
                     // A sampled view left empty: naming its resource (or its absence) is how
                     // a missing texture behind invisible content is found.
                     Self::log_hole(format!(
-                        "a sampled view is left empty: resource {res:#x} info {other:?} \
+                        "sampled view {index} is left empty: resource {res:#x} info {other:?} \
                          view words {:x?}",
                         desc
                     ));
@@ -1133,7 +1139,7 @@ impl<'g> VkBackend<'g> {
                 let address = u64::from(vd[10]) | u64::from(vd[11]) << 32;
                 if address == 0 || !matches!(desc.dimension, TEXTURE1D | TEXTURE2D | TEXTURE3D) {
                     Self::log_hole(format!(
-                        "a placed sampled view is left empty: address {address:#x} desc {desc:?} \
+                        "placed sampled view {index} is left empty: address {address:#x} desc {desc:?} \
                          view words {vd:x?}"
                     ));
                     return Entry::Hole;
@@ -1149,7 +1155,9 @@ impl<'g> VkBackend<'g> {
                 Spec::of_view(v).map_or(Entry::Hole, Entry::Sampler)
             }
             other => {
-                Self::log_hole(format!("a sampled view is left empty (other): {other:?}"));
+                Self::log_hole(format!(
+                    "sampled view {index} is left empty (other): {other:?}"
+                ));
                 Entry::Hole
             }
         }
@@ -1260,8 +1268,8 @@ impl<'g> VkBackend<'g> {
         self.log_hole_list(count);
         // 1. the registry entries added since the last time
         let new = views_from(self.tex.scanned);
-        for v in &new {
-            let entry = self.classify(v);
+        for (k, v) in new.iter().enumerate() {
+            let entry = self.classify_at(v, self.tex.scanned + k);
             match &entry {
                 Entry::Texture { res, .. } | Entry::Storage { res, .. } => {
                     if self.tex.source_set.insert(*res) {

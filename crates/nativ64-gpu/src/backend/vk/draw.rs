@@ -452,22 +452,39 @@ impl<'g> VkBackend<'g> {
     ) {
         use std::sync::Mutex;
         static LAST: Mutex<u64> = Mutex::new(u64::MAX);
+        static LAST_SEEN: Mutex<Vec<u64>> = Mutex::new(Vec::new());
         let Ok(want) = std::env::var("NATIV64_DRAW_ROWS") else {
             return;
         };
-        let Ok(serial) = want.parse::<u32>() else {
-            return;
+        // "*": every pipeline, once each (to list what a frame draws and what it reads).
+        let all = want.trim() == "*";
+        let serial = match want.parse::<u64>() {
+            Ok(serial) => serial,
+            Err(_) if all => 0,
+            Err(_) => return,
         };
-        if pd.serial != u64::from(serial) || !super::present::dump_wanted(self.frames + 1) {
+        if !all && pd.serial != serial {
             return;
         }
         let frame = self.frames + 1;
         {
             let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
-            if *last == frame {
+            if all {
+                // one line set per pipeline, for the first 32 pipelines seen
+                let mut seen = LAST_SEEN.lock().unwrap_or_else(|e| e.into_inner());
+                if *last == u64::MAX {
+                    *last = 0;
+                }
+                if seen.len() < 200 && !seen.contains(&pd.serial) {
+                    seen.push(pd.serial);
+                } else {
+                    return;
+                }
+            } else if *last == frame {
                 return;
+            } else {
+                *last = frame;
             }
-            *last = frame;
         }
         let heap = self.draw.list.root.resource_heap();
         for row in &built.rows {
@@ -479,16 +496,33 @@ impl<'g> VkBackend<'g> {
             } else {
                 self.draw.list.root.table(row.root_slot as u32)
             };
-            let index = addr
-                .saturating_sub(heap)
-                .saturating_div(32)
-                .saturating_add(u64::from(row.table_offset) / 8);
+            // The descriptor the shader loads is one 32-byte slot at table offset (dwords).
+            let slot = addr.saturating_add(u64::from(row.table_offset) * 4);
+            // SAFETY: a slot of the title's descriptor heap, read the way the residency scan
+            // reads bound table slots: the tag says whether the view registry filled it.
+            let viewed = unsafe { crate::d3d12::descriptor::registry_index_at(slot) };
+            let what = match viewed {
+                Some(index) => {
+                    let entry = self.tex.describe_entry(index as usize);
+                    if entry == "hole" {
+                        // the reason a hole: the registered view, to name its resource
+                        match crate::d3d12::descriptor::view_at(index as usize) {
+                            Some(v) => format!("hole, view {v:?}"),
+                            None => "hole, no view".to_owned(),
+                        }
+                    } else {
+                        entry
+                    }
+                }
+                None => "an unwritten slot".to_owned(),
+            };
             super::log_once(format!(
-                "draw rows: pipeline {serial} row root_type {} slot {} table_offset {} addr {addr:#x} heap {heap:#x} -> index {index} is {}",
+                "draw rows: pipeline {} row root_type {} slot {} table_offset {} addr {addr:#x} heap {heap:#x} slot {slot:#x} is {what}",
+                pd.serial,
                 row.root_type,
                 row.root_slot,
                 row.table_offset,
-                self.tex.describe_entry(index as usize),
+                slot = slot,
             ));
         }
     }
