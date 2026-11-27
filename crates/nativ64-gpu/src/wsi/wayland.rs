@@ -20,9 +20,18 @@
 //! null buffer (the next present, after an initial commit and configure, maps it again).
 //! The compositor's size hint (`xdg_toplevel.configure`) becomes `WM_SIZE`; the swapchain
 //! picks its extent from `client_size`. Server-side decorations are requested when
-//! `xdg-decoration` is offered, otherwise the window has none. Input is not handled; focus
-//! comes from the `activated` toplevel state (`WM_ACTIVATE`).
+//! `xdg-decoration` is offered, otherwise the window has none. Focus comes from the
+//! `activated` toplevel state (`WM_ACTIVATE`).
+//!
+//! Keyboard: `wl_seat` (version <= 5) is bound on the main queue, so its events arrive in
+//! `poll_events`; a `wl_keyboard` is held while the seat has the capability. The keymap fd is
+//! closed unread: `wl_keyboard.key` codes are raw evdev codes, mapped by `key_button` to
+//! gamepad bits (Enter / Space = A; Escape / Backspace = B; X; Y; arrows = dpad; Tab = View;
+//! M = Menu; Q / E = shoulders; positions of a QWERTY layout). The pressed set is folded to a
+//! mask and handed to `gameinput::set_keyboard_buttons` on each change; key repeat does not
+//! change the set, and `leave` releases everything. No `WM_KEY*` messages are generated.
 
+use nativ64::gameinput;
 use nativ64::windowing::{
     Msg, RawSurface, WindowBackend, SIZE_MAXIMIZED, SIZE_RESTORED, WA_ACTIVE, WM_ACTIVATE,
     WM_CLOSE, WM_SIZE,
@@ -33,7 +42,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use wayland_client::globals::{registry_queue_init, GlobalListContents};
-use wayland_client::protocol::{wl_compositor, wl_registry, wl_surface};
+use wayland_client::protocol::{wl_compositor, wl_keyboard, wl_registry, wl_seat, wl_surface};
+use wayland_client::WEnum;
 use wayland_client::{delegate_noop, Connection, Dispatch, EventQueue, Proxy, QueueHandle};
 use wayland_protocols::xdg::decoration::zv1::client::{
     zxdg_decoration_manager_v1::ZxdgDecorationManagerV1,
@@ -108,6 +118,45 @@ fn activate_msg(hwnd: usize, was: bool, now: bool) -> Option<Msg> {
     (was != now).then(|| Msg::new(hwnd, WM_ACTIVATE, if now { WA_ACTIVE } else { 0 }, 0))
 }
 
+/// The gamepad bit of a Linux evdev key code (0 when the key does nothing).
+fn key_button(code: u32) -> u32 {
+    match code {
+        28 | 57 => gameinput::A, // Enter, Space
+        1 | 14 => gameinput::B,  // Escape, Backspace
+        45 => gameinput::X,      // X
+        21 => gameinput::Y,      // Y
+        103 => gameinput::UP,
+        108 => gameinput::DOWN,
+        105 => gameinput::LEFT,
+        106 => gameinput::RIGHT,
+        15 => gameinput::VIEW,           // Tab
+        50 => gameinput::MENU,           // M
+        16 => gameinput::LEFT_SHOULDER,  // Q
+        18 => gameinput::RIGHT_SHOULDER, // E
+        _ => 0,
+    }
+}
+
+/// The buttons held for a set of pressed evdev codes.
+fn keys_mask(pressed: &[u32]) -> u32 {
+    pressed.iter().fold(0, |m, &c| m | key_button(c))
+}
+
+/// Press or release `code` in the set; true when the set changed (repeats change nothing).
+fn apply_key(pressed: &mut Vec<u32>, code: u32, down: bool) -> bool {
+    match (pressed.iter().position(|&c| c == code), down) {
+        (None, true) => {
+            pressed.push(code);
+            true
+        }
+        (Some(i), false) => {
+            pressed.swap_remove(i);
+            true
+        }
+        _ => false,
+    }
+}
+
 // ---- Wayland state ----
 
 struct Win {
@@ -175,6 +224,8 @@ struct State {
     wm_base: Option<XdgWmBase>,
     compositor: Option<wl_compositor::WlCompositor>,
     deco_mgr: Option<ZxdgDecorationManagerV1>,
+    keyboard: Option<wl_keyboard::WlKeyboard>,
+    pressed: Vec<u32>,
     wins: HashMap<usize, Win>,
     out: Vec<Msg>,
 }
@@ -237,6 +288,8 @@ impl WaylandBackend {
             wm_base: globals.bind(&ping_queue.handle(), 1..=6, ()).ok(),
             compositor: globals.bind(&qh, 1..=6, ()).ok(),
             deco_mgr: globals.bind(&qh, 1..=1, ()).ok(),
+            keyboard: None,
+            pressed: Vec::new(),
             wins: HashMap::new(),
             out: Vec::new(),
         };
@@ -245,6 +298,8 @@ impl WaylandBackend {
             self.dead = true;
             return false;
         }
+        // The seat proxy is kept by the queue; its capability events create the keyboard.
+        let _seat: Option<wl_seat::WlSeat> = globals.bind(&qh, 1..=5, ()).ok();
         let _ = queue.roundtrip(&mut state);
         let stop = Arc::new(AtomicBool::new(false));
         let handle = {
@@ -430,6 +485,76 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
     }
 }
 
+impl State {
+    fn publish_keys(&self) {
+        gameinput::set_keyboard_buttons(keys_mask(&self.pressed));
+    }
+}
+
+impl Dispatch<wl_seat::WlSeat, ()> for State {
+    fn event(
+        st: &mut Self,
+        seat: &wl_seat::WlSeat,
+        event: wl_seat::Event,
+        _: &(),
+        _: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        let wl_seat::Event::Capabilities { capabilities } = event else {
+            return;
+        };
+        let has =
+            matches!(capabilities, WEnum::Value(c) if c.contains(wl_seat::Capability::Keyboard));
+        match (has, st.keyboard.is_some()) {
+            (true, false) => st.keyboard = Some(seat.get_keyboard(qh, ())),
+            (false, true) => {
+                if let Some(k) = st.keyboard.take() {
+                    if k.version() >= 3 {
+                        k.release();
+                    }
+                }
+                st.pressed.clear();
+                st.publish_keys();
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
+    fn event(
+        st: &mut Self,
+        _: &wl_keyboard::WlKeyboard,
+        event: wl_keyboard::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            // The keymap fd is dropped (closed) with the event: raw evdev codes are used.
+            wl_keyboard::Event::Keymap { .. } => {}
+            wl_keyboard::Event::Enter { keys, .. } => {
+                st.pressed.clear();
+                for c in keys.as_chunks::<4>().0 {
+                    apply_key(&mut st.pressed, u32::from_ne_bytes(*c), true);
+                }
+                st.publish_keys();
+            }
+            wl_keyboard::Event::Leave { .. } => {
+                st.pressed.clear();
+                st.publish_keys();
+            }
+            wl_keyboard::Event::Key { key, state, .. } => {
+                let down = matches!(state, WEnum::Value(wl_keyboard::KeyState::Pressed));
+                if apply_key(&mut st.pressed, key, down) {
+                    st.publish_keys();
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 impl Dispatch<XdgWmBase, ()> for Ping {
     fn event(
         _: &mut Self,
@@ -530,6 +655,51 @@ mod tests {
         assert_eq!(activate_msg(1, false, true).unwrap().wparam, WA_ACTIVE);
         let m = activate_msg(1, true, false).unwrap();
         assert_eq!((m.message, m.wparam), (WM_ACTIVATE, 0));
+    }
+
+    #[test]
+    fn evdev_codes_map_to_buttons() {
+        use gameinput::*;
+        let cases = [
+            (28, A),
+            (57, A),
+            (1, B),
+            (14, B),
+            (45, X),
+            (21, Y),
+            (103, UP),
+            (108, DOWN),
+            (105, LEFT),
+            (106, RIGHT),
+            (15, VIEW),
+            (50, MENU),
+            (16, LEFT_SHOULDER),
+            (18, RIGHT_SHOULDER),
+            (30, 0),
+            (0, 0),
+            (999, 0),
+        ];
+        for (code, bit) in cases {
+            assert_eq!(key_button(code), bit, "code {code}");
+        }
+    }
+
+    #[test]
+    fn pressed_set_folds_to_a_mask() {
+        use gameinput::*;
+        assert_eq!(keys_mask(&[]), 0);
+        // Enter and Space both mean A: one bit; an unmapped key adds nothing.
+        assert_eq!(keys_mask(&[28, 57, 30]), A);
+        assert_eq!(keys_mask(&[103, 106, 28]), UP | RIGHT | A);
+        let mut set = Vec::new();
+        assert!(apply_key(&mut set, 28, true));
+        assert!(!apply_key(&mut set, 28, true), "repeat changes nothing");
+        assert!(apply_key(&mut set, 57, true));
+        assert!(apply_key(&mut set, 28, false));
+        assert_eq!(keys_mask(&set), A, "Space still holds A");
+        assert!(!apply_key(&mut set, 28, false), "release of a key not held");
+        assert!(apply_key(&mut set, 57, false));
+        assert_eq!(keys_mask(&set), 0);
     }
 
     #[test]

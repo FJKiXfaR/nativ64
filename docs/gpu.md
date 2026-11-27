@@ -84,6 +84,17 @@ APIs only (libc as its only dependency).
   objects). Uncompressed memory/file to memory requests, run synchronously at `Submit`; errors
   in the queue's error record and event. TODO: zlib/BCPack, page and GPU destinations, fence
   signalling (recorded only). Details in the module header.
+- Free paths to the host (what returns memory, what keeps it): `XMemFreePhysicalPages` punches the
+  memfd range out (`FALLOC_FL_PUNCH_HOLE`), remaps the freed slot's views as private anonymous zeros
+  (a view left on the file would fault the page back in) and records a change; unmapping or
+  `MEM_RELEASE` of a view never frees the slot (only the title's `XMemFreePhysicalPages` does, as on
+  the console). `MEM_DECOMMIT`/`MEM_RELEASE` are `mmap(PROT_NONE)`/`munmap`. The CRT heap and the
+  default `XMemAlloc` are glibc: thresholds are fixed (`xmem::return_big_blocks_to_the_host`) so
+  blocks of 1 MiB or more are `munmap`ped by `free`. The GPU keeps host-pointer imports
+  (`gpumem.rs`: dropped on a recorded change, after 300 idle submissions, or LRU past 512 MiB) and
+  placed images (dropped when memory under them changes). The memory line (every 600 frames) ends
+  with `host: anon .. (trim freed ..), shmem .., xmem pages .., xmem file ..`: `xmem file` above
+  `xmem pages` means freed pages stayed in the file.
 - Lifetime of images (`d3d12/resource.rs`, `backend/vk/textures.rs`, `draw.rs`): releasing a
   resource clears its vtable word (`desc_of` / `info_of` refuse it) and queues its address
   (`take_released`). Each `execute` drains the queue first: the image and its cached views go,
@@ -97,6 +108,8 @@ APIs only (libc as its only dependency).
   before any image, and doubled (or sized to the need if larger) when a submission has more draws.
   `ReplayStats` counts images and placed images alive with their bytes, released and evictions,
   printed every 600 frames and with `NATIV64_PROFILE`.
+  `NATIV64_GPU_BACKEND=vulkan` runs Vulkan headless with no dump directory, to measure memory
+  without the dump readbacks.
 
 ## What the title expects (facts from reading VIctory, to confirm on our run)
 

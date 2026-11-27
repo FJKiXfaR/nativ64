@@ -51,23 +51,72 @@ pub struct Mapped {
 struct Import<'g> {
     end: usize,
     buffer: HostBuffer<'g>,
+    /// The `epoch` of the last submission that translated an address in it.
+    used: u64,
 }
+
+/// Imports unused for this many submissions are dropped: the driver pins (and populates) the
+/// pages of an import, so an import nobody reads any more only holds host memory.
+const IDLE_SUBMISSIONS: u64 = 300;
+/// Most bytes kept imported across submissions: past it, the least recently used imports go.
+const IMPORT_CAP: usize = 512 << 20;
 
 pub struct GpuMemory<'g> {
     gpu: &'g Gpu,
     imports: BTreeMap<usize, Import<'g>>,
     /// Imports replaced by a bigger one during the submission in progress.
     retired: Vec<Import<'g>>,
+    /// Submissions that synced.
+    epoch: u64,
+    /// The ranges the last `sync` saw changed (the placed images over them go too).
+    changed: Vec<(usize, usize)>,
 }
 
 impl<'g> GpuMemory<'g> {
     pub fn new(gpu: &'g Gpu) -> Self {
         table::watch_gpu_changes();
+        crate::xmem::return_big_blocks_to_the_host();
         GpuMemory {
             gpu,
             imports: BTreeMap::new(),
             retired: Vec::new(),
+            epoch: 0,
+            changed: Vec::new(),
         }
+    }
+
+    /// The ranges the last `sync` saw changed.
+    pub fn changed(&self) -> &[(usize, usize)] {
+        &self.changed
+    }
+
+    /// Bytes imported.
+    #[cfg(test)]
+    pub fn imported_bytes(&self) -> usize {
+        self.imports.values().map(|i| i.buffer.len).sum()
+    }
+
+    /// Drops the imports not used for `IDLE_SUBMISSIONS`, then the least recently used while
+    /// more than `IMPORT_CAP` bytes are imported. True when any went.
+    fn retire(&mut self, idle: u64, cap: usize) -> bool {
+        let epoch = self.epoch;
+        let before = self.imports.len();
+        self.imports.retain(|_, i| epoch - i.used <= idle);
+        let mut bytes: usize = self.imports.values().map(|i| i.buffer.len).sum();
+        if bytes > cap {
+            let mut by_age: Vec<(u64, usize)> =
+                self.imports.iter().map(|(&s, i)| (i.used, s)).collect();
+            by_age.sort_unstable();
+            for (_, s) in by_age {
+                if bytes <= cap {
+                    break;
+                }
+                if let Some(i) = self.imports.remove(&s) {
+                    bytes -= i.buffer.len;
+                }
+            }
+        }
+        self.imports.len() != before
     }
 
     /// How many ranges are imported.
@@ -86,11 +135,15 @@ impl<'g> GpuMemory<'g> {
     /// Called with the GPU idle. True when anything changed (device addresses may differ now).
     pub fn sync(&mut self) -> bool {
         self.retired.clear();
-        let changes = table::take_gpu_changes();
-        let any = !changes.is_empty();
+        self.epoch += 1;
+        self.changed = table::take_gpu_changes();
+        let mut any = !self.changed.is_empty();
         if any {
+            let changes = std::mem::take(&mut self.changed);
             self.forget(&changes);
+            self.changed = changes;
         }
+        any |= self.retire(IDLE_SUBMISSIONS, IMPORT_CAP);
         any
     }
 
@@ -108,8 +161,9 @@ impl<'g> GpuMemory<'g> {
     pub fn translate(&mut self, va: u64, len: u64) -> Option<Mapped> {
         let at = usize::try_from(va).ok()?;
         let end = at.checked_add(usize::try_from(len.max(1)).ok()?)?;
-        if let Some((&start, i)) = self.imports.range(..=at).next_back() {
+        if let Some((&start, i)) = self.imports.range_mut(..=at).next_back() {
             if at < i.end && end <= i.end {
+                i.used = self.epoch;
                 return Some(Self::mapped(start, i, at));
             }
         }
@@ -159,6 +213,7 @@ impl<'g> GpuMemory<'g> {
         let import = Import {
             end: run_end,
             buffer,
+            used: self.epoch,
         };
         let m = Self::mapped(start, &import, at);
         for s in old {
@@ -273,6 +328,33 @@ mod tests {
         // an access across a window's end gets an import covering it
         let across = m.translate((a + WINDOW - 8) as u64, 16).unwrap();
         assert_eq!(across.offset, WINDOW as u64 - 8);
+        table::release(a).unwrap();
+        m.sync();
+    }
+
+    #[test]
+    fn idle_and_surplus_imports_are_retired() {
+        let Some(g) = gpu_or_skip() else { return };
+        let mut m = GpuMemory::new(&g);
+        let a = table::alloc(0, 4 * WINDOW, RESERVE | COMMIT, RW, None).unwrap();
+        for w in 0..4 {
+            m.translate((a + w * WINDOW + 8) as u64, 4).unwrap();
+        }
+        assert_eq!(m.imports(), 4);
+        // over the cap: the least recently used (first translated) go first
+        m.sync();
+        assert!(m.retire(u64::MAX, 2 * WINDOW));
+        assert_eq!(m.imports(), 2);
+        assert!(m.imported_bytes() <= 2 * WINDOW);
+        assert!(m.translate((a + 3 * WINDOW + 8) as u64, 4).is_some());
+        assert_eq!(m.imports(), 2, "the newest import was kept");
+        // an import read in every submission outlives the idle one
+        let busy = (a + 3 * WINDOW + 8) as u64;
+        for _ in 0..=IDLE_SUBMISSIONS {
+            m.sync();
+            m.translate(busy, 4).unwrap();
+        }
+        assert_eq!(m.imports(), 1);
         table::release(a).unwrap();
         m.sync();
     }

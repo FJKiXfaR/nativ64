@@ -111,7 +111,11 @@ executable, 351 of them imported by it alone):
 - Linux view: 46 portable, 69 tied to Windows, 580 host APIs to write (C/C++ runtime 240,
   system 155, threads & sync 95, network & crypto 48, files 18, other 24), 2 unresolved,
   265 shipped (46 of 697 = 6.6%).
-- nativ64 view: 467 native of 697 (67.0%).
+- nativ64 view: 476 of 697 functions answered natively by nativ64 (68.3%, the headline), 221
+  still to write, same 265 shipped. 697 is the 962 imported functions minus the 265 shipped.
+  Do not confuse it with "resolved by any means": the Windows view's 773 borrowed host
+  functions are not nativ64's work, and a figure of 289 (41.5% of 697) is a stale count from
+  an earlier library state, not a metric of this map.
 
 ## Library view
 
