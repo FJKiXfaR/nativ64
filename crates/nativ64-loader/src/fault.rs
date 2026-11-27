@@ -83,13 +83,7 @@ fn load_maps() {
     if fd < 0 {
         return;
     }
-    let n = unsafe {
-        libc::read(
-            fd,
-            MAPS.0.get().cast::<libc::c_void>(),
-            262144,
-        )
-    };
+    let n = unsafe { libc::read(fd, MAPS.0.get().cast::<libc::c_void>(), 262144) };
     unsafe { libc::close(fd) };
     MAPS_LEN.store(n.max(0) as usize, Ordering::Relaxed);
 }

@@ -951,6 +951,9 @@ impl<'a> Tr<'a> {
             "buffer_store_dwordx3" => (false, 3),
             "buffer_store_dwordx4" => (false, 4),
             _ => {
+                if let Some(op) = name.strip_prefix("buffer_atomic_") {
+                    return self.mubuf_atomic(c, op);
+                }
                 if let Some((load, rest)) = name
                     .strip_prefix("buffer_load_format_")
                     .map(|r| (true, r))
@@ -1043,6 +1046,98 @@ impl<'a> Tr<'a> {
             }
         }
         Ok(Some(out))
+    }
+
+    /// `buffer_atomic_*`: a 32-bit atomic on the buffer at the address. Device scope,
+    /// relaxed ordering; the old value is written back only with `glc` (an atomic's
+    /// destination is otherwise not a result).
+    fn mubuf_atomic(&mut self, c: &Ctx<Gen>, op: &str) -> R<Option<Vec<Opd<Gen>>>> {
+        let i = &c.inst.instr;
+        let m = i.mem;
+        let (spirv_op, operands) = match op {
+            "add" => (Op::AtomicIAdd, 1),
+            "sub" => (Op::AtomicISub, 1),
+            "smin" => (Op::AtomicSMin, 1),
+            "umin" => (Op::AtomicUMin, 1),
+            "smax" => (Op::AtomicSMax, 1),
+            "umax" => (Op::AtomicUMax, 1),
+            "and" => (Op::AtomicAnd, 1),
+            "or" => (Op::AtomicOr, 1),
+            "xor" => (Op::AtomicXor, 1),
+            "exchange" | "swap" => (Op::AtomicExchange, 1),
+            "inc" => (Op::AtomicIIncrement, 0),
+            "dec" => (Op::AtomicIDecrement, 0),
+            "cmpswap" => (Op::AtomicCompareExchange, 2),
+            _ => return refuse(&format!("buffer_atomic_{op}")),
+        };
+        let ns = c.srcs.len();
+        if ns < 2 {
+            return bad("a buffer atomic without a descriptor");
+        }
+        let buf = self.buffer_of(&c.inst.srcs[ns - 2], &c.srcs[ns - 2])?;
+        let tu = self.g.t_u32();
+        let t64 = self.t64();
+        let soff = self.bits_of(c.srcs[ns - 1][0]);
+        let mut off = self.zext(soff);
+        off = self.add_k64(off, u64::from(m.offset as u32));
+        let mut at = c
+            .srcs
+            .get(1)
+            .filter(|_| m.offen || m.idxen)
+            .map(|v| v.iter());
+        if m.idxen {
+            let Some(&ix) = at.as_mut().and_then(|a| a.next()) else {
+                return bad("a buffer index operand is missing");
+            };
+            let ix = self.bits_of(ix);
+            let ix = self.zext(ix);
+            let stride = self.zext(buf.stride);
+            let step = self.g.op(Op::IMul, t64, &[ix, stride]);
+            off = self.add64(off, step);
+        }
+        if m.offen {
+            let Some(&vo) = at.as_mut().and_then(|a| a.next()) else {
+                return bad("a buffer offset operand is missing");
+            };
+            let vo = self.bits_of(vo);
+            let vo = self.zext(vo);
+            off = self.add64(off, vo);
+        }
+        let base = self.add64(buf.base, off);
+        let inside = self.in_range(&buf, off, 0);
+        let ok = self.and(inside, c.active);
+        let p = self.g.t_ptr(StorageClass::PhysicalStorageBuffer, tu);
+        let ptr = self.g.op(Op::ConvertUToPtr, p, &[base]);
+        let scope = self.g.k(1);
+        let relaxed = self.g.k(0);
+        let value = if operands >= 1 {
+            Some(self.bits_of(c.srcs[0][0]))
+        } else {
+            None
+        };
+        let old = match spirv_op {
+            Op::AtomicCompareExchange => {
+                let cmp = value.unwrap_or(0);
+                let new = self.bits_of(c.srcs[0][1]);
+                self.g
+                    .op(spirv_op, tu, &[ptr, scope, relaxed, relaxed, cmp, new])
+            }
+            Op::AtomicIIncrement | Op::AtomicIDecrement => {
+                self.g.op(spirv_op, tu, &[ptr, scope, relaxed])
+            }
+            _ => {
+                let Some(v) = value else {
+                    return bad("a buffer atomic without a value");
+                };
+                self.g.op(spirv_op, tu, &[ptr, scope, relaxed, v])
+            }
+        };
+        if c.inst.dsts.is_empty() {
+            return Ok(Some(Vec::new()));
+        }
+        let zero = self.g.k(0);
+        let picked = self.g.select(ok, old, zero);
+        Ok(Some(vec![self.lane_result(c, 0, picked)]))
     }
 
     /// The component count of a `*_format_x/y/z/w` opcode suffix.
@@ -1790,19 +1885,18 @@ impl<'a> Tr<'a> {
             Some(Src::Val(v)) => self.res().analysis.origin.get(v).copied(),
             _ => None,
         };
-        let Some((sgpr, offset)) = origin else {
-            return refuse("an image that is not loaded from a table slot at a constant offset");
-        };
-        if std::env::var_os("NATIV64_ORIGINS").is_some() {
-            eprintln!("origin: {name} user sgpr {sgpr} table offset {offset} bytes");
+        if let Some((sgpr, offset)) = origin {
+            if std::env::var_os("NATIV64_ORIGINS").is_some() {
+                eprintln!("origin: {name} user sgpr {sgpr} table offset {offset} bytes");
+            }
         }
         // Only compute programs carry used-resource rows. A load in a vertex or pixel
         // program is taken as a read of an SRV (a typed texture fetch) [unverified: a UAV
-        // load in a graphics stage would be read through the wrong binding].
-        let kind = self
-            .io()
-            .descriptor_kind(sgpr, offset)
-            .or_else(|| (!store && !matches!(self.io(), StageIo::Compute(_))).then_some(0));
+        // load in a graphics stage would be read through the wrong binding]; a load whose
+        // table offset is not a constant is taken as one too (a store must name a UAV).
+        let kind = origin
+            .and_then(|(sgpr, offset)| self.io().descriptor_kind(sgpr, offset))
+            .or(Some(if store { 3 } else { 0 }));
         let Some(kind) = kind else {
             return refuse("an image whose table slot no used-resource row names");
         };
