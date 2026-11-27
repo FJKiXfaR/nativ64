@@ -70,28 +70,87 @@ pub fn location(rip: u64) -> String {
 /// base of nativ64 itself (set at [`install`]; 0 when unknown).
 static HOST_BASE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// Reads `/proc/self/maps` and returns the load base of the running binary (the mapping of
-/// `/proc/self/exe` with the file offset subtracted).
+/// The process's mappings, readable from the signal handler (one read, no allocation).
+struct MapsCell(std::cell::UnsafeCell<[u8; 262144]>);
+// SAFETY: only the signal handler and the reader below touch it, and a crash ends the process.
+unsafe impl Sync for MapsCell {}
+static MAPS: MapsCell = MapsCell(std::cell::UnsafeCell::new([0; 262144]));
+static MAPS_LEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Reads `/proc/self/maps` into [`MAPS`] (open/read only: safe in a signal handler).
+fn load_maps() {
+    let fd = unsafe { libc::open(c"/proc/self/maps".as_ptr(), libc::O_RDONLY) };
+    if fd < 0 {
+        return;
+    }
+    let n = unsafe {
+        libc::read(
+            fd,
+            MAPS.0.get().cast::<libc::c_void>(),
+            262144,
+        )
+    };
+    unsafe { libc::close(fd) };
+    MAPS_LEN.store(n.max(0) as usize, Ordering::Relaxed);
+}
+
+/// The `/proc/self/maps` line of a host address: `(start, file offset, path)`.
+fn mapping_of(addr: u64) -> Option<(u64, u64, [u8; 96])> {
+    let n = MAPS_LEN.load(Ordering::Relaxed);
+    if n == 0 {
+        return None;
+    }
+    // SAFETY: `MAPS` was filled by `load_maps` before this call.
+    let buf = unsafe { &*MAPS.0.get() };
+    let buf = &buf[..n];
+    let parse = |b: &[u8]| -> Option<u64> {
+        std::str::from_utf8(b)
+            .ok()
+            .and_then(|s| u64::from_str_radix(s, 16).ok())
+    };
+    for line in buf.split(|&b| b == b'\n') {
+        let mut fields = line.split(|&b| b == b' ');
+        let range = fields.next().unwrap_or(b"");
+        let dash = range.iter().position(|&b| b == b'-')?;
+        let (lo, hi) = (parse(&range[..dash]), parse(&range[dash + 1..]));
+        let (Some(lo), Some(hi)) = (lo, hi) else {
+            continue;
+        };
+        if addr < lo || addr >= hi {
+            continue;
+        }
+        let _ = fields.next();
+        let off = fields.next().and_then(parse).unwrap_or(0);
+        let mut path = [0u8; 96];
+        if let Some(slash) = line.iter().position(|&b| b == b'/') {
+            let p = &line[slash..];
+            let k = p.len().min(path.len() - 1);
+            path[..k].copy_from_slice(&p[..k]);
+        }
+        return Some((lo, off, path));
+    }
+    None
+}
+
+/// The load base of `/proc/self/exe`: the mapping of the running binary with its file offset
+/// subtracted.
 fn find_host_base() -> u64 {
     let exe = std::fs::read_link("/proc/self/exe").ok();
     let Ok(maps) = std::fs::read_to_string("/proc/self/maps") else {
         return 0;
     };
+    let Some(link) = &exe else { return 0 };
+    let want = link.to_str().unwrap_or("");
     for line in maps.lines() {
         let mut fields = line.split(' ');
         let range = fields.next().unwrap_or("");
         let perms = fields.next().unwrap_or("");
         let off = fields.next().unwrap_or("0");
-        let rest: Vec<&str> = fields.collect();
-        let path = rest.join(" ");
-        let Some(link) = &exe else { continue };
-        if !path.trim().ends_with(link.to_str().unwrap_or("")) || path.trim().is_empty() {
+        let path = fields.collect::<Vec<_>>().join(" ");
+        if path.trim().is_empty() || !path.trim().ends_with(want) || !perms.starts_with('r') {
             continue;
         }
-        if !perms.starts_with('r') {
-            continue;
-        }
-        let Some((lo, _hi)) = range.split_once('-') else {
+        let Some((lo, _)) = range.split_once('-') else {
             continue;
         };
         let (Ok(lo), Ok(off)) = (u64::from_str_radix(lo, 16), u64::from_str_radix(off, 16)) else {
@@ -102,49 +161,40 @@ fn find_host_base() -> u64 {
     0
 }
 
-/// Prints a host address as the offset into the nativ64 binary (for `addr2line`) and, when the
-/// host stack can be walked, the caller chain the same way.
-fn say_host_location(addr: u64) {
-    let base = HOST_BASE.load(Ordering::Relaxed);
-    if base != 0 && addr >= base {
-        say(format_args!(
-            "\nnativ64: host rip nativ64+{:#x}",
-            addr - base
-        ));
-    } else {
-        say(format_args!("\nnativ64: host rip {addr:#x}"));
+/// Prints where a host address lies: the module and the offset into it (resolvable with
+/// `addr2line` for the module's binary).
+fn say_host_address(addr: u64) {
+    match mapping_of(addr) {
+        Some((start, off, path)) => {
+            let n = path.iter().position(|&b| b == 0).unwrap_or(path.len());
+            let file = String::from_utf8_lossy(&path[..n]).into_owned();
+            say(format_args!(
+                "\nnativ64: host {addr:#x} in {file}+{:#x}",
+                addr - start + off
+            ));
+        }
+        None => say(format_args!("\nnativ64: host {addr:#x} is in no mapping")),
     }
 }
 
-/// The caller chain of a host fault, as offsets into nativ64 (frame-pointer walk: the release
-/// build keeps frame pointers).
-unsafe fn say_host_backtrace(rbp: u64) {
-    let base = HOST_BASE.load(Ordering::Relaxed);
-    if base == 0 {
-        return;
-    }
-    let mut frame = rbp;
-    let mut printed = 0;
-    say(format_args!("nativ64: host stack:"));
-    for _ in 0..24 {
-        if frame < 0x1000 || !frame.is_multiple_of(8) {
-            break;
+/// The host call chain of a fault, each frame as module+offset (glibc's unwinder, which does
+/// not need frame pointers).
+fn say_host_backtrace() {
+    let mut buf = [std::ptr::null_mut(); 32];
+    // SAFETY: `buf` is a valid array of pointers; `backtrace` is glibc's.
+    let n = unsafe { libc::backtrace(buf.as_mut_ptr(), buf.len() as libc::c_int) };
+    say(format_args!("nativ64: host stack ({n} frames):"));
+    for frame in buf.iter().take(n as usize) {
+        let addr = *frame as u64;
+        if let Some((start, off, path)) = mapping_of(addr) {
+            let k = path.iter().position(|&b| b == 0).unwrap_or(path.len());
+            let file = String::from_utf8_lossy(&path[..k]).into_owned();
+            say(format_args!(" {file}+{:#x}", addr - start + off));
+        } else {
+            say(format_args!(" {addr:#x}"));
         }
-        let next = std::ptr::read_volatile(frame as *const u64);
-        let ret = std::ptr::read_volatile((frame + 8) as *const u64);
-        if ret < base {
-            break;
-        }
-        say(format_args!(" +{:#x}", ret - base));
-        printed += 1;
-        if next <= frame {
-            break;
-        }
-        frame = next;
     }
-    if printed > 0 {
-        say(format_args!("\n"));
-    }
+    say(format_args!("\n"));
 }
 
 fn say_location(rip: u64) {
@@ -344,9 +394,9 @@ extern "C" fn on_fault(sig: i32, info: *mut libc::siginfo_t, uc: *mut libc::c_vo
         "nativ64: fatal {name} ({sig}) at address {addr:#x}, rip {rip:#x}"
     ));
     say_location(rip);
-    say_host_location(rip);
-    let rbp = unsafe { (*uc).uc_mcontext.gregs[libc::REG_RBP as usize] as u64 };
-    unsafe { say_host_backtrace(rbp) };
+    load_maps();
+    say_host_address(rip);
+    say_host_backtrace();
     say(format_args!("\n"));
     unsafe { libc::_exit(139) }
 }
