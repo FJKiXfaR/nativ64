@@ -23,10 +23,12 @@
 //! touched costs one `ioctl`); where the kernel gives no watch every texture is hashed in every
 //! submission with draws, sampled or not.
 //!
-//! shortcuts: a depth image is viewed as its depth aspect with its own format; planar and
-//! multisampled textures and 1D textures have no image; a view type that the shader's variable
-//! does not match (a cube read through the 2D variable) cannot be detected here; the address
-//! of a placed view is read from words 10 and 11 of its description **[unverified]**.
+//! shortcuts: a depth image is uploaded (its depth plane; the stencil plane is not copied,
+//! since Vulkan copies one aspect at a time and the shaders here read depth) and viewed as its
+//! depth aspect with its own format; planar video formats, multisampled textures and 1D
+//! textures have no image; a view type that the shader's variable does not match (a cube read
+//! through the 2D variable) cannot be detected here; the address of a placed view is read from
+//! words 10 and 11 of its description **[unverified]**.
 
 use super::format::FormatInfo;
 use super::profile::{self, Count, Phase};
@@ -310,11 +312,15 @@ fn upload(
     let Some(layout) = &t.layout else {
         return false;
     };
-    if layout.planes.len() != 1 || t.info.aspect != vk::ImageAspectFlags::COLOR {
-        log_once(format!(
-            "no upload of a planar or depth texture ({:?})",
-            t.desc
-        ));
+    // A colour texture has one plane; a depth or depth-stencil texture has a depth plane (the
+    // stencil plane, when there is one, is not copied: Vulkan copies one aspect at a time and
+    // the shaders here only read depth). Anything else is a planar video format: no image.
+    let depth = t
+        .info
+        .aspect
+        .intersects(vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL);
+    if !depth && layout.planes.len() != 1 {
+        log_once(format!("no upload of a planar texture ({:?})", t.desc));
         return false;
     }
     let (at, size) = (t.address as usize, layout.size as usize);
@@ -352,6 +358,14 @@ fn upload(
     } else {
         u32::from(t.desc.depth_or_array_size).max(1)
     };
+    // One aspect per copy: depth for a depth-stencil image (its stencil plane is not uploaded).
+    let copy_aspect = if t.info.aspect.contains(vk::ImageAspectFlags::DEPTH) {
+        vk::ImageAspectFlags::DEPTH
+    } else if t.info.aspect.contains(vk::ImageAspectFlags::STENCIL) {
+        vk::ImageAspectFlags::STENCIL
+    } else {
+        vk::ImageAspectFlags::COLOR
+    };
     let plane = &layout.planes[0];
     let e = plane.element_bytes as usize;
     let mut bytes: Vec<u8> = Vec::new();
@@ -386,7 +400,7 @@ fn upload(
                 buffer_row_length: 0,
                 buffer_image_height: 0,
                 image_subresource: vk::ImageSubresourceLayers {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    aspect_mask: copy_aspect,
                     mip_level: mip,
                     base_array_layer: layer,
                     layer_count: 1,
