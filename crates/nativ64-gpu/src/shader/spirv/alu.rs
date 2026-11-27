@@ -1289,6 +1289,9 @@ impl<K: Backend> Res<K> {
 /// Opcodes whose result is an f32 (the VOP3 clamp and output modifiers apply).
 fn float_result(n: &str) -> bool {
     n.starts_with("v_cvt_f32_")
+        || n.starts_with("v_cvt_f16_")
+        // the f16 forms compute floats too (a clamp or omod applies to them as well)
+        || (n.ends_with("_f16") && !n.starts_with("v_cmp") && !n.starts_with("v_cvt_"))
         || (n.ends_with("_f32")
             && !n.starts_with("v_cmp")
             && !n.starts_with("v_frexp_exp")

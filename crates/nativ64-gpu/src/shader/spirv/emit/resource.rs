@@ -2144,8 +2144,8 @@ impl<'a> Tr<'a> {
             _ => return Ok(None),
         };
         let m = i.img;
-        if m.a16 || m.tfe || m.lwe || m.unorm {
-            return refuse(&format!("{name} with a16, tfe, lwe or unorm"));
+        if m.a16 && grad {
+            return refuse(&format!("{name} with a16 gradients"));
         }
         let Some((_, _, ncoord)) = Self::image_dim(m.dim) else {
             return refuse(&format!("{name} on dimension {}", m.dim));
@@ -2168,10 +2168,18 @@ impl<'a> Tr<'a> {
         };
         let extra =
             ngrad * (if grad { 2 } else { 0 }) + usize::from(bias) + usize::from(dref) + nlod;
+        // an a16 sample packs two 16-bit coordinates per dword
+        let ncoord_words = if m.a16 {
+            (ncoord as usize).div_ceil(2)
+        } else {
+            ncoord as usize
+        };
         let addr = &c.srcs[ns - 3];
-        if addr.len() != ncoord as usize + extra {
+        if addr.len() != ncoord_words + extra {
             return refuse(&format!("{name} with an address of {} dwords", addr.len()));
         }
+        // the tfe / lwe status dwords follow the channel results
+        let trailer = if m.tfe { 1 } else { 0 } + usize::from(m.lwe);
         let is_vertex = matches!(self.io(), StageIo::Vertex(_));
         if is_vertex && !explicit {
             return refuse("image_sample in a vertex stage");
@@ -2182,16 +2190,27 @@ impl<'a> Tr<'a> {
         let compute_implicit = matches!(self.io(), StageIo::Compute(_)) && !explicit;
         let chans: Vec<u32> = (0..4).filter(|ch| m.dmask >> ch & 1 != 0).collect();
         let words = chans.len().div_ceil(if m.d16 { 2 } else { 1 });
-        if words != c.inst.dsts.len() {
+        if words + trailer != c.inst.dsts.len() {
             return bad("an image sample whose results do not match its dmask");
         }
         let si = self.sampled_image(c)?;
         // the coordinates
         let tf = self.g.t_f32();
         let mut cs = Vec::new();
-        for &a in &addr[..ncoord as usize] {
-            let bits = self.bits_of(a);
-            cs.push(self.g.as_f32(bits));
+        for k in 0..ncoord as usize {
+            let bits = self.bits_of(addr[if m.a16 { k / 2 } else { k }]);
+            if m.a16 {
+                // the 16-bit coordinates of a dword, in order
+                let tu = self.g.t_u32();
+                let sh = self.g.k(16 * (k as u32 % 2));
+                let x = self.g.op(Op::ShiftRightLogical, tu, &[bits, sh]);
+                let half = self.g.k(0xffff);
+                let x = self.g.op(Op::BitwiseAnd, tu, &[x, half]);
+                let f = self.g.unpack_half(x);
+                cs.push(self.g.as_f32(f));
+            } else {
+                cs.push(self.g.as_f32(bits));
+            }
         }
         let coord = if m.dim == 3 {
             self.cube_direction(cs[0], cs[1], cs[2])
@@ -2250,7 +2269,7 @@ impl<'a> Tr<'a> {
                 &[si, coord, 4, axes[0], axes[1]],
             )
         } else if bias {
-            let bits = self.bits_of(addr[ncoord as usize]);
+            let bits = self.bits_of(addr[ncoord_words]);
             let b = self.g.as_f32(bits);
             let v4f = self.vec4(Class::Float);
             // ImageOperands Bias (1) then the bias
@@ -2258,7 +2277,7 @@ impl<'a> Tr<'a> {
                 .op(Op::ImageSampleImplicitLod, v4f, &[si, coord, 1, b])
         } else if dref {
             // the compare value follows the coordinates; the level is 0
-            let bits = self.bits_of(addr[ncoord as usize]);
+            let bits = self.bits_of(addr[ncoord_words]);
             let d = self.g.as_f32(bits);
             let lod = self.g.fconst(0.0);
             let tf = self.g.t_f32();
@@ -2281,7 +2300,7 @@ impl<'a> Tr<'a> {
             let lod = if zero_lod {
                 self.g.fconst(0.0)
             } else {
-                let bits = self.bits_of(addr[ncoord as usize]);
+                let bits = self.bits_of(addr[ncoord_words]);
                 self.g.as_f32(bits)
             };
             // ImageOperands Lod
