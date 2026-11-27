@@ -2013,12 +2013,77 @@ impl<'a> Tr<'a> {
 
     /// `ds_read*` / `ds_write*` (b32 to b128, the `2` and `2st64` pairs): byte address plus
     /// offset, divided by 4; a dword past the LDS reads 0 and its write is dropped.
+    /// `ds_add_u32`, `ds_max_u32`, ...: an atomic on a workgroup-memory dword.
+    fn ds_atomic(&mut self, c: &Ctx<Gen>, rest: &str) -> R<Option<Vec<Opd<Gen>>>> {
+        let i = &c.inst.instr;
+        let name = i.name();
+        let (spirv_op, operand) = match rest {
+            "add_u32" => (Op::AtomicIAdd, true),
+            "sub_u32" => (Op::AtomicISub, true),
+            "min_i32" => (Op::AtomicSMin, true),
+            "min_u32" => (Op::AtomicUMin, true),
+            "max_i32" => (Op::AtomicSMax, true),
+            "max_u32" => (Op::AtomicUMax, true),
+            "and_b32" => (Op::AtomicAnd, true),
+            "or_b32" => (Op::AtomicOr, true),
+            "xor_b32" => (Op::AtomicXor, true),
+            "inc_u32" => (Op::AtomicIIncrement, false),
+            "dec_u32" => (Op::AtomicIDecrement, false),
+            _ => return refuse(name),
+        };
+        if i.mem.gds {
+            return refuse(&format!("{name} on GDS"));
+        }
+        let (var, n) = self.lds()?;
+        let tu = self.g.t_u32();
+        let tb = self.g.t_bool();
+        let Some(&addr) = c.srcs.first().and_then(|s| s.first()) else {
+            return bad("a DS atomic without its address");
+        };
+        let addr = self.bits_of(addr);
+        let off = self.g.k(i.mem.offset as u32 & 0xffff);
+        let addr = self.g.op(Op::IAdd, tu, &[addr, off]);
+        let two = self.g.k(2);
+        let word = self.g.op(Op::ShiftRightLogical, tu, &[addr, two]);
+        let nn = self.g.k(n);
+        let inside = self.g.op(Op::ULessThan, tb, &[word, nn]);
+        let zero = self.g.k(0);
+        let safe = self.g.select(inside, word, zero);
+        let p = self.g.t_ptr(StorageClass::Workgroup, tu);
+        let ptr = self.g.op(Op::AccessChain, p, &[var, safe]);
+        let scope = self.g.k(2);
+        let relaxed = self.g.k(0);
+        let old = if operand {
+            let Some(&v) = c.srcs.get(1).and_then(|s| s.first()) else {
+                return bad("a DS atomic without its value");
+            };
+            let v = self.bits_of(v);
+            self.g.op(spirv_op, tu, &[ptr, scope, relaxed, v])
+        } else {
+            self.g.op(spirv_op, tu, &[ptr, scope, relaxed])
+        };
+        if c.inst.dsts.is_empty() {
+            // like the buffer atomics, the old value is a result only with glc
+            return Ok(Some(Vec::new()));
+        }
+        let old = self.g.select(inside, old, zero);
+        Ok(Some(vec![self.lane_result(c, 0, old)]))
+    }
+
     fn ds(&mut self, c: &Ctx<Gen>) -> R<Option<Vec<Opd<Gen>>>> {
         let i = &c.inst.instr;
         let name = i.name();
         let Some(rest) = name.strip_prefix("ds_") else {
             return Ok(None);
         };
+        if [
+            "add_", "sub_", "min_", "max_", "and_", "or_", "xor_", "inc_", "dec_", "cmpst_",
+        ]
+        .iter()
+        .any(|p| rest.starts_with(p))
+        {
+            return self.ds_atomic(c, rest);
+        }
         let (read, rest) = match (rest.strip_prefix("read"), rest.strip_prefix("write")) {
             (Some(r), _) => (true, r),
             (_, Some(r)) => (false, r),
