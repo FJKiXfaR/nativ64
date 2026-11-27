@@ -259,8 +259,14 @@ pub fn type_masks(f: &Func) -> Masks {
             }
         }
         for (k, inst) in blk.insts.iter().enumerate() {
+            // the lane exchanges produce numbers (a lane index or another lane's value), not
+            // masks: their scalar destinations are plain data
+            let lanes = matches!(
+                inst.instr.name(),
+                "v_readlane_b32" | "v_writelane_b32" | "v_readfirstlane_b32"
+            ) || inst.instr.name().starts_with("v_mbcnt");
             if is_vector(&inst.instr) {
-                if !cross_lane_by_nature(&inst.instr) {
+                if !cross_lane_by_nature(&inst.instr) && !lanes {
                     for &(r, v) in &inst.dsts {
                         if !matches!(r, Reg::V(_)) {
                             m.masks.insert(v);
