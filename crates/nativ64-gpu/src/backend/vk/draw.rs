@@ -616,6 +616,16 @@ impl<'g> VkBackend<'g> {
             return;
         }
         let draw = format!("{c:?}");
+        // The input layout the pipeline was made for, next to the buffers it reads with it.
+        if let Some(g) = &pd.graphics {
+            for e in &g.input_layout {
+                super::log_once(format!(
+                    "draw input: {draw} {} index {} format {} slot {} offset {} class {} \
+                     step {}",
+                    e.name, e.index, e.format, e.slot, e.offset, e.class, e.step_rate
+                ));
+            }
+        }
         for (slot, _, v) in vbufs {
             // SAFETY: the buffer translated above, so its pages are committed and readable.
             let n = v.size.min(32) as usize;
