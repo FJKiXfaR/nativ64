@@ -527,7 +527,12 @@ impl<'g> VkBackend<'g> {
                         entry
                     }
                 }
-                None => "an unwritten slot".to_owned(),
+                None => {
+                    // the title's own descriptor: its raw words say what it is
+                    // SAFETY: a slot of the title's descriptor heap (see above).
+                    let words: [u32; 8] = unsafe { *(slot as *const [u32; 8]) };
+                    format!("an unwritten slot {words:08x?}")
+                }
             };
             super::log_once(format!(
                 "draw rows: pipeline {} ps {:016x} row root_type {} slot {} user sgpr {}..{} table_offset {} addr {addr:#x} heap {heap:#x} slot {slot:#x} is {what}",
