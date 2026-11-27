@@ -911,6 +911,7 @@ impl<'g> VkBackend<'g> {
         if self.skipped_by_filter()
             || self.skipped_by_serial(pd.serial as usize)
             || self.skipped_by_ps(pd)
+            || self.skipped_by_skip_ps(pd)
         {
             return Ok(());
         }

@@ -134,6 +134,36 @@ impl VkBackend<'_> {
         ps != Some(hash)
     }
 
+    /// `NATIV64_DRAW_SKIP_PS=<hex hash>[,<hex>]`: in the frames that are dumped, leave out the
+    /// draws whose pixel shader is one of those hashes (which layer covers what). True when this
+    /// draw is left out.
+    pub(super) fn skipped_by_skip_ps(&self, pd: &crate::d3d12::pipeline::PipelineData) -> bool {
+        static HASHES: std::sync::OnceLock<Option<Vec<u64>>> = std::sync::OnceLock::new();
+        let Some(hashes) = HASHES.get_or_init(|| {
+            let v = std::env::var("NATIV64_DRAW_SKIP_PS").ok()?;
+            let mut out = Vec::new();
+            for part in v.split(',') {
+                let part = part.trim();
+                if part.is_empty() {
+                    continue;
+                }
+                out.push(u64::from_str_radix(part, 16).ok()?);
+            }
+            Some(out)
+        }) else {
+            return false;
+        };
+        if !super::present::dump_wanted(self.frames + 1) {
+            return false;
+        }
+        let ps = pd
+            .stages
+            .iter()
+            .find(|s| s.name == "pixel")
+            .map(|s| crate::shader::fnv1a64(&s.bytes));
+        ps.is_some_and(|h| hashes.contains(&h))
+    }
+
     /// One `inspect:` line per command of the frame, cut at 300 characters.
     pub(super) fn inspect_command(&self, c: &Command) {
         let t = format!("{c:?}");
