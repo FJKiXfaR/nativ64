@@ -108,6 +108,8 @@ APIs only (libc as its only dependency).
   before any image, and doubled (or sized to the need if larger) when a submission has more draws.
   `ReplayStats` counts images and placed images alive with their bytes, released and evictions,
   printed every 600 frames and with `NATIV64_PROFILE`.
+  `NATIV64_GPU_BACKEND=vulkan` runs Vulkan headless with no dump directory, to measure memory
+  without the dump readbacks.
 
 ## What the title expects (facts from reading VIctory, to confirm on our run)
 

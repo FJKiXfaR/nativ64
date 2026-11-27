@@ -2,7 +2,8 @@
 //! only counts (tests, headless runs without a dump directory, `NATIV64_GPU_BACKEND=null`).
 //!
 //! The backend is chosen at the first submission or present: Vulkan when a device opens and
-//! there is something to show it on (the title's window, or `NATIV64_DUMP_FRAMES`), else null.
+//! there is something to show it on (the title's window, or `NATIV64_DUMP_FRAMES`) or
+//! `NATIV64_GPU_BACKEND=vulkan` forces it, else null.
 //! While the only missing piece is a window, the choice is retried at the next call.
 
 mod trace;
@@ -108,9 +109,11 @@ fn select() -> (Box<dyn Backend>, bool) {
     if std::env::var("NATIV64_GPU_BACKEND").as_deref() == Ok("null") {
         return null(false);
     }
+    // `vulkan` forces Vulkan with neither window nor dump directory (memory measurements).
+    let forced = std::env::var("NATIV64_GPU_BACKEND").as_deref() == Ok("vulkan");
     let dump = dump_dir();
     let has_window = main_window().and_then(window_surface).is_some();
-    if !has_window && dump.is_none() {
+    if !has_window && dump.is_none() && !forced {
         return null(true);
     }
     match vk::Gpu::open() {
@@ -118,7 +121,13 @@ fn select() -> (Box<dyn Backend>, bool) {
             eprintln!(
                 "nativ64-gpu: Vulkan backend on {} ({})",
                 gpu.name(),
-                if has_window { "window" } else { "dump only" }
+                if has_window {
+                    "window"
+                } else if dump.is_some() {
+                    "dump only"
+                } else {
+                    "headless"
+                }
             );
             let gpu: &'static vk::Gpu = Box::leak(Box::new(gpu));
             let mut b = vk::VkBackend::new(gpu);
