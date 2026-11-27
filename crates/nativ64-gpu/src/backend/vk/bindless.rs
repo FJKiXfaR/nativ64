@@ -178,6 +178,8 @@ pub struct Bindless<'g> {
     statics: HashMap<Vec<SamplerDesc>, StaticSet>,
     /// The import ranges a flat/global address is translated through (set 0, binding 3).
     imports: HostBuf<'g>,
+    /// The count of loops a shader stopped at `NATIV64_LOOP_CLAMP` (set 0, binding 4).
+    clamp_log: HostBuf<'g>,
 }
 
 /// Words of the import table: one count then `(start, end, device address)` per import.
@@ -235,6 +237,14 @@ impl<'g> Bindless<'g> {
                     .descriptor_count(1)
                     .stage_flags(stages),
             );
+            // binding 4: the loop clamp's counter
+            bindings.push(
+                vk::DescriptorSetLayoutBinding::default()
+                    .binding(4)
+                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                    .descriptor_count(1)
+                    .stage_flags(stages),
+            );
             let flags = [
                 vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
                     | vk::DescriptorBindingFlags::PARTIALLY_BOUND,
@@ -267,6 +277,7 @@ impl<'g> Bindless<'g> {
                 count: n,
                 statics: HashMap::new(),
                 imports: HostBuf::new(gpu, 8 + IMPORTS_CAPACITY * 24)?,
+                clamp_log: HostBuf::new(gpu, 16)?,
             };
             let mut sizes: Vec<_> = kinds
                 .iter()
@@ -275,7 +286,7 @@ impl<'g> Bindless<'g> {
             sizes.push(
                 vk::DescriptorPoolSize::default()
                     .ty(vk::DescriptorType::STORAGE_BUFFER)
-                    .descriptor_count(1),
+                    .descriptor_count(2),
             );
             this.pool = vk_try(
                 "vkCreateDescriptorPool",
@@ -306,6 +317,16 @@ impl<'g> Bindless<'g> {
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .buffer_info(&info)];
             d.update_descriptor_sets(&write, &[]);
+            let cinfo = [vk::DescriptorBufferInfo::default()
+                .buffer(this.clamp_log.buffer)
+                .offset(0)
+                .range(vk::WHOLE_SIZE)];
+            let cwrite = [vk::WriteDescriptorSet::default()
+                .dst_set(this.set)
+                .dst_binding(4)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .buffer_info(&cinfo)];
+            d.update_descriptor_sets(&cwrite, &[]);
             let push = [vk::PushConstantRange::default()
                 .stage_flags(PUSH_STAGES)
                 .offset(0)
@@ -321,6 +342,17 @@ impl<'g> Bindless<'g> {
             )?;
             Ok(this)
         }
+    }
+
+    /// Zeroes the loop clamp's counter (before a submission).
+    pub fn clear_clamp_log(&mut self) {
+        self.clamp_log.write(0, &[0u8; 4]);
+    }
+
+    /// How many loops a shader stopped at the clamp in the last submission.
+    pub fn clamp_count(&self) -> u32 {
+        let b = self.clamp_log.read(0, 4);
+        u32::from_le_bytes([b[0], b[1], b[2], b[3]])
     }
 
     /// Fills the import table a flat/global address is translated through (set 0, binding 3).

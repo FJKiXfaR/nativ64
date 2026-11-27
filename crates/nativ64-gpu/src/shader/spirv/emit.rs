@@ -592,6 +592,39 @@ fn loop_clamp() -> Option<u32> {
     (n > 0).then_some(n)
 }
 
+impl Tr<'_> {
+    /// Adds one to the loop clamp's counter (set 0, binding 4) so the backend can say which
+    /// submission stopped a loop.
+    fn clamp_count(&mut self, inc: u32) {
+        let tu = self.g.t_u32();
+        if self.stage.is_none() {
+            return;
+        }
+        let var = match self.res().clamp_log {
+            Some(v) => v,
+            None => {
+                let rarr = self.g.m.global(Op::TypeRuntimeArray, None, &[tu]);
+                self.g.m.decorate(rarr, Decoration::ArrayStride, &[4]);
+                let st = self.g.m.global(Op::TypeStruct, None, &[rarr]);
+                self.g.m.decorate(st, Decoration::Block, &[]);
+                self.g.m.member_decorate(st, 0, Decoration::Offset, &[0]);
+                let var = self.global(StorageClass::StorageBuffer, st);
+                self.g.m.decorate(var, Decoration::DescriptorSet, &[0]);
+                self.g.m.decorate(var, Decoration::Binding, &[4]);
+                self.g.m.name(var, "clamp_log");
+                self.res().clamp_log = Some(var);
+                var
+            }
+        };
+        let p = self.g.t_ptr(StorageClass::StorageBuffer, tu);
+        let zero = self.g.k(0);
+        let ptr = self.g.op(Op::AccessChain, p, &[var, zero, zero]);
+        // Device scope, relaxed, plus one
+        let (scope, relaxed, one) = (self.g.k(1), self.g.k(0), self.g.k(1));
+        self.g.op(Op::AtomicIAdd, tu, &[ptr, scope, relaxed, one]);
+    }
+}
+
 /// How many words of a program's code a module embeds for its literal tables.
 const CODE_WINDOW_WORDS: usize = 8192;
 
@@ -1237,6 +1270,8 @@ impl Tr<'_> {
         self.g.label(cont);
         match (counter, clamp) {
             (Some(var), Some(limit)) => {
+                // the clamp exits from the continue block: the back-edge block is the continue
+                // construct itself, so the structure stays valid
                 let tu = self.g.t_u32();
                 let tb = self.g.t_bool();
                 let n = self.g.load(tu, var);
@@ -1244,15 +1279,14 @@ impl Tr<'_> {
                 let n = self.g.op(Op::IAdd, tu, &[n, one]);
                 self.g.store(var, n);
                 let k = self.g.k(limit);
-                let over = self.g.op(Op::UGreaterThanEqual, tb, &[n, k]);
-                let stop = self.g.m.id();
-                let go = self.g.m.id();
-                self.g.op0(Op::SelectionMerge, &[merge, 0]);
-                self.g.term(Op::BranchConditional, &[over, stop, go]);
-                self.g.label(stop);
-                self.g.branch(merge);
-                self.g.label(go);
-                self.g.branch(hdr);
+                let under = self.g.op(Op::ULessThan, tb, &[n, k]);
+                let over = self.g.op(Op::LogicalNot, tb, &[under]);
+                // count the stop so a run says which submission clamps (the atomic adds zero
+                // when the loop goes on)
+                let (one, zero) = (self.g.k(1), self.g.k(0));
+                let inc = self.g.select(over, one, zero);
+                self.clamp_count(inc);
+                self.g.term(Op::BranchConditional, &[under, hdr, merge]);
             }
             _ => self.g.branch(hdr),
         }

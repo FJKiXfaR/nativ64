@@ -606,6 +606,8 @@ pub(in crate::shader::spirv) struct Res {
     pub(super) samplers: Vec<SamplerDesc>,
     /// The import table variable and its struct type (set 0, binding 3).
     imports: Option<(u32, u32)>,
+    /// The loop clamp's counter (set 0, binding 4).
+    pub(super) clamp_log: Option<u32>,
     /// The ids already decorated NonUniform.
     non_uniform: HashSet<u32>,
     static_vars: Vec<u32>,
@@ -637,6 +639,7 @@ impl Res {
             lds: None,
             samplers: Vec::new(),
             imports: None,
+            clamp_log: None,
             non_uniform: HashSet::new(),
             static_vars: Vec::new(),
             tmp: None,
@@ -663,7 +666,7 @@ const BIND_SAMPLERS: u32 = 2;
 const SET_STATIC: u32 = 1;
 
 impl<'a> Tr<'a> {
-    fn res(&mut self) -> &mut Res {
+    pub(super) fn res(&mut self) -> &mut Res {
         &mut self.st().res
     }
 

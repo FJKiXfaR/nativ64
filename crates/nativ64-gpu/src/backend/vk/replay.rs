@@ -555,6 +555,9 @@ impl<'g> VkBackend<'g> {
             super::pipeline::log_submission_serials();
             // The flat/global addresses the recorded shaders translate go through the import
             // table: fill it after recording, before the submit runs the commands.
+            if let Some(Some(bl)) = self.draw.bindless.as_mut() {
+                bl.clear_clamp_log();
+            }
             let generation = self.draw.mem.import_generation();
             if generation != self.imports_gen {
                 self.imports_gen = generation;
@@ -564,6 +567,20 @@ impl<'g> VkBackend<'g> {
                 }
             }
         });
+        // `NATIV64_LOOP_CLAMP`: did a shader stop a loop this submission?
+        if let Some(Some(bl)) = self.draw.bindless.as_ref() {
+            let n = bl.clamp_count();
+            if n > 0 {
+                eprintln!(
+                    "nativ64-gpu: the loop clamp stopped {n} loop(s) in the last submission{}",
+                    if std::env::var_os("NATIV64_LOG_SUBMIT").is_some() {
+                        " (serials above)"
+                    } else {
+                        " (set NATIV64_LOG_SUBMIT for the serials)"
+                    }
+                );
+            }
+        }
         if let Err(e) = r {
             let lost = format!("{e}").contains("device has been lost");
             log_once(format!(
