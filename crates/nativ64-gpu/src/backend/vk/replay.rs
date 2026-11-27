@@ -1559,14 +1559,23 @@ impl<'g> VkBackend<'g> {
         // SAFETY: the buffer and its memory are destroyed before returning; the copy has
         // completed when `submit_once` returns.
         unsafe {
-            let buffer = d
-                .create_buffer(
-                    &vk::BufferCreateInfo::default()
-                        .size(size)
-                        .usage(vk::BufferUsageFlags::TRANSFER_DST),
-                    None,
-                )
-                .ok()?;
+            let fail = |what: &str| {
+                log_once(format!(
+                    "read_back: resource {resource:#x} ({w}x{h}, {size} bytes): {what} failed"
+                ));
+            };
+            let buffer = match d.create_buffer(
+                &vk::BufferCreateInfo::default()
+                    .size(size)
+                    .usage(vk::BufferUsageFlags::TRANSFER_DST),
+                None,
+            ) {
+                Ok(b) => b,
+                Err(e) => {
+                    fail(&format!("create_buffer ({e})"));
+                    return None;
+                }
+            };
             let req = d.get_buffer_memory_requirements(buffer);
             let flags =
                 vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
@@ -1580,11 +1589,19 @@ impl<'g> VkBackend<'g> {
                 .ok()
             });
             let Some(memory) = memory else {
+                fail("a host-visible allocation");
                 d.destroy_buffer(buffer, None);
                 return None;
             };
             let mut out = None;
-            if d.bind_buffer_memory(buffer, memory, 0).is_ok() {
+            let bound = match d.bind_buffer_memory(buffer, memory, 0) {
+                Ok(()) => true,
+                Err(e) => {
+                    fail(&format!("bind_buffer_memory ({e})"));
+                    false
+                }
+            };
+            if bound {
                 let region = [vk::BufferImageCopy {
                     image_subresource: vk::ImageSubresourceLayers {
                         aspect_mask: vk::ImageAspectFlags::COLOR,
@@ -1602,17 +1619,22 @@ impl<'g> VkBackend<'g> {
                 let done = g.submit_once(|d, cb| {
                     d.cmd_copy_image_to_buffer(cb, image, vk::ImageLayout::GENERAL, buffer, &region)
                 });
-                if done.is_ok() {
-                    if let Ok(p) = d.map_memory(memory, 0, size, vk::MemoryMapFlags::empty()) {
-                        let mut v = vec![0u8; size as usize];
-                        std::ptr::copy_nonoverlapping(p.cast::<u8>(), v.as_mut_ptr(), v.len());
-                        d.unmap_memory(memory);
-                        out = Some(Readback {
-                            width: w,
-                            height: h,
-                            format: t.info.format,
-                            bytes: v,
-                        });
+                if let Err(e) = done {
+                    fail(&format!("the copy submit ({e})"));
+                } else {
+                    match d.map_memory(memory, 0, size, vk::MemoryMapFlags::empty()) {
+                        Ok(p) => {
+                            let mut v = vec![0u8; size as usize];
+                            std::ptr::copy_nonoverlapping(p.cast::<u8>(), v.as_mut_ptr(), v.len());
+                            d.unmap_memory(memory);
+                            out = Some(Readback {
+                                width: w,
+                                height: h,
+                                format: t.info.format,
+                                bytes: v,
+                            });
+                        }
+                        Err(e) => fail(&format!("map_memory ({e})")),
                     }
                 }
             }
