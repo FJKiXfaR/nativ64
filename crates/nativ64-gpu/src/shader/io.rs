@@ -458,8 +458,6 @@ pub fn refuse_entry(rec: &Record) -> Result<(), SpirvError> {
         "a compute entry with the thread-group info SGPR"
     } else if d.rsrc2 & 1 != 0 {
         "a compute entry with a scratch offset"
-    } else if rec.wave32() {
-        "a wave32 compute program"
     } else {
         return Ok(());
     };
