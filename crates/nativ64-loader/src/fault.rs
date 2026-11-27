@@ -66,6 +66,77 @@ pub fn location(rip: u64) -> String {
     out
 }
 
+/// The `/proc/self/maps` entry of a host address: the map's start, its file offset and the
+/// path (fixed buffers: a crash report runs in a signal handler and cannot allocate).
+fn host_mapping(addr: u64) -> Option<(u64, u64, [u8; 96])> {
+    let fd = unsafe { libc::open(c"/proc/self/maps".as_ptr(), libc::O_RDONLY) };
+    if fd < 0 {
+        return None;
+    }
+    let mut buf = [0u8; 8192];
+    let mut got = 0usize;
+    while got < buf.len() {
+        let n = unsafe { libc::read(fd, buf[got..].as_mut_ptr().cast(), buf.len() - got) };
+        if n <= 0 {
+            break;
+        }
+        got += n as usize;
+    }
+    unsafe { libc::close(fd) };
+    let parse = |b: &[u8]| -> Option<u64> {
+        std::str::from_utf8(b)
+            .ok()
+            .and_then(|s| u64::from_str_radix(s, 16).ok())
+    };
+    let mut at = 0usize;
+    while at < got {
+        let end = buf[at..got]
+            .iter()
+            .position(|&b| b == b'\n')
+            .map(|p| at + p)
+            .unwrap_or(got);
+        let line = &buf[at..end];
+        let mut fields = line.split(|&b| b == b' ');
+        if let Some(range) = fields.next() {
+            if let Some(dash) = range.iter().position(|&b| b == b'-') {
+                if let (Some(lo), Some(hi)) = (parse(&range[..dash]), parse(&range[dash + 1..])) {
+                    if addr >= lo && addr < hi {
+                        let _ = fields.next();
+                        let off = fields.next().and_then(parse).unwrap_or(0);
+                        let mut path = [0u8; 96];
+                        if let Some(slash) = line.iter().position(|&b| b == b'/') {
+                            let p = &line[slash..];
+                            let n = p.len().min(path.len() - 1);
+                            path[..n].copy_from_slice(&p[..n]);
+                        }
+                        return Some((lo, off, path));
+                    }
+                }
+            }
+        }
+        at = end + 1;
+    }
+    None
+}
+
+/// Prints where a host (nativ64) address lies, so the fault can be resolved with `addr2line`.
+fn say_host_location(addr: u64) {
+    match host_mapping(addr) {
+        Some((start, off, path)) => {
+            let n = path.iter().position(|&b| b == 0).unwrap_or(path.len());
+            let file = String::from_utf8_lossy(&path[..n]).into_owned();
+            say(format_args!(
+                "\nnativ64: host address {addr:#x} in {file} (map {start:#x}, file offset \
+                 {off:#x}, at {:#x})",
+                addr - start + off
+            ));
+        }
+        None => say(format_args!(
+            "\nnativ64: host address {addr:#x} is not in a mapping"
+        )),
+    }
+}
+
 fn say_location(rip: u64) {
     let base = IMAGE_BASE.load(Ordering::Relaxed);
     let size = IMAGE_SIZE.load(Ordering::Relaxed) as u64;
@@ -263,6 +334,7 @@ extern "C" fn on_fault(sig: i32, info: *mut libc::siginfo_t, uc: *mut libc::c_vo
         "nativ64: fatal {name} ({sig}) at address {addr:#x}, rip {rip:#x}"
     ));
     say_location(rip);
+    say_host_location(rip);
     say(format_args!("\n"));
     unsafe { libc::_exit(139) }
 }
