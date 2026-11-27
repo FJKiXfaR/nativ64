@@ -778,6 +778,41 @@ impl<'g> VkBackend<'g> {
         }
     }
 
+    /// Frees the host-owned placed images whose memory the title decommitted, released, freed
+    /// or mapped anew since the last submission (`changed`): their pages are gone or hold
+    /// other data, and the image would keep device memory for nothing. Made and uploaded again
+    /// when a view names them again. Images the GPU wrote stay.
+    pub(super) fn drop_placed_over(&mut self, changed: &[(usize, usize)]) {
+        if changed.is_empty() || self.placed.is_empty() {
+            return;
+        }
+        let gone: Vec<PlacedKey> = self
+            .placed
+            .iter()
+            .filter_map(|(k, t)| {
+                let t = t.as_ref()?;
+                let a = k.0 as usize;
+                let size = t.layout.as_ref().map_or(1, |l| l.size as usize);
+                let b = a.saturating_add(size);
+                (!t.gpu_owned
+                    && changed
+                        .iter()
+                        .any(|&(c, n)| c < b && a < c.saturating_add(n)))
+                .then_some(*k)
+            })
+            .collect();
+        for key in gone {
+            if let Some(Some(t)) = self.placed.remove(&key) {
+                // SAFETY: the GPU is idle between submissions.
+                unsafe { self.destroy(t) };
+            }
+            self.stats.released += 1;
+            if let Some(v) = self.tex.by_placed.get(&key) {
+                self.tex.rewrite.extend(v.iter().copied());
+            }
+        }
+    }
+
     /// The 1x1 zero RGBA8 view every index that is not a texture holds (`storage`: the one of
     /// binding 1, a storage image of its own, since shaders may write to it).
     fn hole(&mut self, d: &Device, cb: vk::CommandBuffer, storage: bool) -> Option<vk::ImageView> {
@@ -1628,6 +1663,45 @@ mod tests {
         assert!(all_pixels(&b.read_back(target).unwrap(), [0, 255, 0, 255]));
         let placed = b.placed.values().flatten().find(|t| t.address == green);
         assert_eq!(placed.map(|t| t.uploads), Some(1));
+    }
+
+    #[test]
+    fn a_placed_image_over_changed_memory_is_freed() {
+        let Some(g) = gpu_or_skip() else { return };
+        let mut b = VkBackend::new(&g);
+        let pipe = sampling_pipeline(stage::draw_ps_sampling_a_heap_sampler());
+        let target = texture(16, 8, 28, TARGET);
+        let pd = desc(4, 4, 1, 28, 0, 0);
+        let green = tiled_memory(&pd, |_, _, _, _| vec![0, 255, 0, 255]);
+        // SAFETY: `ResourceDesc` is 56 bytes of integers.
+        let rd: [u32; 14] = unsafe { std::mem::transmute(pd) };
+        let mut vd = [0u32; 16];
+        vd[0] = 28;
+        vd[1] = 4;
+        vd[2] = 0x1688;
+        vd[4] = 1;
+        vd[10] = green as u32;
+        vd[11] = (green >> 32) as u32;
+        let t = table();
+        // SAFETY: valid descriptions and a slot in title memory.
+        unsafe {
+            create_placed_shader_resource_view(
+                std::ptr::null_mut(),
+                rd.as_ptr().cast(),
+                vd.as_ptr().cast(),
+                t + 0x20,
+            )
+        };
+        sampler(1, t + 0x40);
+        b.execute(&[textured_draw(pipe, rtv(target), t)]);
+        assert_eq!(b.placed.values().flatten().count(), 1);
+        // a range elsewhere leaves it
+        b.drop_placed_over(&[(green as usize + (1 << 30), 4096)]);
+        assert_eq!(b.placed.values().flatten().count(), 1);
+        // memory under it changed: the image goes, and the descriptor is written again
+        b.drop_placed_over(&[(green as usize + 16, 16)]);
+        assert_eq!(b.placed.values().flatten().count(), 0);
+        assert!(!b.tex.rewrite.is_empty());
     }
 
     /// Releases the resource object `res` as the title does.

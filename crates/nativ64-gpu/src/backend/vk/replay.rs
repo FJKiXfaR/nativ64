@@ -342,6 +342,8 @@ impl<'g> VkBackend<'g> {
             })
             .count();
         self.draw.begin(draws);
+        let changed = self.draw.mem.changed().to_vec();
+        self.drop_placed_over(&changed);
         self.tex.submission += 1;
         super::profile::count(super::profile::Count::Submissions, 1);
         let ts = super::profile::start();
