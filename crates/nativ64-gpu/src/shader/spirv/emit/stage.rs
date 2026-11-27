@@ -320,7 +320,7 @@ impl<'a> Tr<'a> {
                 let (a, b) = (self.load_builtin(id, tu), self.load_builtin(base, tu));
                 Ok(self.g.op(Op::ISub, tu, &[a, b]))
             }
-            StageIo::Mesh(_) => return unsupported(&format!("entry v{n}")),
+            StageIo::Mesh(_) => unsupported(&format!("entry v{n}")),
             StageIo::Compute(c) => {
                 if n >= c.thread_ids {
                     return unsupported(&format!("entry v{n}"));
