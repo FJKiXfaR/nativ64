@@ -72,6 +72,11 @@ pub struct Registration {
 
 /// Input kind of a gamepad, and the status of a connected device with input enabled.
 pub const KIND_GAMEPAD: u32 = 0x4_0000;
+/// `GameInputKindUiNavigation`: the pad also answers `GetUiNavigationState`, which the menus of
+/// a title often read instead of the gamepad state.
+pub const KIND_UI_NAVIGATION: u32 = 0x0100_0000;
+/// What the virtual pad reports as its supported input and reading kind.
+pub const PAD_KINDS: u32 = KIND_GAMEPAD | KIND_UI_NAVIGATION;
 pub const STATUS_CONNECTED: u32 = 0x3;
 /// `GameInputAsyncEnumeration`; 2 is the blocking one.
 const ASYNC_ENUMERATION: u32 = 1;
@@ -367,7 +372,7 @@ static DEVICE: LazyLock<usize> = LazyLock::new(|| {
         size: size_of::<DeviceInfo>() as u32,
         id,
         root_id: id,
-        supported_input: KIND_GAMEPAD,
+        supported_input: PAD_KINDS,
         // Low and high frequency.
         rumble_motors: 0x3,
         ..DeviceInfo::default()
@@ -446,6 +451,86 @@ struct PadState {
 }
 const _: () = assert!(size_of::<PadState>() == 28);
 
+/// `GameInputUiNavigationButtons` bits (the gamepad is turned into them: a title's menus can
+/// read this instead of the gamepad state).
+pub const UI_MENU: u32 = 0x1;
+pub const UI_VIEW: u32 = 0x2;
+pub const UI_ACCEPT: u32 = 0x4;
+pub const UI_CANCEL: u32 = 0x8;
+pub const UI_UP: u32 = 0x10;
+pub const UI_DOWN: u32 = 0x20;
+pub const UI_LEFT: u32 = 0x40;
+pub const UI_RIGHT: u32 = 0x80;
+pub const UI_CONTEXT1: u32 = 0x100;
+pub const UI_CONTEXT2: u32 = 0x200;
+pub const UI_CONTEXT3: u32 = 0x400;
+pub const UI_CONTEXT4: u32 = 0x800;
+pub const UI_PAGE_UP: u32 = 0x1000;
+pub const UI_PAGE_DOWN: u32 = 0x2000;
+pub const UI_PAGE_LEFT: u32 = 0x4000;
+pub const UI_PAGE_RIGHT: u32 = 0x8000;
+pub const UI_SCROLL_UP: u32 = 0x1_0000;
+pub const UI_SCROLL_DOWN: u32 = 0x2_0000;
+pub const UI_SCROLL_LEFT: u32 = 0x4_0000;
+pub const UI_SCROLL_RIGHT: u32 = 0x8_0000;
+
+/// Turns the pad's buttons, sticks and triggers into `GameInputUiNavigationState`: A accepts, B
+/// cancels, X/Y/LS/RS are context 1-4, the D-pad and the left stick past half are the
+/// directions, the shoulders page, the triggers page up/down and the right stick scrolls.
+fn ui_navigation_buttons(buttons: u32, p: &Physical) -> u32 {
+    let mut ui = 0;
+    macro_rules! map {
+        ($pad:expr, $ui:expr) => {
+            if buttons & $pad != 0 {
+                ui |= $ui;
+            }
+        };
+    }
+    map!(MENU, UI_MENU);
+    map!(VIEW, UI_VIEW);
+    map!(A, UI_ACCEPT);
+    map!(B, UI_CANCEL);
+    map!(Y, UI_CONTEXT2);
+    map!(X, UI_CONTEXT1);
+    map!(LS, UI_CONTEXT3);
+    map!(RS, UI_CONTEXT4);
+    map!(LB, UI_PAGE_LEFT);
+    map!(RB, UI_PAGE_RIGHT);
+    // Directions: the D-pad, or the left stick past half.
+    if buttons & UP != 0 || p.left_y > 0.5 {
+        ui |= UI_UP;
+    }
+    if buttons & DOWN != 0 || p.left_y < -0.5 {
+        ui |= UI_DOWN;
+    }
+    if buttons & LEFT != 0 || p.left_x < -0.5 {
+        ui |= UI_LEFT;
+    }
+    if buttons & RIGHT != 0 || p.left_x > 0.5 {
+        ui |= UI_RIGHT;
+    }
+    // Triggers page up/down, the right stick scrolls.
+    if p.left_trigger > 0.5 {
+        ui |= UI_PAGE_UP;
+    }
+    if p.right_trigger > 0.5 {
+        ui |= UI_PAGE_DOWN;
+    }
+    if p.right_y > 0.5 {
+        ui |= UI_SCROLL_UP;
+    }
+    if p.right_y < -0.5 {
+        ui |= UI_SCROLL_DOWN;
+    }
+    if p.right_x < -0.5 {
+        ui |= UI_SCROLL_LEFT;
+    }
+    if p.right_x > 0.5 {
+        ui |= UI_SCROLL_RIGHT;
+    }
+    ui
+}
+
 const READING_SLOTS: usize = 25;
 type ReadingObject = ComObject<Table<READING_SLOTS>, Entry>;
 type Reading = *mut ReadingObject;
@@ -456,10 +541,10 @@ fn new_reading(entry: Entry) -> *mut c_void {
 }
 
 extern "win64" fn reading_kind(_: Reading) -> u32 {
-    KIND_GAMEPAD
+    PAD_KINDS
 }
 extern "win64" fn reading_sequence(this: Reading, kind: u32) -> u64 {
-    if kind & KIND_GAMEPAD != 0 {
+    if kind & PAD_KINDS != 0 {
         // SAFETY: a reading we handed out.
         unsafe { (*this).data.sequence }
     } else {
@@ -476,6 +561,19 @@ extern "win64" fn reading_device(_: Reading, out: *mut *mut c_void) {
         unsafe { out.write(device()) };
     }
 }
+/// `GetUiNavigationState(state)`: the pad as the UI-navigation buttons a title's menus read.
+extern "win64" fn ui_navigation(this: Reading, out: *mut u32) -> bool {
+    if out.is_null() {
+        return false;
+    }
+    // SAFETY: a reading we handed out; `out` has room for the state.
+    let buttons = unsafe { (*this).data.buttons };
+    let p = physical();
+    // SAFETY: as above.
+    unsafe { out.write(ui_navigation_buttons(buttons, &p)) };
+    true
+}
+
 extern "win64" fn gamepad_state(this: Reading, out: *mut PadState) -> bool {
     if out.is_null() {
         return false;
@@ -523,7 +621,7 @@ static READING_VTBL: Table<READING_SLOTS> = table!(READING_SLOTS, Entry;
     no_input,          // 21 flight stick
     gamepad_state,     // 22
     no_input,          // 23 racing wheel
-    no_input,          // 24 UI navigation
+    ui_navigation,     // 24 UI navigation
 );
 
 #[repr(C)]
@@ -610,7 +708,7 @@ fn hand(out: Out, entry: Option<Entry>) -> HRESULT {
 
 /// Whether a query for `kinds` on `device` (NULL: any) reaches the gamepad.
 fn selects_pad(kinds: u32, device: *mut c_void) -> bool {
-    kinds & KIND_GAMEPAD != 0 && (device.is_null() || device == self::device())
+    kinds & PAD_KINDS != 0 && (device.is_null() || device == self::device())
 }
 
 unsafe extern "win64" fn get_current_reading(
@@ -979,6 +1077,44 @@ mod tests {
 
     /// One test only: the physical state is process-wide.
     #[test]
+    fn ui_navigation_maps_the_pad() {
+        let rest = Physical::REST;
+        assert_eq!(
+            ui_navigation_buttons(A | B | X | Y, &rest),
+            UI_ACCEPT | UI_CANCEL | UI_CONTEXT1 | UI_CONTEXT2
+        );
+        assert_eq!(
+            ui_navigation_buttons(UP | DOWN | LEFT | RIGHT, &rest),
+            UI_UP | UI_DOWN | UI_LEFT | UI_RIGHT
+        );
+        assert_eq!(
+            ui_navigation_buttons(MENU | VIEW | LS | RS, &rest),
+            UI_MENU | UI_VIEW | UI_CONTEXT3 | UI_CONTEXT4
+        );
+        assert_eq!(
+            ui_navigation_buttons(LB | RB, &rest),
+            UI_PAGE_LEFT | UI_PAGE_RIGHT
+        );
+        // Sticks and triggers past half act even with no button pressed.
+        let mut p = Physical::REST;
+        p.left_x = -0.9;
+        p.left_y = 0.9;
+        p.right_x = 0.9;
+        p.right_y = -0.9;
+        p.left_trigger = 0.8;
+        p.right_trigger = 0.6;
+        assert_eq!(
+            ui_navigation_buttons(0, &p),
+            UI_LEFT | UI_UP | UI_SCROLL_RIGHT | UI_SCROLL_DOWN | UI_PAGE_UP | UI_PAGE_DOWN
+        );
+        // A small stick or trigger is not a press.
+        let mut p = Physical::REST;
+        p.left_x = 0.3;
+        p.left_trigger = 0.3;
+        assert_eq!(ui_navigation_buttons(0, &p), 0);
+    }
+
+    #[test]
     fn joystick_events_press_buttons_and_move_sticks() {
         reset_physical();
         // A press (button 0, value 1), the D-pad hat up (axis 7, negative), a stick and a trigger.
@@ -1168,7 +1304,7 @@ mod tests {
             let slot = |n| {
                 crate::xgameruntime::method::<unsafe extern "win64" fn(*mut c_void) -> u64>(r, n)
             };
-            assert_eq!(slot(3)(r), KIND_GAMEPAD as u64);
+            assert_eq!(slot(3)(r), PAD_KINDS as u64);
             assert_eq!(slot(5)(r), 77);
             let seq: unsafe extern "win64" fn(*mut c_void, u32) -> u64 =
                 crate::xgameruntime::method(r, 4);
@@ -1205,7 +1341,7 @@ mod tests {
                 crate::xgameruntime::method(d, 4);
             let i = &*info(d);
             assert_eq!(i.size as usize, size_of::<DeviceInfo>());
-            assert_eq!(i.supported_input, KIND_GAMEPAD);
+            assert_eq!(i.supported_input, PAD_KINDS);
             assert_eq!(i.rumble_motors, 3);
             assert_eq!(status(d), STATUS_CONNECTED);
             let rumble: unsafe extern "win64" fn(*mut c_void, *const f32) =
