@@ -536,6 +536,10 @@ pub struct ViewTable<'g> {
     written: usize,
     /// Indices of buffer views whose memory did not translate: tried again.
     retry: Vec<usize>,
+    /// The title address range each index recorded (`None`: nothing recorded there).
+    spans: Vec<Option<(usize, usize)>>,
+    /// Indices whose recorded address lies in memory that changed: recorded again.
+    dirty: Vec<usize>,
 }
 
 impl<'g> ViewTable<'g> {
@@ -547,6 +551,8 @@ impl<'g> ViewTable<'g> {
             capacity,
             written: 0,
             retry: Vec::new(),
+            spans: Vec::new(),
+            dirty: Vec::new(),
         })
     }
 
@@ -555,10 +561,53 @@ impl<'g> ViewTable<'g> {
         self.buf.address
     }
 
-    /// Forget what was written: addresses changed under the records.
-    pub fn reset(&mut self) {
-        self.written = 0;
-        self.retry.clear();
+    /// Forget records whose address lies in memory that changed; the rest stay valid, so a
+    /// frame that only touches a few allocations no longer re-records every descriptor (the
+    /// title keeps a few thousand and that rewrite was ~200 ms a frame).
+    pub fn reset(&mut self, changed: &[(usize, usize)]) {
+        if changed.is_empty() {
+            return;
+        }
+        // A heavy churn of ranges: start over rather than search each record against all of them.
+        if changed.len() > 1024 {
+            self.written = 0;
+            self.retry.clear();
+            self.spans.clear();
+            self.dirty.clear();
+            return;
+        }
+        let mut ranges = changed.to_vec();
+        ranges.sort_unstable();
+        let mut merged: Vec<(usize, usize)> = Vec::with_capacity(ranges.len());
+        for (at, len) in ranges {
+            match merged.last_mut() {
+                Some((start, n)) if at <= start.saturating_add(*n) => {
+                    *n = (*n).max(at.saturating_add(len) - *start);
+                }
+                _ => merged.push((at, len)),
+            }
+        }
+        for (index, span) in self.spans.iter_mut().enumerate() {
+            let Some((at, size)) = *span else { continue };
+            let end = at.saturating_add(size);
+            let hit = merged
+                .binary_search_by(|&(start, len)| {
+                    if start.saturating_add(len) <= at {
+                        std::cmp::Ordering::Less
+                    } else if start >= end {
+                        std::cmp::Ordering::Greater
+                    } else {
+                        std::cmp::Ordering::Equal
+                    }
+                })
+                .is_ok();
+            if hit {
+                *span = None;
+                self.dirty.push(index);
+            }
+        }
+        // The views that could not translate stay in `retry`: the memory they named may be
+        // committed now.
     }
 
     fn grow(&mut self, need: usize) -> Result<()> {
@@ -577,25 +626,57 @@ impl<'g> ViewTable<'g> {
         Ok(())
     }
 
-    /// Writes the records of the views registered since the last call, and retries the ones
-    /// whose memory did not translate. The queue is idle.
+    /// Records the buffer view at `index`, remembering the address range it resolved to.
+    fn write_record(&mut self, index: usize, r: &[u8; RECORD]) {
+        self.buf.write(index * RECORD, r);
+        while self.spans.len() <= index {
+            self.spans.push(None);
+        }
+        let address = u64::from_le_bytes(r[8..16].try_into().expect("8 bytes"));
+        let size = u32::from_le_bytes(r[16..20].try_into().expect("4 bytes")) as usize;
+        self.spans[index] = Some((address as usize, size.max(1)));
+    }
+
+    /// Writes the records of the views registered since the last call, the records whose memory
+    /// changed, and retries the ones whose memory did not translate. The queue is idle.
     pub fn update(&mut self, mem: &mut GpuMemory<'_>) {
         // One snapshot: the title's threads keep registering views, so a count taken apart
         // from the list could be smaller than the list.
+        let started = std::time::Instant::now();
         let first = self.written;
         let views = crate::d3d12::descriptor::views_from(first);
+        let fetch_done = started.elapsed();
         if self.grow(first + views.len()).is_err() {
             log_once("view table: cannot grow the buffer".into());
             return;
         }
-        // views tried before and not translated, then the new ones
+        // the records whose memory changed, then the ones not translated before, then the new
+        // views
+        let dirty = std::mem::take(&mut self.dirty);
+        for index in dirty {
+            let v = crate::d3d12::descriptor::views_from(index)
+                .into_iter()
+                .next();
+            match v.as_ref().map_or(Rec::None, |v| record_of(v, mem)) {
+                Rec::Buffer(r) => self.write_record(index, &r),
+                Rec::Retry => {
+                    while self.spans.len() <= index {
+                        self.spans.push(None);
+                    }
+                    self.spans[index] = None;
+                    self.retry.push(index);
+                }
+                Rec::None => {}
+            }
+        }
         let again = std::mem::take(&mut self.retry);
+        let again_len = again.len();
         for index in again {
             let v = crate::d3d12::descriptor::views_from(index)
                 .into_iter()
                 .next();
             match v.as_ref().map_or(Rec::None, |v| record_of(v, mem)) {
-                Rec::Buffer(r) => self.buf.write(index * RECORD, &r),
+                Rec::Buffer(r) => self.write_record(index, &r),
                 Rec::Retry => self.retry.push(index),
                 Rec::None => {}
             }
@@ -603,12 +684,29 @@ impl<'g> ViewTable<'g> {
         for (k, v) in views.iter().enumerate() {
             let index = first + k;
             match record_of(v, mem) {
-                Rec::Buffer(r) => self.buf.write(index * RECORD, &r),
-                Rec::Retry => self.retry.push(index),
-                Rec::None => {}
+                Rec::Buffer(r) => self.write_record(index, &r),
+                Rec::Retry => {
+                    while self.spans.len() <= index {
+                        self.spans.push(None);
+                    }
+                    self.retry.push(index);
+                }
+                Rec::None => {
+                    while self.spans.len() <= index {
+                        self.spans.push(None);
+                    }
+                }
             }
         }
         self.written = first + views.len();
+        let total = started.elapsed();
+        if total.as_millis() >= 10 {
+            eprintln!(
+                "nativ64-gpu: view table update: {total:?} (fetch {fetch_done:?}, {} views from {first}, {} retried)",
+                views.len(),
+                again_len
+            );
+        }
     }
 }
 
@@ -749,8 +847,9 @@ mod tests {
         // (the registry is global: other tests' views may be in the list too)
         assert!(table.retry.contains(&index_of(lost)));
         assert!(!table.retry.contains(&index_of(tex)));
-        // a reset rewrites the records (the addresses may have changed)
-        table.reset();
+        // a reset that covers the whole address space rewrites every record (the addresses may
+        // have changed)
+        table.reset(&[(0, usize::MAX)]);
         table.update(&mut mem);
         assert!(table.retry.contains(&index_of(lost)));
         let r = table.buf.read(index_of(srv) * RECORD, RECORD);

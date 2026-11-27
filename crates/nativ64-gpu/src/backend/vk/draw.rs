@@ -218,8 +218,9 @@ impl<'g> DrawState<'g> {
     pub(super) fn begin(&mut self, draws: usize) -> bool {
         let changed = self.mem.sync();
         if changed {
+            let ranges = self.mem.changed();
             if let Some(v) = &mut self.views {
-                v.reset();
+                v.reset(ranges);
             }
         }
         self.views_ready = false;
