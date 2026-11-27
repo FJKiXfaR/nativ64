@@ -86,8 +86,8 @@ measured:
   guest threads, and handles structured exceptions ([`docs/seh.md`](docs/seh.md)).
 - **Windows and Xbox API layer.** The `nativ64` library implements the host APIs the title
   imports (C runtime, synchronization, handles, threads, heap, time, modules, a first set of
-  system calls, console service stubs). Import map coverage as of its last refresh: 467 of
-  the 697 host functions the title needs, 67.0% ([`docs/import-map.md`](docs/import-map.md)).
+  system calls, console service stubs). Import map coverage as of its last refresh: 476 of
+  the 697 host functions the title needs are answered natively by nativ64, 68.3% ([`docs/import-map.md`](docs/import-map.md)).
 - **GPU layer.** `nativ64-gpu` implements the console's Direct3D 12 interface as recorded
   commands replayed on **Vulkan 1.3** (own backend, no vkd3d), with a Wayland swapchain
   ([`docs/gpu.md`](docs/gpu.md)).
@@ -100,14 +100,14 @@ measured:
 Next: the memory peak while the title loads, keyboard input, cross-lane shader operations and
 mesh shaders.
 
-Host functions still to write for the first title (230 of 697):
+Host functions still to write for the first title (221 of 697):
 
 | Area | To write |
 |---|---|
-| System | 93 |
+| System | 85 |
 | C/C++ runtime (`api-ms-win-crt-*`) | 18 |
 | Network & crypto | 47 |
-| Threads & sync | 24 |
+| Threads & sync | 23 |
 | Files | 10 |
 | Memory | 19 |
 | Loader | 3 |
