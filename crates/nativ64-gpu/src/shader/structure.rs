@@ -539,7 +539,9 @@ pub fn cross_lane_use(m: &Masks, inst: &Inst) -> Option<String> {
         return None;
     }
     // a lane exchange the emitter translates with a subgroup shuffle
-    if matches!(i.name(), "v_readlane_b32" | "v_writelane_b32") {
+    if matches!(i.name(), "v_readlane_b32" | "v_writelane_b32")
+        || i.name().starts_with("ds_bpermute")
+    {
         return None;
     }
     // anything else reads the mask as data: the emitter emits the ballot's dword the value's

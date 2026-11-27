@@ -1890,6 +1890,35 @@ impl<K: Backend> X<'_, K> {
                 let (a, b) = (self.fsrc(0)?, self.fsrc(1)?);
                 self.fc(o, a, b)
             }
+            "f16" => {
+                if op == "f" || op == "t" || op == "tru" {
+                    let c = self.b.kb(op != "f");
+                    return Ok(Some(Res::b(c)));
+                }
+                if self.i.mods.opsel != 0 {
+                    return Err(self.un());
+                }
+                let o = match op {
+                    "lt" => FCmp::OLt,
+                    "eq" => FCmp::OEq,
+                    "le" => FCmp::OLe,
+                    "gt" => FCmp::OGt,
+                    "lg" => FCmp::ONe,
+                    "ge" => FCmp::OGe,
+                    "o" => FCmp::Ord,
+                    "u" => FCmp::Uno,
+                    "nge" => FCmp::ULt,
+                    "nlg" => FCmp::UEq,
+                    "ngt" => FCmp::ULe,
+                    "nle" => FCmp::UGt,
+                    "neq" => FCmp::UNe,
+                    "nlt" => FCmp::UGe,
+                    _ => return Err(self.un()),
+                };
+                let (a, b) = (self.v(0)?, self.v(1)?);
+                let (a, b) = (self.b.unpack_half(a), self.b.unpack_half(b));
+                self.fc(o, a, b)
+            }
             "i32" | "u32" | "i16" | "u16" => {
                 if op == "f" || op == "t" {
                     let c = self.b.kb(op == "t");
@@ -2607,6 +2636,18 @@ impl<K: Backend> X<'_, K> {
                     _ => FUn::RoundEven,
                 };
                 let r = self.b.fun(op, a);
+                Ok(Res::v(self.b.pack_half(r)))
+            }
+            "v_fmac_f16" => {
+                let a = self.v(0)?;
+                let b = self.v(1)?;
+                let c = self.old_dst()?;
+                let (a, b, c) = (
+                    self.b.unpack_half(a),
+                    self.b.unpack_half(b),
+                    self.b.unpack_half(c),
+                );
+                let r = self.b.fma(a, b, c);
                 Ok(Res::v(self.b.pack_half(r)))
             }
             "v_fma_f16" | "v_mad_f16" => {

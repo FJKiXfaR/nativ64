@@ -720,16 +720,21 @@ impl<'a> Tr<'a> {
         self.g.op0(Op::Store, &[ptr, v, 2, 4]);
     }
 
-    /// An atomic on the dword at a device address: its value before the operation.
-    fn bda_atomic(&mut self, op: Op, addr: u32, v: Option<u32>) -> u32 {
-        let tu = self.g.t_u32();
-        let p = self.g.t_ptr(StorageClass::PhysicalStorageBuffer, tu);
+    /// An atomic on the dword at a device address: its value before the operation. A float
+    /// atomic (min/max) names a float pointer and returns a float.
+    fn bda_atomic(&mut self, op: Op, addr: u32, v: Option<u32>, float: bool) -> u32 {
+        let t = if float {
+            self.g.t_f32()
+        } else {
+            self.g.t_u32()
+        };
+        let p = self.g.t_ptr(StorageClass::PhysicalStorageBuffer, t);
         let ptr = self.g.op(Op::ConvertUToPtr, p, &[addr]);
         // Device scope, relaxed
         let (scope, relaxed) = (self.g.k(1), self.g.k(0));
         match v {
-            Some(v) => self.g.op(op, tu, &[ptr, scope, relaxed, v]),
-            None => self.g.op(op, tu, &[ptr, scope, relaxed]),
+            Some(v) => self.g.op(op, t, &[ptr, scope, relaxed, v]),
+            None => self.g.op(op, t, &[ptr, scope, relaxed]),
         }
     }
 
@@ -2122,10 +2127,8 @@ impl<'a> Tr<'a> {
         if name.starts_with("image_gather4") {
             return self.image_gather(c);
         }
-        // image atomics would need the storage images declared with an integer sampled type
-        // (they are float throughout): refused
-        if name.starts_with("image_atomic_") {
-            return refuse(name);
+        if let Some(op) = name.strip_prefix("image_atomic_") {
+            return self.image_atomic(c, op);
         }
         let (explicit, zero_lod, dref) = match name {
             "image_sample" => (false, false, false),
@@ -2281,12 +2284,13 @@ impl<'a> Tr<'a> {
         if d == 0 {
             self.g.m.capability(Capability::Image1D);
         }
-        let tf = self.g.t_f32();
-        // sampled 2 (storage), format Unknown
+        let tu = self.g.t_u32();
+        // sampled 2 (storage), format Unknown; the dwords are integers (a float store or load
+        // bit casts them), so an integer atomic can name the same image
         let img = self
             .g
             .m
-            .global(Op::TypeImage, None, &[tf, d, 0, arrayed, 0, 2, 0]);
+            .global(Op::TypeImage, None, &[tu, d, 0, arrayed, 0, 2, 0]);
         let arr = self.g.m.global(Op::TypeRuntimeArray, None, &[img]);
         let var = self.global(StorageClass::UniformConstant, arr);
         self.g
@@ -2300,6 +2304,80 @@ impl<'a> Tr<'a> {
 
     /// `image_load*` / `image_store*` on a table slot: an SRV is fetched (`OpImageFetch`) and a
     /// UAV read (`OpImageRead`) or written (`OpImageWrite`), by the registry index in the slot.
+    /// `image_atomic_*`: an integer atomic on the texel of a storage image at the address (the
+    /// storage images are declared with an integer sampled type, so the texel pointer fits).
+    fn image_atomic(&mut self, c: &Ctx<Gen>, op: &str) -> R<Option<Vec<Opd<Gen>>>> {
+        let i = &c.inst.instr;
+        let name = i.name();
+        let m = i.img;
+        if m.d16 || m.tfe || m.lwe {
+            return refuse(&format!("{name} with d16, tfe or lwe"));
+        }
+        let dim = match m.dim {
+            0 | 1 | 2 | 5 => m.dim,
+            d => return refuse(&format!("{name} on dimension {d}")),
+        };
+        let (_, _, ncoord) = Self::image_dim(dim).expect("a dimension that was checked");
+        let ns = c.srcs.len();
+        if ns != 3 || c.srcs[ns - 1].len() < 8 {
+            return bad("an image atomic whose operands do not match its form");
+        }
+        let (spirv_op, operand) = match op {
+            "add" => (Op::AtomicIAdd, true),
+            "sub" => (Op::AtomicISub, true),
+            "smin" => (Op::AtomicSMin, true),
+            "umin" => (Op::AtomicUMin, true),
+            "smax" => (Op::AtomicSMax, true),
+            "umax" => (Op::AtomicUMax, true),
+            "and" => (Op::AtomicAnd, true),
+            "or" => (Op::AtomicOr, true),
+            "xor" => (Op::AtomicXor, true),
+            "swap" => (Op::AtomicExchange, true),
+            "inc" => (Op::AtomicIIncrement, false),
+            "dec" => (Op::AtomicIDecrement, false),
+            _ => return refuse(name),
+        };
+        let addr = &c.srcs[ns - 2];
+        let tu = self.g.t_u32();
+        let mut comps = Vec::new();
+        for k in 0..ncoord as usize {
+            let Some(&a) = addr.get(k) else {
+                return refuse(&format!("{name} with an address of {} dwords", addr.len()));
+            };
+            comps.push(self.bits_of(a));
+        }
+        let coord = if ncoord == 1 {
+            comps[0]
+        } else {
+            let tv = self.g.m.global(Op::TypeVector, None, &[tu, ncoord]);
+            self.g.op(Op::CompositeConstruct, tv, &comps)
+        };
+        let index = self.bits_of(c.srcs[ns - 1][0]);
+        self.non_uniform(index);
+        let (var, img) = self.storage_array(dim);
+        // `OpImageTexelPointer` names the image through its descriptor pointer
+        let pst = self.g.t_ptr(StorageClass::UniformConstant, img);
+        let image = self.g.op(Op::AccessChain, pst, &[var, index]);
+        let p = self.g.t_ptr(StorageClass::Image, tu);
+        let zero = self.g.k(0);
+        let ptr = self.g.op(Op::ImageTexelPointer, p, &[image, coord, zero]);
+        // Device scope, relaxed
+        let (scope, relaxed) = (self.g.k(1), self.g.k(0));
+        let old = if operand {
+            let Some(&v) = c.srcs[1].first() else {
+                return bad("an image atomic without its value");
+            };
+            let v = self.bits_of(v);
+            self.g.op(spirv_op, tu, &[ptr, scope, relaxed, v])
+        } else {
+            self.g.op(spirv_op, tu, &[ptr, scope, relaxed])
+        };
+        if c.inst.dsts.is_empty() {
+            return Ok(Some(Vec::new()));
+        }
+        Ok(Some(vec![self.lane_result(c, 0, old)]))
+    }
+
     fn image_ls(&mut self, c: &Ctx<Gen>, store: bool) -> R<Option<Vec<Opd<Gen>>>> {
         let i = &c.inst.instr;
         let name = i.name();
@@ -2385,6 +2463,7 @@ impl<'a> Tr<'a> {
         self.non_uniform(index);
         let tf = self.g.t_f32();
         let v4 = self.vec4(Class::Float);
+        let u4 = self.vec4(Class::Uint);
         if store {
             let (var, img) = self.storage_array(dim);
             let image = self.array_element(var, img, index);
@@ -2393,10 +2472,9 @@ impl<'a> Tr<'a> {
             }
             let mut chans = Vec::new();
             for &d in &c.srcs[0] {
-                let bits = self.bits_of(d);
-                chans.push(self.g.as_f32(bits));
+                chans.push(self.bits_of(d));
             }
-            let texel = self.g.op(Op::CompositeConstruct, v4, &chans);
+            let texel = self.g.op(Op::CompositeConstruct, u4, &chans);
             self.guarded(c.active, |t| {
                 t.g.op0(Op::ImageWrite, &[image, coord, texel]);
                 Ok(())
@@ -2416,7 +2494,8 @@ impl<'a> Tr<'a> {
         } else {
             let (var, img) = self.storage_array(dim);
             let image = self.array_element(var, img, index);
-            self.g.op(Op::ImageRead, v4, &[image, coord])
+            let u4 = self.vec4(Class::Uint);
+            self.g.op(Op::ImageRead, u4, &[image, coord])
         };
         let chans: Vec<u32> = (0..4).filter(|ch| m.dmask >> ch & 1 != 0).collect();
         if chans.len() != c.inst.dsts.len() {
@@ -2424,8 +2503,14 @@ impl<'a> Tr<'a> {
         }
         let mut out = Vec::new();
         for (j, ch) in chans.into_iter().enumerate() {
-            let x = self.g.op(Op::CompositeExtract, tf, &[res, ch]);
-            let bits = self.g.as_bits(x);
+            // a texture fetch gives floats, a storage read the dwords themselves
+            let bits = if kind == 0 {
+                let x = self.g.op(Op::CompositeExtract, tf, &[res, ch]);
+                self.g.as_bits(x)
+            } else {
+                let dword = self.g.t_u32();
+                self.g.op(Op::CompositeExtract, dword, &[res, ch])
+            };
             out.push(self.lane_result(c, j, bits));
         }
         Ok(Some(out))
@@ -2563,9 +2648,10 @@ impl<'a> Tr<'a> {
         if i.mem.seg == 1 {
             return refuse(&format!("{name} on scratch"));
         }
-        // a float min or max needs SPV_EXT_shader_atomic_float2_min_max
+        // a float min or max needs SPV_EXT_shader_atomic_float_min_max
         let float = matches!(op, "fmin" | "fmax");
         if float {
+            self.g.m.extension("SPV_EXT_shader_atomic_float_min_max");
             self.g.m.capability(Capability::AtomicFloat32MinMaxEXT);
         }
         let (spirv_op, _operand) = match op {
@@ -2610,7 +2696,7 @@ impl<'a> Tr<'a> {
             if let Some(&cmp) = c.srcs.get(2).and_then(|s| s.first()) {
                 let _ = cmp;
             }
-            let old = self.bda_atomic(spirv_op, dev, Some(v));
+            let old = self.bda_atomic(spirv_op, dev, Some(v), float);
             let old = if float { self.g.as_bits(old) } else { old };
             let zero = self.g.k(0);
             let old = self.g.select(ok, old, zero);
@@ -2618,7 +2704,7 @@ impl<'a> Tr<'a> {
                 out.push(self.lane_result(c, 0, old));
             }
         } else {
-            let old = self.bda_atomic(spirv_op, dev, None);
+            let old = self.bda_atomic(spirv_op, dev, None, float);
             let zero = self.g.k(0);
             let old = self.g.select(ok, old, zero);
             if !c.inst.dsts.is_empty() {
