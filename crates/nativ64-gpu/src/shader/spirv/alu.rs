@@ -149,6 +149,8 @@ pub trait Backend {
     fn bxor(&mut self, a: Self::B, b: Self::B) -> Self::B;
     /// The value of the group's lowest active invocation (`v_readfirstlane`).
     fn broadcast_first(&mut self, a: Self::V) -> Self::V;
+    /// This invocation's lane in the wave (`v_mbcnt`).
+    fn lane_id(&mut self) -> Self::V;
 }
 
 /// A value of an operand or result: bits, or a lane mask.
@@ -185,7 +187,6 @@ pub fn non_alu_chunk(i: &Instr) -> Option<u8> {
         || n.starts_with("v_readlane")
         || n.starts_with("v_readfirstlane")
         || n.starts_with("v_writelane")
-        || n.starts_with("v_mbcnt")
         || n.starts_with("v_permlane")
         || n.starts_with("ds_swizzle")
         || n.starts_with("ds_permute")
@@ -236,6 +237,7 @@ impl Backend for Dry {
     fn bor(&mut self, _: (), _: ()) {}
     fn bxor(&mut self, _: (), _: ()) {}
     fn broadcast_first(&mut self, _: ()) {}
+    fn lane_id(&mut self) {}
 }
 
 /// Runs the table on host numbers.
@@ -452,6 +454,10 @@ impl Backend for Cpu {
     fn broadcast_first(&mut self, a: u32) -> u32 {
         // one invocation per run: it is its own first active lane
         a
+    }
+    fn lane_id(&mut self) -> u32 {
+        // one invocation per run: lane 0
+        0
     }
 }
 
@@ -1972,6 +1978,33 @@ impl<K: Backend> X<'_, K> {
             "v_ffbl_b32" => {
                 let a = self.v(0)?;
                 Ok(Res::v(self.b.iun(IUn::FindLsb, a)))
+            }
+            "v_mbcnt_lo_u32_b32" | "v_mbcnt_hi_u32_b32" => {
+                // bits of the mask below this lane (the low or the high half), plus the
+                // second source: with an all-ones mask that is the lane's index
+                if matches!(self.src(0, 0)?, Opd::B(_)) {
+                    return Err(self.un());
+                }
+                let a = self.v(0)?;
+                let prev = self.v(1)?;
+                let lane = self.b.lane_id();
+                let (k32, k31, one, ones) = (self.k(32), self.k(31), self.k(1), self.k(u32::MAX));
+                let below = if self.name == "v_mbcnt_lo_u32_b32" {
+                    lane
+                } else {
+                    let z = self.k(0);
+                    let lt = self.b.icmp(ICmp::ULt, lane, k32);
+                    let sub = self.b.ibin(IBin::Sub, lane, k32);
+                    self.b.select(lt, z, sub)
+                };
+                let sh = self.b.ibin(IBin::And, below, k31);
+                let one_sh = self.b.ibin(IBin::Shl, one, sh);
+                let mask = self.b.ibin(IBin::Sub, one_sh, one);
+                let full = self.b.icmp(ICmp::UGe, below, k32);
+                let mask = self.b.select(full, ones, mask);
+                let x = self.b.ibin(IBin::And, a, mask);
+                let n = self.b.iun(IUn::BitCount, x);
+                Ok(Res::v(self.b.ibin(IBin::Add, n, prev)))
             }
             "v_ffbh_u32" | "v_ffbh_i32" => {
                 let a = self.v(0)?;

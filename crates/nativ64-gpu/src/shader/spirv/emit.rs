@@ -13,8 +13,8 @@ mod resource;
 mod stage;
 
 use spirv::{
-    AddressingModel, Capability, Decoration, ExecutionMode, ExecutionModel, GlslStd450Op as GL,
-    MemoryModel, Op, StorageClass,
+    AddressingModel, BuiltIn, Capability, Decoration, ExecutionMode, ExecutionModel,
+    GlslStd450Op as GL, MemoryModel, Op, StorageClass,
 };
 
 use super::alu::{self, Backend, Ctx, Cvt, FBin, FCmp, FUn, IBin, ICmp, IUn, Opd, Unsupported};
@@ -79,6 +79,10 @@ pub struct Gen {
     locals: Vec<u32>,
     terminated: bool,
     glsl: u32,
+    /// Builtin variables made here, by builtin: the entry point must list them.
+    builtins: std::collections::HashMap<u32, u32>,
+    /// Builtin variables to add to the entry point's interface.
+    pub extra_iface: Vec<u32>,
 }
 
 impl Gen {
@@ -97,6 +101,8 @@ impl Gen {
             locals: Vec::new(),
             terminated: false,
             glsl,
+            builtins: std::collections::HashMap::new(),
+            extra_iface: Vec::new(),
         }
     }
 
@@ -199,7 +205,30 @@ impl Gen {
     }
 }
 
+impl Gen {
+    /// A builtin input variable (`gl_SubgroupInvocationID`, ...), made once.
+    fn builtin(&mut self, b: BuiltIn, ty: u32) -> u32 {
+        if let Some(&v) = self.builtins.get(&(b as u32)) {
+            return v;
+        }
+        let p = self.t_ptr(StorageClass::Input, ty);
+        let v = self.m.global_var(p, StorageClass::Input, None);
+        self.m.decorate(v, Decoration::BuiltIn, &[b as u32]);
+        self.m.name(v, "builtin");
+        self.builtins.insert(b as u32, v);
+        self.extra_iface.push(v);
+        v
+    }
+}
+
 impl Backend for Gen {
+    fn lane_id(&mut self) -> u32 {
+        self.m.capability(Capability::GroupNonUniform);
+        let t = self.t_u32();
+        let v = self.builtin(BuiltIn::SubgroupLocalInvocationId, t);
+        self.load(t, v)
+    }
+
     fn broadcast_first(&mut self, a: u32) -> u32 {
         // `v_readfirstlane_b32`: the value of the lowest active lane of the wave
         self.m.capability(Capability::GroupNonUniformBallot);
@@ -604,10 +633,12 @@ fn build<'a>(f: &'a Func, s: &'a Structured, io: Option<&'a StageIo>) -> Result<
             samplers = st.res.samplers.clone();
             flags = st.res.flags();
             let model = st.model();
+            iface.extend(t.g.extra_iface.iter().copied());
             t.g.m.entry_point(model, main, "main", &iface);
             st.exec_modes(&mut t.g.m, main);
         }
         None => {
+            iface.extend(t.g.extra_iface.iter().copied());
             t.g.m
                 .entry_point(ExecutionModel::GLCompute, main, "main", &iface);
             t.g.m.exec_mode(main, ExecutionMode::LocalSize, &[1, 1, 1]);

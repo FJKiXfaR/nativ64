@@ -181,7 +181,6 @@ pub fn cross_lane_by_nature(i: &Instr) -> bool {
         || n.starts_with("v_readlane")
         || n.starts_with("v_readfirstlane")
         || n.starts_with("v_writelane")
-        || n.starts_with("v_mbcnt")
         || n.starts_with("v_permlane")
         || n.starts_with("ds_swizzle")
         || n.starts_with("ds_permute")
