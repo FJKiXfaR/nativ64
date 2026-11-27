@@ -14,6 +14,7 @@ pub mod api_ms_win_core_errorhandling;
 pub mod api_ms_win_core_fibers;
 pub mod api_ms_win_core_file;
 pub mod api_ms_win_core_handle;
+pub mod api_ms_win_core_heap;
 pub mod api_ms_win_core_interlocked;
 pub mod api_ms_win_core_libraryloader;
 pub mod api_ms_win_core_localization;
@@ -79,6 +80,7 @@ pub static TABLES: &[&[Export]] = &[
     api_ms_win_core_fibers::EXPORTS,
     api_ms_win_core_file::EXPORTS,
     api_ms_win_core_handle::EXPORTS,
+    api_ms_win_core_heap::EXPORTS,
     api_ms_win_core_interlocked::EXPORTS,
     api_ms_win_core_libraryloader::EXPORTS,
     api_ms_win_core_localization::EXPORTS,
