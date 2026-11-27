@@ -612,7 +612,7 @@ win32! {
             }
             let n = std::ptr::read_unaligned(set as *const u32) as usize;
             for i in 0..n.min(FD_SET_MAX) {
-                let s = std::ptr::read_unaligned((set as *const u64).add(1 + i));
+                let s = std::ptr::read_unaligned((set.add(FD_SET_FIRST) as *const u64).add(i));
                 let Ok(f) = fd(s) else { continue };
                 libc::FD_SET(f, out);
                 max = max.max(f);
@@ -726,7 +726,7 @@ win32! {
         }
         let n = std::ptr::read_unaligned(set as *const u32) as usize;
         for i in 0..n.min(FD_SET_MAX) {
-            if std::ptr::read_unaligned((set as *const u64).add(1 + i)) == s {
+            if std::ptr::read_unaligned((set.add(FD_SET_FIRST) as *const u64).add(i)) == s {
                 return 1;
             }
         }
@@ -822,7 +822,7 @@ mod tests {
             let mut addr = [0u8; SOCKADDR_IN_LEN];
             addr[0..2].copy_from_slice(&(libc::AF_INET as u16).to_ne_bytes());
             addr[2..4].copy_from_slice(&0u16.to_ne_bytes());
-            addr[4..8].copy_from_slice(&inet_addr(b"127.0.0.1\0".as_ptr()).to_ne_bytes());
+            addr[4..8].copy_from_slice(&inet_addr(c"127.0.0.1".as_ptr().cast()).to_ne_bytes());
             assert_eq!(bind(s, addr.as_ptr(), SOCKADDR_IN_LEN as i32), 0);
             assert_eq!(listen(s, 1), 0);
             let mut len = SOCKADDR_IN_LEN as i32;
@@ -868,7 +868,7 @@ mod tests {
             let s = socket(libc::AF_INET, libc::SOCK_DGRAM, 0);
             assert_ne!(s, INVALID_SOCKET);
             let mut on: u32 = 1;
-            assert_eq!(ioctlsocket(s, (0x8004_667e_u32 as i32), &mut on), 0);
+            assert_eq!(ioctlsocket(s, 0x8004_667e_u32 as i32, &mut on), 0);
             let mut buf = [0u8; 4];
             assert_eq!(recv(s, buf.as_mut_ptr(), 4, 0), SOCKET_ERROR);
             assert_eq!(WSAGetLastError(), WSAEWOULDBLOCK);
@@ -883,12 +883,12 @@ mod tests {
             assert_eq!(ntohs(0x3412), 0x1234);
             assert_eq!(htonl(0x0102_0304), 0x0403_0201);
             assert_eq!(ntohl(0x0403_0201), 0x0102_0304);
-            let a = inet_addr(b"127.0.0.1\0".as_ptr());
+            let a = inet_addr(c"127.0.0.1".as_ptr().cast());
             let name = inet_ntoa(a);
             let text = std::ffi::CStr::from_ptr(name.cast()).to_str().unwrap();
             assert_eq!(text, "127.0.0.1");
-            assert_eq!(inet_addr(b"300.0.0.1\0".as_ptr()), u32::MAX);
-            assert_eq!(inet_addr(b"1.2.3\0".as_ptr()), u32::MAX);
+            assert_eq!(inet_addr(c"300.0.0.1".as_ptr().cast()), u32::MAX);
+            assert_eq!(inet_addr(c"1.2.3".as_ptr().cast()), u32::MAX);
         }
     }
 
