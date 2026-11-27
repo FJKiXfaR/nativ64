@@ -163,6 +163,34 @@ pub trait Backend {
     fn active_first(&mut self) -> Self::V;
     /// The ballot of a per-lane bit: its low and high dwords (`v_mbcnt` of a mask).
     fn ballot_words(&mut self, bit: Self::B) -> (Self::V, Self::V);
+    /// A 64-bit float operation on two dword pairs (the low dword first); None when the
+    /// backend has no f64 (the tests' and the interpreter's backends do not).
+    fn f64bin(
+        &mut self,
+        _op: F64Bin,
+        _a: (Self::V, Self::V),
+        _b: (Self::V, Self::V),
+        _c: Option<(Self::V, Self::V)>,
+    ) -> Option<(Self::V, Self::V)> {
+        None
+    }
+    /// An f64 (two dwords) as f32 bits; None when the backend has no f64.
+    fn f64_to_f32(&mut self, _a: (Self::V, Self::V)) -> Option<Self::V> {
+        None
+    }
+    /// f32 bits as an f64 (two dwords); None when the backend has no f64.
+    fn f32_to_f64(&mut self, _a: Self::V) -> Option<(Self::V, Self::V)> {
+        None
+    }
+}
+
+/// The f64 arithmetic a `v_*_f64` instruction does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum F64Bin {
+    Add,
+    Sub,
+    Mul,
+    Fma,
 }
 
 /// A value of an operand or result: bits, or a lane mask.
@@ -2658,6 +2686,38 @@ impl<K: Backend> X<'_, K> {
                 };
                 let r = self.b.fun(op, a);
                 Ok(Res::v(self.b.pack_half(r)))
+            }
+            // 64-bit float arithmetic: a value is a pair of dwords
+            "v_add_f64" | "v_sub_f64" | "v_mul_f64" | "v_fma_f64" => {
+                let a = (self.vk(0, 0)?, self.vk(0, 1)?);
+                let b = (self.vk(1, 0)?, self.vk(1, 1)?);
+                let (op, c) = match name {
+                    "v_add_f64" => (F64Bin::Add, None),
+                    "v_sub_f64" => (F64Bin::Sub, None),
+                    "v_mul_f64" => (F64Bin::Mul, None),
+                    _ => (F64Bin::Fma, Some((self.vk(2, 0)?, self.vk(2, 1)?))),
+                };
+                match self.b.f64bin(op, a, b, c) {
+                    Some((lo, hi)) => Ok(Res {
+                        data: vec![Opd::V(lo), Opd::V(hi)],
+                        scc: None,
+                    }),
+                    None => Err(self.un()),
+                }
+            }
+            "v_cvt_f32_f64" => {
+                let a = (self.vk(0, 0)?, self.vk(0, 1)?);
+                self.b.f64_to_f32(a).map(Res::v).ok_or_else(|| self.un())
+            }
+            "v_cvt_f64_f32" => {
+                let a = self.v(0)?;
+                match self.b.f32_to_f64(a) {
+                    Some((lo, hi)) => Ok(Res {
+                        data: vec![Opd::V(lo), Opd::V(hi)],
+                        scc: None,
+                    }),
+                    None => Err(self.un()),
+                }
             }
             "v_fmac_f16" => {
                 let a = self.v(0)?;

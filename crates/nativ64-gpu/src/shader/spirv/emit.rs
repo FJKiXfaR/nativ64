@@ -17,7 +17,9 @@ use spirv::{
     GlslStd450Op as GL, MemoryModel, Op, StorageClass,
 };
 
-use super::alu::{self, Backend, Ctx, Cvt, FBin, FCmp, FUn, IBin, ICmp, IUn, Opd, Unsupported};
+use super::alu::{
+    self, Backend, Ctx, Cvt, F64Bin, FBin, FCmp, FUn, IBin, ICmp, IUn, Opd, Unsupported,
+};
 use super::builder::{inst, Module};
 use crate::shader::io::StageIo;
 use crate::shader::ir::{Func, Reg, Src, Term, Val};
@@ -248,6 +250,39 @@ impl Gen {
     }
 }
 
+impl Gen {
+    /// The `f64` type and a dword pair as its bits.
+    fn f64_type(&mut self) -> u32 {
+        self.m.capability(Capability::Float64);
+        self.m.global(Op::TypeFloat, None, &[64])
+    }
+
+    /// A dword pair (low, high) as the u64's bits.
+    fn u64_of(&mut self, (lo, hi): (u32, u32)) -> u32 {
+        let t64 = self.m.global(Op::TypeInt, None, &[64, 0]);
+        let (lo, hi) = (self.zext32(lo), self.zext32(hi));
+        let sh = self.k(32);
+        let hi = self.op(Op::ShiftLeftLogical, t64, &[hi, sh]);
+        self.op(Op::BitwiseOr, t64, &[lo, hi])
+    }
+
+    fn zext32(&mut self, v: u32) -> u32 {
+        let t64 = self.m.global(Op::TypeInt, None, &[64, 0]);
+        self.op(Op::UConvert, t64, &[v])
+    }
+
+    /// The low and high dwords of a u64.
+    fn words64(&mut self, v: u32) -> (u32, u32) {
+        let (t64, tu) = (self.m.global(Op::TypeInt, None, &[64, 0]), self.t_u32());
+        let sh = self.k(32);
+        let hi = self.op(Op::ShiftRightLogical, t64, &[v, sh]);
+        (
+            self.op(Op::UConvert, tu, &[v]),
+            self.op(Op::UConvert, tu, &[hi]),
+        )
+    }
+}
+
 impl Backend for Gen {
     fn active_count(&mut self) -> u32 {
         // `s_bcnt1_i32_b64` of the exec mask: the number of active lanes
@@ -259,6 +294,54 @@ impl Backend for Gen {
         let ballot = self.op(Op::GroupNonUniformBallot, tv4, &[scope, one]);
         // the group operation (Reduce) is an immediate operand after the scope
         self.op(Op::GroupNonUniformBallotBitCount, t, &[scope, 0, ballot])
+    }
+
+    fn f64bin(
+        &mut self,
+        op: F64Bin,
+        a: (u32, u32),
+        b: (u32, u32),
+        c: Option<(u32, u32)>,
+    ) -> Option<(u32, u32)> {
+        let f64t = self.f64_type();
+        let t64 = self.m.global(Op::TypeInt, None, &[64, 0]);
+        let bit = |s: &mut Self, u: u32| s.op(Op::Bitcast, f64t, &[u]);
+        let ua = self.u64_of(a);
+        let fa = bit(self, ua);
+        let ub = self.u64_of(b);
+        let fb = bit(self, ub);
+        let r = match op {
+            F64Bin::Add => self.op(Op::FAdd, f64t, &[fa, fb]),
+            F64Bin::Sub => self.op(Op::FSub, f64t, &[fa, fb]),
+            F64Bin::Mul => self.op(Op::FMul, f64t, &[fa, fb]),
+            F64Bin::Fma => {
+                let uc = self.u64_of(c?);
+                let fc = bit(self, uc);
+                let t = self.op(Op::FMul, f64t, &[fa, fb]);
+                self.op(Op::FAdd, f64t, &[t, fc])
+            }
+        };
+        let w = self.op(Op::Bitcast, t64, &[r]);
+        Some(self.words64(w))
+    }
+
+    fn f64_to_f32(&mut self, a: (u32, u32)) -> Option<u32> {
+        let f64t = self.f64_type();
+        let tf = self.t_f32();
+        let u = self.u64_of(a);
+        let f = self.op(Op::Bitcast, f64t, &[u]);
+        let f32v = self.op(Op::FConvert, tf, &[f]);
+        // the model carries float bits as dwords
+        Some(self.as_bits(f32v))
+    }
+
+    fn f32_to_f64(&mut self, a: u32) -> Option<(u32, u32)> {
+        let f64t = self.f64_type();
+        let t64 = self.m.global(Op::TypeInt, None, &[64, 0]);
+        let af = self.as_f32(a);
+        let f = self.op(Op::FConvert, f64t, &[af]);
+        let u = self.op(Op::Bitcast, t64, &[f]);
+        Some(self.words64(u))
     }
 
     fn ballot_words(&mut self, bit: u32) -> (u32, u32) {
