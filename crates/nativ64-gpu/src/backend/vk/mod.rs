@@ -80,7 +80,7 @@ fn vk_try<T>(call: &'static str, r: ash::prelude::VkResult<T>) -> Result<T> {
 }
 
 /// Print `msg` to stderr unless the same message was already printed.
-fn log_once(msg: String) {
+pub(super) fn log_once(msg: String) {
     static SEEN: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
     let seen = SEEN.get_or_init(Default::default);
     if seen.lock().unwrap().insert(msg.clone()) {

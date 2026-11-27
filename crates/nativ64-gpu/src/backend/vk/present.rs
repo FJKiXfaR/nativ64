@@ -121,7 +121,15 @@ impl<'g> VkBackend<'g> {
         let Some(win) = window else { return };
         if !self.swapchains.contains_key(&win.hwnd) {
             let sc = match self.gpu.create_swapchain(win.surface, win.size) {
-                Ok(sc) => Some(sc),
+                Ok(sc) => {
+                    log_once(format!(
+                        "swapchain on the window: {}x{}, format {:?}",
+                        sc.extent().0,
+                        sc.extent().1,
+                        sc.format()
+                    ));
+                    Some(sc)
+                }
                 Err(e) => {
                     log_once(format!("no swapchain for the window: {e}"));
                     None

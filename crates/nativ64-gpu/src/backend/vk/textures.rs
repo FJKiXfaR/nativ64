@@ -520,12 +520,6 @@ fn upload(
         return false;
     }
     let (at, size) = (t.address as usize, layout.size as usize);
-    if !table::is_committed(at, size) {
-        log_once(format!(
-            "texture memory {at:#x} (+{size:#x}) is not committed: not uploaded"
-        ));
-        return false;
-    }
     // pages not written since the last look: the hash would be the same
     let watched = super::watch::is_watched((at, at + size))
         || table::committed_run(at).is_some_and(super::watch::watch);
@@ -538,11 +532,12 @@ fn upload(
         return false;
     }
     let th = profile::start();
-    // The title may free the memory from another thread while this upload runs: a copy that
-    // cannot fault (a slice over it could) is what the hash and the detile read.
+    // The memory may live outside the ranges the memory table tracks (an `XMem` heap maps its
+    // own pages) and may be freed from another thread while this upload runs: a copy that
+    // cannot fault (a slice over it could) decides whether there is anything to upload.
     let Some(data) = crate::hostmem::peek(at as u64, size) else {
         log_once(format!(
-            "texture memory {at:#x} (+{size:#x}) went away while it was uploaded"
+            "texture memory {at:#x} (+{size:#x}) is not readable: not uploaded"
         ));
         return false;
     };

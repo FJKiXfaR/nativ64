@@ -74,6 +74,9 @@ impl Backend for VulkanBackend {
                 size,
             })
         });
+        if window.is_none() {
+            crate::backend::vk::log_once("present: no host window (the frame is not shown)".into());
+        }
         let (now, before) = (self.0.stats, self.1);
         self.1 = now;
         let (a, b) = (now.draw_skips, before.draw_skips);

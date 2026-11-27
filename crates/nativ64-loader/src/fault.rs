@@ -127,7 +127,7 @@ unsafe fn say_host_backtrace(rbp: u64) {
     let mut printed = 0;
     say(format_args!("nativ64: host stack:"));
     for _ in 0..24 {
-        if frame < 0x1000 || frame % 8 != 0 {
+        if frame < 0x1000 || !frame.is_multiple_of(8) {
             break;
         }
         let next = std::ptr::read_volatile(frame as *const u64);
