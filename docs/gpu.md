@@ -344,3 +344,13 @@ Design and chunk plan: [`docs/shaders.md`](shaders.md).
 
 Later: indirect execution, queries, tiled resources (page pools), compressed
 DirectStorage, the BVH builder, async overlap of CPU and GPU.
+
+## Descriptor view table (chunk 9a, updated)
+
+The view table mirrors the descriptor registry as a buffer of records the shaders read by
+address. Records are written lazily: `ViewTable::update` writes the views registered since the
+last call. A record also remembers the title address range it resolved to, so a memory change
+(which can move imports) only re-records the records whose range overlaps the changed ranges;
+before that, every change rewrote the whole table - during a load that was 13 000+ records a
+frame, about 200 ms. Views whose memory is not committed yet stay on a retry list that is tried
+on the next memory change or every 30 submissions.
