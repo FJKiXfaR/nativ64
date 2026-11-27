@@ -213,8 +213,11 @@ impl<'g> DrawState<'g> {
     /// that held their addresses) and makes room in the arena for `draws` draws. The arena is
     /// kept from one submission to the next and grows by doubling when a submission needs more;
     /// it is made here, before the submission's images take the memory.
-    pub(super) fn begin(&mut self, draws: usize) {
-        if self.mem.sync() {
+    /// Returns whether the memory table reported a change (imports and cached addresses are
+    /// stale then).
+    pub(super) fn begin(&mut self, draws: usize) -> bool {
+        let changed = self.mem.sync();
+        if changed {
             if let Some(v) = &mut self.views {
                 v.reset();
             }
@@ -231,6 +234,7 @@ impl<'g> DrawState<'g> {
             self.arena = None;
             self.make_arena(size);
         }
+        changed
     }
 
     fn make_arena(&mut self, size: usize) {

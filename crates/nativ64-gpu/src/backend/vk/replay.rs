@@ -28,6 +28,9 @@ fn committed(at: usize, size: usize) -> bool {
     size == 0 || nativ64::api_ms_win_core_memory::is_committed(at, size)
 }
 
+/// How many committed ranges the replay remembers before it drops them.
+const COMMITTED_CACHE_MAX: usize = 1 << 16;
+
 /// `D3D12_RESOURCE_DIMENSION_BUFFER` and `..._TEXTURE2D`.
 const BUFFER: u32 = 1;
 const TEXTURE1D: u32 = 2;
@@ -228,6 +231,11 @@ pub struct VkBackend<'g> {
     pub(super) draw: super::draw::DrawState<'g>,
     pub stats: ReplayStats,
     logged: HashSet<Discriminant<Command>>,
+    /// `(address, size)` ranges already known to be committed title memory. The check takes the
+    /// host memory table's global lock, which the title's allocator threads also contend for; a
+    /// fence address repeats every frame, so its answer is worth keeping. The set is dropped
+    /// whenever the memory table reported a change.
+    committed_ok: HashSet<(usize, usize)>,
     pub(super) swapchains: HashMap<usize, Option<super::Swapchain<'g>>>,
     pub(super) dump: Option<std::path::PathBuf>,
     pub(super) frames: u64,
@@ -423,6 +431,7 @@ impl<'g> VkBackend<'g> {
             draw: super::draw::DrawState::new(gpu),
             stats: ReplayStats::default(),
             logged: HashSet::new(),
+            committed_ok: HashSet::new(),
             swapchains: HashMap::new(),
             dump: None,
             frames: 0,
@@ -451,7 +460,9 @@ impl<'g> VkBackend<'g> {
                 )
             })
             .count();
-        self.draw.begin(draws);
+        if self.draw.begin(draws) {
+            self.committed_ok.clear();
+        }
         let changed = self.draw.mem.changed().to_vec();
         self.drop_placed_over(&changed);
         // A submission that takes seconds is what starves the title's frame loop (its watchdog
@@ -892,6 +903,26 @@ impl<'g> VkBackend<'g> {
         stage_bytes(self.gpu, data, staging)
     }
 
+    /// `committed`, with a cache: the host memory table is one global mutex that the title's
+    /// allocator threads hold during their `map`/`mprotect` calls, so asking it for the same
+    /// fence address every frame is a large share of a frame's replay time.
+    fn committed(&mut self, at: usize, size: usize) -> bool {
+        if size == 0 {
+            return true;
+        }
+        if self.committed_ok.contains(&(at, size)) {
+            return true;
+        }
+        if !committed(at, size) {
+            return false;
+        }
+        if self.committed_ok.len() >= COMMITTED_CACHE_MAX {
+            self.committed_ok.clear();
+        }
+        self.committed_ok.insert((at, size));
+        true
+    }
+
     fn record(
         &mut self,
         d: &Device,
@@ -1082,7 +1113,7 @@ impl<'g> VkBackend<'g> {
                 ) else {
                     return self.skip(c, "an address out of range");
                 };
-                if !committed(d, n) || !committed(s, n) {
+                if !self.committed(d, n) || !self.committed(s, n) {
                     return self.skip(c, "memory that is not committed");
                 }
                 // SAFETY: both ranges lie in committed title memory (checked above).
@@ -1099,7 +1130,7 @@ impl<'g> VkBackend<'g> {
                     return self.skip(c, "an address out of range");
                 };
                 let w = usize::from(*width).clamp(1, 16);
-                if !committed(a, n) {
+                if !self.committed(a, n) {
                     return self.skip(c, "memory that is not committed");
                 }
                 // SAFETY: the range lies in committed title memory (checked above).
@@ -1128,7 +1159,7 @@ impl<'g> VkBackend<'g> {
                     return self.skip(c, "an address out of range");
                 };
                 let t1 = std::time::Instant::now();
-                if !committed(a, size) {
+                if !self.committed(a, size) {
                     return self.skip(c, "a write to memory that is not committed");
                 }
                 let t2 = std::time::Instant::now();
