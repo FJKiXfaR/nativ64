@@ -1,5 +1,7 @@
 //! Prints the parsed container of shader blobs (the files `NATIV64_DUMP_SHADERS` writes):
-//! `nativ64-shader [--disasm | --ir] <blob>...`. With `--disasm` each program's code is followed
+//! `nativ64-shader [--disasm | --ir | --textures] <blob>...`. With `--textures` the program's
+//! memory and image instructions are listed with a count per op name (which textures a shader
+//! samples, with dmask and dimension - matching a draw to its resources). With `--disasm` each program's code is followed
 //! from its entry and printed in LLVM syntax; with `--ir` it is printed as the SSA IR. `nativ64-shader --hex <file>` disassembles one
 //! instruction per line of hex bytes (for diffing against `llvm-mc`). `--stats` counts the
 //! programs that decode and why the others do not; `--ir --stats` counts the programs whose IR
@@ -22,6 +24,7 @@ fn main() -> ExitCode {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let disasm = args.first().is_some_and(|a| a == "--disasm");
     let ir = args.first().is_some_and(|a| a == "--ir");
+    let textures = args.first().is_some_and(|a| a == "--textures");
     let structure = args.first().is_some_and(|a| a == "--structure");
     if args.first().is_some_and(|a| a == "--spirv") {
         args.remove(0);
@@ -44,7 +47,7 @@ fn main() -> ExitCode {
             }
         };
     }
-    if disasm || ir {
+    if disasm || ir || textures {
         args.remove(0);
     }
     if structure {
@@ -72,7 +75,9 @@ fn main() -> ExitCode {
         };
     }
     if args.is_empty() {
-        eprintln!("usage: nativ64-shader [--disasm | --ir] <blob.dxbc>... | --hex <file>");
+        eprintln!(
+            "usage: nativ64-shader [--disasm | --ir | --textures] <blob.dxbc>... | --hex <file>"
+        );
         return ExitCode::from(2);
     }
     let mut failed = false;
@@ -97,6 +102,8 @@ fn main() -> ExitCode {
                     failed |= !print_ir(&p);
                 } else if disasm {
                     failed |= !print_code(&p);
+                } else if textures {
+                    failed |= !print_textures(&p);
                 }
             }
             Err(e) => {
@@ -142,6 +149,59 @@ fn print_code(p: &shader::ParsedShader) -> bool {
         return ok;
     };
     print_follow(p.native.code(rec), rec.wave32())
+}
+
+/// Prints the memory and image instructions of the program with a count per op name: what a
+/// pixel shader samples (and how), for matching a draw to its textures.
+fn print_textures(p: &shader::ParsedShader) -> bool {
+    let mut lines = Vec::new();
+    let mut ok = true;
+    let codes: Vec<(String, Vec<u8>)> = match p.record() {
+        Some(rec) => vec![(format!("{:?}", p.kind), shader::io::stage_code(p, rec))],
+        None => p
+            .native
+            .slot_codes()
+            .into_iter()
+            .map(|(name, code)| (name.to_string(), code.to_vec()))
+            .collect(),
+    };
+    let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for (_stage, code) in &codes {
+        match gfx10::follow(code, gfx10::ENTRY, false) {
+            Ok(prog) => {
+                for i in &prog.instrs {
+                    let name = i.name();
+                    let interesting = name.starts_with("image_")
+                        || name.starts_with("buffer_")
+                        || name.starts_with("tbuffer_")
+                        || name.starts_with("s_buffer_")
+                        || name.starts_with("s_load_")
+                        || name.starts_with("s_store_");
+                    if interesting {
+                        *counts.entry(name.to_owned()).or_default() += 1;
+                        lines.push(format!("  {}", gfx10::disasm_instr(i)));
+                    }
+                }
+            }
+            Err(e) => {
+                println!("  decode error: {e}");
+                ok = false;
+            }
+        }
+    }
+    if counts.is_empty() {
+        println!("  no memory or image instructions");
+    } else {
+        let summary: Vec<String> = counts
+            .iter()
+            .map(|(name, n)| format!("{name} x{n}"))
+            .collect();
+        println!("  {}", summary.join(", "));
+        for line in &lines {
+            println!("{line}");
+        }
+    }
+    ok
 }
 
 fn print_follow(code: &[u8], wave32: bool) -> bool {
