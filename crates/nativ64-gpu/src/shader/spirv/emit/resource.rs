@@ -1034,6 +1034,28 @@ impl<'a> Tr<'a> {
         let image = self.array_element(tex, img, index);
         // the sampler: loaded from a table, or four constant words
         let samp = &c.inst.srcs[ns - 1];
+        if std::env::var_os("NATIV64_ORIGINS").is_some() {
+            let static_words = matches!(
+                &samp[..4],
+                [Src::Const(_), Src::Const(_), Src::Const(_), Src::Const(_)]
+            );
+            if static_words {
+                let w: Vec<u32> = samp[..4]
+                    .iter()
+                    .map(|s| match s {
+                        Src::Const(c) => *c,
+                        _ => u32::MAX,
+                    })
+                    .collect();
+                eprintln!("origin: {name} sampler static words {w:08x?}");
+            } else {
+                let origin = samp.first().and_then(|s| match s {
+                    Src::Val(v) => self.res().analysis.origin.get(v).copied(),
+                    _ => None,
+                });
+                eprintln!("origin: {name} sampler table {origin:?}");
+            }
+        }
         let ts = self.t_sampler();
         let sampler = if loaded(self, samp.first()) {
             let arr = self.sampler_array();
