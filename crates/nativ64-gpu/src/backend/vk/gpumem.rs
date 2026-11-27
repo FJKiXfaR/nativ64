@@ -172,13 +172,35 @@ impl<'g> GpuMemory<'g> {
 
     /// The host range around `at` an import may cover: the committed run of the memory table,
     /// else the memory of a descriptor heap.
+    /// The committed run around `at`, grown over neighbouring runs that are contiguous in the
+    /// title's address space: a buffer can span more than one allocation, and its pages are then
+    /// still one virtual range (the pool pages behind them need not be physically contiguous).
     fn run_around(&self, at: usize) -> Option<(usize, usize)> {
-        table::committed_run(at).or_else(|| {
-            crate::d3d12::descriptor::heap_ranges()
-                .into_iter()
-                .find(|&(a, n)| a <= at && at < a + n)
-                .map(|(a, n)| (a, a + n))
-        })
+        let (mut start, mut end) = match table::committed_run(at) {
+            Some(run) => run,
+            None => {
+                return crate::d3d12::descriptor::heap_ranges()
+                    .into_iter()
+                    .find(|&(a, n)| a <= at && at < a + n)
+                    .map(|(a, n)| (a, a + n));
+            }
+        };
+        while let Some((s, e)) = table::committed_run(end) {
+            if s != end {
+                break;
+            }
+            end = e;
+        }
+        while start > 0 {
+            let Some((s, e)) = table::committed_run(start - 1) else {
+                break;
+            };
+            if e != start {
+                break;
+            }
+            start = s;
+        }
+        Some((start, end))
     }
 
     fn mapped(start: usize, i: &Import<'_>, at: usize) -> Mapped {
