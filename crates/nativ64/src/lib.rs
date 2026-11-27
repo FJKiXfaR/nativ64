@@ -9,6 +9,7 @@ mod registry;
 
 pub mod acphal;
 pub mod api_ms_win_core_com;
+pub mod api_ms_win_core_console;
 pub mod api_ms_win_core_debug;
 pub mod api_ms_win_core_errorhandling;
 pub mod api_ms_win_core_fibers;
@@ -18,6 +19,7 @@ pub mod api_ms_win_core_heap;
 pub mod api_ms_win_core_interlocked;
 pub mod api_ms_win_core_libraryloader;
 pub mod api_ms_win_core_localization;
+pub mod api_ms_win_core_localization_obsolete;
 pub mod api_ms_win_core_memory;
 pub mod api_ms_win_core_processenvironment;
 pub mod api_ms_win_core_processthreads;
@@ -77,6 +79,7 @@ pub use registry::{lookup, lookup_ordinal, nativ64_lookup, normalize_module, Exp
 pub static TABLES: &[&[Export]] = &[
     acphal::EXPORTS,
     api_ms_win_core_com::EXPORTS,
+    api_ms_win_core_console::EXPORTS,
     api_ms_win_core_debug::EXPORTS,
     api_ms_win_core_errorhandling::EXPORTS,
     api_ms_win_core_errorhandling::ASM_EXPORTS,
@@ -87,6 +90,7 @@ pub static TABLES: &[&[Export]] = &[
     api_ms_win_core_interlocked::EXPORTS,
     api_ms_win_core_libraryloader::EXPORTS,
     api_ms_win_core_localization::EXPORTS,
+    api_ms_win_core_localization_obsolete::EXPORTS,
     api_ms_win_core_memory::EXPORTS,
     api_ms_win_core_registry::EXPORTS,
     api_ms_win_core_rtlsupport::EXPORTS,

@@ -109,6 +109,31 @@ unsafe fn transfer(
     ov: *const c_void,
     write: bool,
 ) -> i32 {
+    // The standard handles are the console's, not kernel objects (`GetStdHandle`).
+    if crate::api_ms_win_core_console::is_std_handle(h) {
+        if write {
+            let bytes = unsafe { std::slice::from_raw_parts(buf, n as usize) };
+            if !crate::api_ms_win_core_console::write_std(h, bytes) {
+                set_last_error(ERROR_ACCESS_DENIED);
+                return 0;
+            }
+            if !done.is_null() {
+                unsafe { done.write_unaligned(n) };
+            }
+            return 1;
+        }
+        if h != crate::api_ms_win_core_console::STD_INPUT_HANDLE {
+            set_last_error(ERROR_ACCESS_DENIED);
+            return 0;
+        }
+        use std::io::Read;
+        let dst = unsafe { std::slice::from_raw_parts_mut(buf, n as usize) };
+        let got = std::io::stdin().read(dst).unwrap_or(0);
+        if !done.is_null() {
+            unsafe { done.write_unaligned(got as u32) };
+        }
+        return 1;
+    }
     let r = crate::handles::with_file(h, |f| {
         let fd = f.fd.as_raw_fd();
         let at = if ov.is_null() {
