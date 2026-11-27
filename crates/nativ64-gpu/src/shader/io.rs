@@ -482,7 +482,7 @@ pub fn translate_stage(
     let regs = EntryRegs::from_stage(rec);
     let func = ir::build(&code, gfx10::ENTRY, rec.wave32(), &regs).map_err(StageError::Ir)?;
     let st = structure::structure(&func).map_err(StageError::Structure)?;
-    spirv::translate_io(&func, &st, &io).map_err(StageError::Spirv)
+    spirv::translate_io(&func, &st, &io, &code).map_err(StageError::Spirv)
 }
 
 /// Translates a VS+PS pair with the locations they share. The static samplers are one list

@@ -121,6 +121,9 @@ pub(in crate::shader::spirv) struct Analysis {
     /// address the program read from memory or computed from it, which the backend cannot
     /// translate (`Translated::memory_addresses`).
     memory_addresses: bool,
+    /// The SMEM loads that read the program's own code (a literal table at `s_getpc` plus a
+    /// computed offset): they are served from the code words the module embeds.
+    pub(super) code_loads: HashSet<(usize, usize)>,
 }
 
 /// Whether `s` is computed from user data and constants only (scalar arithmetic, copies and
@@ -351,6 +354,7 @@ pub(in crate::shader::spirv) fn analyze(
         loaded: HashSet::new(),
         numbers: HashSet::new(),
         memory_addresses: false,
+        code_loads: HashSet::new(),
     };
     for (b, blk) in f.blocks.iter().enumerate() {
         for (k, i) in blk.insts.iter().enumerate() {
@@ -471,6 +475,41 @@ pub(in crate::shader::spirv) fn analyze(
         }
     }
     a.numbers = numbers;
+    // the program's own address (`s_getpc_b64`): values computed from it point into the code
+    let mut code_vals: HashSet<Val> = HashSet::new();
+    loop {
+        let before = code_vals.len();
+        for blk in &f.blocks {
+            for i in &blk.insts {
+                let from_code = i.srcs.iter().flatten().any(|s| {
+                    matches!(s, Src::CodeLo(_) | Src::CodeHi)
+                        || matches!(s, Src::Val(v) if code_vals.contains(v))
+                });
+                if from_code {
+                    for (_, v) in &i.dsts {
+                        code_vals.insert(*v);
+                    }
+                }
+            }
+        }
+        if code_vals.len() == before {
+            break;
+        }
+    }
+    for (b, blk) in f.blocks.iter().enumerate() {
+        for (k, i) in blk.insts.iter().enumerate() {
+            if i.instr.enc != Enc::Smem || !i.instr.name().starts_with("s_load_dword") {
+                continue;
+            }
+            let code = i.srcs.first().is_some_and(|s| {
+                s.iter()
+                    .any(|x| matches!(x, Src::Val(v) if code_vals.contains(v)))
+            });
+            if code {
+                a.code_loads.insert((b, k));
+            }
+        }
+    }
     a.memory_addresses = reads_memory_addresses(f, &a.loaded, &a.table_loads);
     Ok(a)
 }
@@ -480,7 +519,7 @@ pub(in crate::shader::spirv) fn analyze(
 
 /// The resource variables of the entry point, created on first use.
 pub(in crate::shader::spirv) struct Res {
-    analysis: Analysis,
+    pub(super) analysis: Analysis,
     /// The root block pointer, computed in the entry block.
     pub(super) root: Option<u32>,
     /// Sampled-image arrays by image dimension: `(variable, image type)`.
@@ -846,6 +885,26 @@ impl<'a> Tr<'a> {
                 let a = self.add_k64(buf.base, 4 * j as u64);
                 let a = self.add64(a, off);
                 out.push(Opd::V(self.guarded_load(a, valid)?));
+            }
+            return Ok(Some(out));
+        }
+        if self.res().analysis.code_loads.contains(&(b, k)) {
+            // a literal table in the program's own code: the address is a code offset (the
+            // module embeds the code words)
+            let Some(&lo) = c.srcs.first().and_then(|s| s.first()) else {
+                return bad("a code load without its address");
+            };
+            let lo = self.bits_of(lo);
+            let mut out = Vec::new();
+            for j in 0..n as u32 {
+                let off = if j == 0 {
+                    lo
+                } else {
+                    let k = self.g.k(4 * j);
+                    self.g.op(Op::IAdd, tu, &[lo, k])
+                };
+                let w = self.code_word(off);
+                out.push(Opd::V(w));
             }
             return Ok(Some(out));
         }

@@ -158,7 +158,7 @@ fn origins_print(files: &[String]) -> ExitCode {
             Ok(func) => match structure::structure(&func) {
                 Ok(st) => {
                     let built = match io {
-                        Some(io) => spirv::translate_io(&func, &st, &io).map(|t| t.words),
+                        Some(io) => spirv::translate_io(&func, &st, &io, &code).map(|t| t.words),
                         None => spirv::translate(&func, &st).map(|p| p.words),
                     };
                     if built.is_err() {
@@ -1047,7 +1047,7 @@ fn spirv_stats(files: &[String], alu_only: bool) -> ExitCode {
             e[1] += 1;
             let built = match &io {
                 Some(io) => shader::io::refuse_entry(rec)
-                    .and_then(|()| spirv::translate_io(&func, &st, io))
+                    .and_then(|()| spirv::translate_io(&func, &st, io, &code))
                     .map(|t| t.words),
                 None => spirv::translate(&func, &st).map(|p| p.words),
             };

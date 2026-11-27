@@ -524,11 +524,16 @@ struct Tr<'a> {
     /// The `If` arms being emitted whose branch is a per-lane test (a barrier must not be in
     /// one).
     lane_ifs: u32,
+    /// The program's native code as words, for the literal tables a program indexes with its
+    /// own address.
+    code: Vec<u32>,
+    /// The private array holding `code`, made by [`Tr::code_prologue`] when a load reads it.
+    code_arr: Option<u32>,
 }
 
 /// Translates a structured program to the probe module.
 pub fn translate(f: &Func, s: &Structured) -> Result<Probe, SpirvError> {
-    let (words, inputs, outputs, _, _) = build(f, s, None)?;
+    let (words, inputs, outputs, _, _) = build(f, s, None, &[])?;
     Ok(Probe {
         words,
         inputs,
@@ -538,8 +543,13 @@ pub fn translate(f: &Func, s: &Structured) -> Result<Probe, SpirvError> {
 
 /// Translates a structured vertex or pixel program to a module with its real entry point:
 /// inputs from the root block and the stage's built-ins, outputs to the stage's variables.
-pub fn translate_io(f: &Func, s: &Structured, io: &StageIo) -> Result<Translated, SpirvError> {
-    let (words, _, _, samplers, flags) = build(f, s, Some(io))?;
+pub fn translate_io(
+    f: &Func,
+    s: &Structured,
+    io: &StageIo,
+    code: &[u8],
+) -> Result<Translated, SpirvError> {
+    let (words, _, _, samplers, flags) = build(f, s, Some(io), code)?;
     Ok(Translated {
         words,
         samplers,
@@ -557,7 +567,12 @@ type Built = (
     (bool, bool, bool),
 );
 
-fn build<'a>(f: &'a Func, s: &'a Structured, io: Option<&'a StageIo>) -> Result<Built, SpirvError> {
+fn build<'a>(
+    f: &'a Func,
+    s: &'a Structured,
+    io: Option<&'a StageIo>,
+    code: &[u8],
+) -> Result<Built, SpirvError> {
     let mut g = Gen::new();
     let (tu, tb) = (g.t_u32(), g.t_bool());
     let pu = g.t_ptr(StorageClass::Private, tu);
@@ -628,11 +643,19 @@ fn build<'a>(f: &'a Func, s: &'a Structured, io: Option<&'a StageIo>) -> Result<
         frames: Vec::new(),
         stage,
         lane_ifs: 0,
+        code: code
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| u32::from_le_bytes(*c))
+            .collect(),
+        code_arr: None,
     };
     let entry = t.g.m.id();
     t.g.label(entry);
     if io.is_some() {
         t.begin_stage()?;
+        t.code_prologue()?;
     } else {
         t.load_inputs(&inputs)?;
     }
@@ -729,6 +752,44 @@ impl Tr<'_> {
         Ok(())
     }
 
+    /// Makes the code array when the program reads its own code: a private array of the code
+    /// words, initialised once before the body (a store in the entry block).
+    fn code_prologue(&mut self) -> R<()> {
+        let Some(st) = &self.stage else {
+            return Ok(());
+        };
+        if st.res.analysis.code_loads.is_empty() || self.code.is_empty() {
+            return Ok(());
+        }
+        let tu = self.g.t_u32();
+        let n = self.g.k(self.code.len() as u32);
+        let arr = self.g.m.global(Op::TypeArray, None, &[tu, n]);
+        let ids: Vec<u32> = self.code.iter().map(|&w| self.g.k(w)).collect();
+        let init = self.g.m.global(Op::ConstantComposite, Some(arr), &ids);
+        let var = self.global(StorageClass::Private, arr);
+        self.g.m.name(var, "code");
+        self.g.store(var, init);
+        self.code_arr = Some(var);
+        Ok(())
+    }
+
+    /// A dword of the program's code at byte offset `off` (0 past the end).
+    fn code_word(&mut self, off: u32) -> u32 {
+        let tu = self.g.t_u32();
+        let arr = self.code_arr.expect("the code array");
+        let two = self.g.k(2);
+        let idx = self.g.op(Op::ShiftRightLogical, tu, &[off, two]);
+        let n = self.g.k(self.code.len() as u32);
+        let tb = self.g.t_bool();
+        let inside = self.g.op(Op::ULessThan, tb, &[idx, n]);
+        let zero = self.g.k(0);
+        let safe = self.g.select(inside, idx, zero);
+        let p = self.g.t_ptr(StorageClass::Private, tu);
+        let ptr = self.g.op(Op::AccessChain, p, &[arr, safe]);
+        let v = self.g.load(tu, ptr);
+        self.g.select(inside, v, zero)
+    }
+
     /// The value of a source operand.
     fn read(&mut self, s: Src) -> R<Opd<Gen>> {
         Ok(match s {
@@ -746,12 +807,10 @@ impl Tr<'_> {
             }
             Src::Const(c) => Opd::V(self.g.k(c)),
             Src::Undef => Opd::V(self.g.k(0)),
-            Src::CodeLo(_) | Src::CodeHi => {
-                return Err(SpirvError::Unsupported(Unsupported {
-                    chunk: 9,
-                    op: "the program's own address".to_string(),
-                }))
-            }
+            // the program's own address: a constant code offset (the module embeds the code
+            // words for the loads that read it)
+            Src::CodeLo(o) => Opd::V(self.g.k(o)),
+            Src::CodeHi => Opd::V(self.g.k(0)),
         })
     }
 
