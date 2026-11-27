@@ -135,6 +135,40 @@ fn stage<'a>(pd: &'a PipelineData, name: &str) -> Option<&'a [u8]> {
         .map(|s| &s.bytes[..])
 }
 
+/// What the shaders of a pipeline read through the descriptors of the resource heap.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HeapReads {
+    /// A stage reads the resource heap directly (a layout row of type 5): any descriptor of the
+    /// heap can be read, by an index the shader computes.
+    pub whole: bool,
+    /// The shader resource views read through a root table: root parameter, slot in the table
+    /// (the used row's table dword / 8: slots are 32 bytes) and whether it is an array (a
+    /// stride), whose length is not known.
+    pub views: Vec<(u32, u32, bool)>,
+}
+
+/// The `HeapReads` of the stages of `pd`; what a stage that does not parse reads is not listed
+/// (the pipeline is not replayed).
+pub fn heap_reads(pd: &PipelineData) -> HeapReads {
+    let mut out = HeapReads::default();
+    for name in ["vertex", "pixel"] {
+        let Some(r) = stage(pd, name)
+            .and_then(|b| parse_stage(b, name).ok())
+            .and_then(|s| s.record().cloned())
+        else {
+            continue;
+        };
+        out.whole |= r.layout.iter().any(|l| l.root_type == 5);
+        for u in r.used.iter().filter(|u| u.kind == 0 && u.root_type == 3) {
+            let v = (u32::from(u.root_slot), u.table_offset / 8, u.stride != 0);
+            if !out.views.contains(&v) {
+                out.views.push(v);
+            }
+        }
+    }
+    out
+}
+
 fn blend_factor(f: u32) -> Result<vk::BlendFactor, String> {
     use vk::BlendFactor as B;
     Ok(match f {

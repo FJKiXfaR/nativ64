@@ -333,7 +333,7 @@ impl Drop for DrawState<'_> {
 ///
 /// # Safety
 /// `ptr` was recorded from a live object of ours.
-unsafe fn pipeline_data<'a>(ptr: usize) -> Option<&'a PipelineData> {
+pub(super) unsafe fn pipeline_data<'a>(ptr: usize) -> Option<&'a PipelineData> {
     let obj = ptr as *mut c_void;
     (XObject::<PipelineData>::prefix(obj).iface() == Iface::PipelineState)
         .then(|| XObject::<PipelineData>::data(obj))

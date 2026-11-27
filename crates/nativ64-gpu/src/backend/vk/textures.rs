@@ -2,26 +2,34 @@
 //! reads through `textures[index]` (set 0, binding 0) and `samplers[index]` (binding 2), the
 //! index being the registry index of the descriptor the title wrote (`descriptor::VIEWS`).
 //!
-//! At the start of a submission that has draws (`VkBackend::sync_textures`):
+//! At the start of a submission that has draws (`VkBackend::sync_textures`), after
+//! `residency::scan` has listed the registry indices the draws can read (`TexState::wanted`:
+//! the descriptors their root tables reach):
 //!
 //! * the registry entries added since the last time are classified (`Entry`): a shader
 //!   resource view of a texture, a placed view (memory with a resource description), a heap
 //!   sampler, or anything else (a hole);
-//! * every texture a view names gets its image (`VkBackend::image`) and, when the image is
-//!   still the host's (no GPU write has touched it), its host memory is hashed and, if the
-//!   hash differs from the last upload, detiled (`texture::detile`, every mip and array slice
-//!   of the one colour plane) into a staging buffer and copied in;
-//! * the descriptors of the new entries are written: a `VkImageView` per texture (cached on
-//!   the image by description), a 1x1 zero RGBA8 view for every index that is not a usable
-//!   texture, a `VkSampler` per heap sampler, a default sampler elsewhere, so that no shader
-//!   reads an unwritten descriptor. When an image is replaced all descriptors are written again.
+//! * only the textures a wanted index names get their image (`VkBackend::image`, marked
+//!   `touched` by this submission) and, when the image is still the host's (no GPU write has
+//!   touched it), its host memory is hashed and, if the hash differs from the last upload,
+//!   detiled (`texture::detile`, every mip and array slice of the one colour plane) into a
+//!   staging buffer and copied in. A registered texture that no draw reads has no image;
+//! * the host images that this submission does not read are freed, least recently used first,
+//!   while the images exceed the device's budget (`Gpu::image_budget`, `VkBackend::trim`);
+//! * the descriptors of the new entries are written once: a `VkImageView` per resident
+//!   texture (cached on the image by description), a 1x1 zero RGBA8 view for every index that
+//!   is not a usable texture or whose image is not resident, a `VkSampler` per heap sampler, a
+//!   default sampler elsewhere, so that no shader reads an unwritten descriptor. After that
+//!   only the image descriptor of an index is written again: when its image was replaced,
+//!   evicted or released (`TexState::rewrite`), or when a wanted index holds another view than
+//!   the one it names now (an image that became resident). The table is never written whole.
 //!
 //! Copies from a host-owned image upload it first (`host_to_image`).
 //!
 //! Only the textures whose pages were written since their last look are hashed
 //! (`watch.rs`: Linux write watches on the committed run, so that a texture that nobody
 //! touched costs one `ioctl`); where the kernel gives no watch every texture is hashed in every
-//! submission with draws, sampled or not.
+//! submission with draws that read them.
 //!
 //! shortcuts: a depth image is viewed as its depth aspect with its own format; planar and
 //! multisampled textures and 1D textures have no image; a view type that the shader's variable
@@ -86,14 +94,24 @@ pub(super) struct TexState {
     entries: Vec<Entry>,
     /// Registry indices below this are in `entries`.
     scanned: usize,
-    /// Descriptors from this index on are written (again) at the next sync.
+    /// Descriptors from this index on are new: written (image and sampler) at the next sync.
     pub(super) dirty_from: usize,
+    /// Registry indices whose image descriptor is written again at the next sync: an image
+    /// was replaced, evicted or released, or an entry was classified again.
+    rewrite: HashSet<u32>,
+    /// The registry indices the draws of the submission can read (`residency::scan`).
+    pub(super) wanted: HashSet<u32>,
+    /// By pipeline serial: what its shaders read of the resource heap.
+    pub(super) reads: HashMap<u64, super::pipeline::HeapReads>,
+    /// By registry index: the view its descriptor holds (null: the hole).
+    bound: Vec<vk::ImageView>,
     /// The resources and placed images with a view.
     sources: Vec<usize>,
     source_set: HashSet<usize>,
     /// The registry indices whose entry is a texture of the resource.
     by_res: HashMap<usize, Vec<u32>>,
-    placed: Vec<PlacedKey>,
+    /// The registry indices whose entry is the placed image.
+    by_placed: HashMap<PlacedKey, Vec<u32>>,
     /// Submissions that synced, to hash a texture once in each.
     pub(super) submission: u64,
     hole: Option<Hole>,
@@ -111,6 +129,18 @@ pub(super) struct TexState {
 pub(super) const UPLOAD_CAP: u64 = 256 << 20;
 
 impl TexState {
+    /// The keys of the placed views registered so far.
+    pub(super) fn placed_keys(&self) -> Vec<PlacedKey> {
+        self.by_placed.keys().copied().collect()
+    }
+
+    /// The descriptors of the texture views of `res` are written again.
+    pub(super) fn rewrite_res(&mut self, res: usize) {
+        if let Some(v) = self.by_res.get(&res) {
+            self.rewrite.extend(v.iter().copied());
+        }
+    }
+
     /// Destroys the hole image; the queue is idle.
     pub(super) fn destroy(&mut self, d: &Device) {
         if let Some(h) = self.hole.take() {
@@ -558,7 +588,7 @@ impl<'g> VkBackend<'g> {
                     kept.push(i);
                 }
                 self.tex.entries[i as usize] = entry;
-                self.tex.dirty_from = self.tex.dirty_from.min(i as usize);
+                self.tex.rewrite.insert(i);
             }
             if !kept.is_empty() {
                 self.tex.by_res.insert(res, kept);
@@ -597,16 +627,16 @@ impl<'g> VkBackend<'g> {
                     // by the recording one (`eviction_order`).
                     unsafe { self.destroy(t) };
                 }
-                for &i in self.tex.by_res.get(&res).into_iter().flatten() {
-                    self.tex.dirty_from = self.tex.dirty_from.min(i as usize);
-                }
+                self.tex.rewrite_res(res);
             }
             Victim::Placed(key) => {
                 if let Some(Some(t)) = self.placed.remove(&key) {
                     // SAFETY: as above.
                     unsafe { self.destroy(t) };
                 }
-                self.tex.dirty_from = 0;
+                if let Some(v) = self.tex.by_placed.get(&key) {
+                    self.tex.rewrite.extend(v.iter().copied());
+                }
             }
         }
     }
@@ -742,6 +772,59 @@ impl<'g> VkBackend<'g> {
         }
     }
 
+    /// The view of the texture or placed image registry index `i` names, when its image is
+    /// resident.
+    fn view_of(&mut self, i: usize) -> Option<vk::ImageView> {
+        match self.tex.entries.get(i)?.clone() {
+            Entry::Texture { res, desc } => match self.images.get_mut(&res) {
+                Some(Some(t)) => texture_view(self.gpu, t, desc),
+                _ => None,
+            },
+            Entry::Placed { key, desc } => match self.placed.get_mut(&key) {
+                Some(Some(t)) => texture_view(self.gpu, t, desc),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// The device memory the images hold, host-owned and not: what `trim` compares to the
+    /// budget.
+    fn image_bytes(&self) -> u64 {
+        self.images
+            .values()
+            .chain(self.placed.values())
+            .flatten()
+            .map(|t| t.size)
+            .sum()
+    }
+
+    /// Frees the least recently used host images that this submission does not read until the
+    /// images fit the device's budget (`Gpu::image_budget`).
+    fn trim(&mut self) {
+        #[cfg(test)]
+        let budget = self.trim_budget.unwrap_or_else(|| self.gpu.image_budget());
+        #[cfg(not(test))]
+        let budget = self.gpu.image_budget();
+        let mut live = self.image_bytes();
+        if live <= budget {
+            return;
+        }
+        for victim in self.eviction_order() {
+            let freed = match &victim {
+                Victim::Image(r) => self.images.get(r),
+                Victim::Placed(k) => self.placed.get(k),
+            }
+            .and_then(|t| t.as_ref())
+            .map_or(0, |t| t.size);
+            self.evict(victim);
+            live = live.saturating_sub(freed);
+            if live <= budget {
+                break;
+            }
+        }
+    }
+
     /// The first step of a submission with draws: see the module documentation.
     pub(super) fn sync_textures(
         &mut self,
@@ -764,23 +847,37 @@ impl<'g> VkBackend<'g> {
                     let index = self.tex.entries.len() as u32;
                     self.tex.by_res.entry(*res).or_default().push(index);
                 }
-                Entry::Placed { key, .. } if !self.tex.placed.contains(key) => {
-                    self.tex.placed.push(*key);
+                Entry::Placed { key, .. } => {
+                    let index = self.tex.entries.len() as u32;
+                    self.tex.by_placed.entry(*key).or_default().push(index);
                 }
                 _ => {}
             }
             self.tex.entries.push(entry);
+            self.tex.bound.push(vk::ImageView::null());
         }
         self.tex.scanned += new.len();
-        // 2. images and uploads
+        // 2. images and uploads: of what the draws can read
         let mut uploaded = false;
+        let (mut resources, mut placed) = (Vec::new(), Vec::new());
+        for &i in &self.tex.wanted {
+            match self.tex.entries.get(i as usize) {
+                Some(Entry::Texture { res, .. }) => resources.push(*res),
+                Some(Entry::Placed { key, .. }) => placed.push(*key),
+                _ => {}
+            }
+        }
+        resources.sort_unstable();
+        resources.dedup();
+        placed.sort_unstable();
+        placed.dedup();
         let th = profile::start();
-        for res in self.tex.sources.clone() {
+        for res in resources {
             uploaded |= self.host_upload(d, cb, staging, res);
         }
         profile::stop(Phase::HostUp, th);
         let tp = profile::start();
-        for key in self.tex.placed.clone() {
+        for key in placed {
             uploaded |= self.placed_upload(d, cb, staging, key);
         }
         profile::stop(Phase::PlacedUp, tp);
@@ -791,47 +888,57 @@ impl<'g> VkBackend<'g> {
             // the rest is uploaded by the next pass, which also writes the descriptors
             return;
         }
-        // 3. descriptors
+        self.trim();
+        // 3. descriptors: the new entries (image and sampler), then the image of the indices
+        // whose image changed, and of those the draws read whose view is not the one written
         let total = self.tex.entries.len();
         let from = self.tex.dirty_from.min(total);
         self.tex.dirty_from = total;
-        if from == total {
-            return;
-        }
         if total > count {
             log_once(format!(
                 "{total} descriptors registered, the bindless set holds {count}"
             ));
         }
         let end = total.min(count);
+        let mut again: HashSet<usize> = std::mem::take(&mut self.tex.rewrite)
+            .into_iter()
+            .map(|i| i as usize)
+            .filter(|&i| i < from)
+            .collect();
+        let wanted: Vec<u32> = self.tex.wanted.iter().copied().collect();
+        for i in wanted {
+            let i = i as usize;
+            if i < from.min(end) && !again.contains(&i) {
+                let view = self.view_of(i);
+                if view.unwrap_or_default() != self.tex.bound[i] {
+                    again.insert(i);
+                }
+            }
+        }
+        again.retain(|&i| i < end);
+        if from >= end && again.is_empty() {
+            return;
+        }
         let td = profile::start();
-        profile::count(Count::Written, (end - from.min(end)) as u64);
+        profile::count(Count::Written, (end - from.min(end) + again.len()) as u64);
         let hole = self.hole(d, cb);
         let default = self.draw.samplers.get(Spec::default_sampler());
         let mut images = Vec::new();
         let mut samplers = Vec::new();
-        for i in from..end {
-            let entry = self.tex.entries[i].clone();
-            let view = match &entry {
-                Entry::Texture { res, desc } => match self.images.get_mut(res) {
-                    Some(Some(t)) => texture_view(self.gpu, t, *desc),
-                    _ => None,
-                },
-                Entry::Placed { key, desc } => match self.placed.get_mut(key) {
-                    Some(Some(t)) => texture_view(self.gpu, t, *desc),
-                    _ => None,
-                },
-                _ => None,
-            };
+        for i in again.into_iter().chain(from..end) {
+            let view = self.view_of(i);
+            self.tex.bound[i] = view.unwrap_or_default();
             if let Some(v) = view.or(hole) {
                 images.push((i, v));
             }
-            let sampler = match &entry {
-                Entry::Sampler(s) => self.draw.samplers.get(*s).or(default),
-                _ => default,
-            };
-            if let Some(s) = sampler {
-                samplers.push((i, s));
+            if i >= from {
+                let sampler = match &self.tex.entries[i] {
+                    Entry::Sampler(s) => self.draw.samplers.get(*s).or(default),
+                    _ => default,
+                };
+                if let Some(s) = sampler {
+                    samplers.push((i, s));
+                }
             }
         }
         let Some(Some(bl)) = self.draw.bindless.as_ref() else {
@@ -887,6 +994,7 @@ mod tests {
     use super::super::tests::gpu_or_skip;
     use super::*;
     use crate::d3d12::command::{Command, CopyLocation, RootView};
+    use crate::d3d12::rootsig::{Binding, RootSignature};
     use crate::d3d12::descriptor::{
         create_placed_shader_resource_view, create_sampler, create_shader_resource_view,
     };
@@ -1121,7 +1229,9 @@ mod tests {
         let (t1, t2) = (table(), table());
         srv(a, None, t1 + 0x20);
         srv(c, None, t2 + 0x20);
+        // both are read by the first submission (the blue one first, the red one on top)
         let mut first = clear(handle, [0.0, 1.0, 0.0, 1.0]);
+        first.extend(textured_draw(pipe, handle, t2));
         first.extend(textured_draw(pipe, handle, t1));
         let mut second = clear(handle, [0.0, 1.0, 0.0, 1.0]);
         second.extend(textured_draw(pipe, handle, t2));
@@ -1405,5 +1515,103 @@ mod tests {
         b.execute(&lists(9));
         assert_eq!(b.draw.arena_bytes(), 9 * stride, "the need when larger than double");
         assert_eq!(b.stats.drawn, 15);
+    }
+
+    /// The texture of `rgba` on 8 x 8 texels.
+    fn flat(rgba: [u8; 4]) -> usize {
+        let d = desc(8, 8, 1, 28, 0, 0);
+        resource_at(tiled_memory(&d, |_, _, _, _| rgba.to_vec()), d)
+    }
+
+    #[test]
+    fn only_the_textures_a_draw_reads_get_an_image() {
+        let Some(g) = gpu_or_skip() else { return };
+        let mut b = VkBackend::new(&g);
+        let (read, unread) = (flat([10, 200, 30, 255]), flat([250, 0, 0, 255]));
+        let pipe = sampling_pipeline(SAMPLING());
+        let (t1, t2) = (table(), table());
+        srv(read, None, t1 + 0x20);
+        srv(unread, None, t2 + 0x20);
+        let target = texture(16, 8, 28, TARGET);
+        b.execute(&[textured_draw(pipe, rtv(target), t1)]);
+        assert!(all_pixels(&b.read_back(target).unwrap(), [10, 200, 30, 255]));
+        assert!(b.images.contains_key(&read));
+        assert!(!b.images.contains_key(&unread), "no draw reads it");
+        // a draw that reads it makes it resident, and its descriptor is written
+        b.execute(&[textured_draw(pipe, rtv(target), t2)]);
+        assert!(all_pixels(&b.read_back(target).unwrap(), [250, 0, 0, 255]));
+        assert_eq!(uploads_of(&b, unread), 1);
+    }
+
+    #[test]
+    fn an_evicted_texture_comes_back_when_read_again() {
+        let Some(g) = gpu_or_skip() else { return };
+        let mut b = VkBackend::new(&g);
+        let (a, c) = (flat([0, 0, 255, 255]), flat([255, 255, 0, 255]));
+        let pipe = sampling_pipeline(SAMPLING());
+        let (ta, tc) = (table(), table());
+        srv(a, None, ta + 0x20);
+        srv(c, None, tc + 0x20);
+        let target = texture(16, 8, 28, TARGET);
+        b.trim_budget = Some(0);
+        b.execute(&[textured_draw(pipe, rtv(target), ta)]);
+        assert!(all_pixels(&b.read_back(target).unwrap(), [0, 0, 255, 255]));
+        // `a` is not read by the next submission: over the budget, it goes
+        b.execute(&[textured_draw(pipe, rtv(target), tc)]);
+        assert!(all_pixels(&b.read_back(target).unwrap(), [255, 255, 0, 255]));
+        assert!(!b.images.contains_key(&a), "evicted");
+        assert!(b.images.contains_key(&c), "read by this submission");
+        assert!(b.stats.evictions >= 1);
+        b.execute(&[textured_draw(pipe, rtv(target), ta)]);
+        assert!(all_pixels(&b.read_back(target).unwrap(), [0, 0, 255, 255]));
+        assert!(b.images.contains_key(&a) && !b.images.contains_key(&c));
+    }
+
+    #[test]
+    fn the_scan_follows_the_ranges_of_a_table() {
+        use crate::d3d12::rootsig::{Parameter, Range};
+        let t = table();
+        let (r0, r1, r2) = (flat([1, 1, 1, 1]), flat([2, 2, 2, 2]), flat([3, 3, 3, 3]));
+        for (res, at) in [(r0, 0), (r1, 0x20), (r2, 0x40)] {
+            srv(res, None, t + at);
+        }
+        let index = |at: u64| {
+            // SAFETY: a slot of the table above.
+            unsafe { crate::d3d12::descriptor::registry_index_at(t + at) }.unwrap()
+        };
+        let range = |kind, count, offset| Range {
+            kind,
+            count,
+            base_register: 0,
+            space: 0,
+            flags: 0,
+            offset,
+        };
+        let sig = |ranges| RootSignature {
+            version: 1,
+            parameters: vec![Parameter {
+                visibility: 0,
+                binding: Binding::Table(ranges),
+            }],
+            samplers: vec![],
+            flags: 0,
+        };
+        let wanted = |ranges| {
+            let mut s = super::super::residency::Scanner::default();
+            s.table(&sig(ranges), 0, t, None);
+            s.wanted
+        };
+        // one SRV at slot 1: neither its neighbours nor a sampler range
+        let w = wanted(vec![range(0, 1, 1), range(3, 1, 2)]);
+        assert_eq!(w, HashSet::from([index(0x20)]));
+        // two appended SRVs from the start
+        let w = wanted(vec![range(0, 2, u32::MAX)]);
+        assert_eq!(w, HashSet::from([index(0), index(0x20)]));
+        // an unbounded range runs to the end of the pages
+        assert!(wanted(vec![range(0, u32::MAX, 0)]).is_superset(&HashSet::from([
+            index(0),
+            index(0x20),
+            index(0x40)
+        ])));
     }
 }

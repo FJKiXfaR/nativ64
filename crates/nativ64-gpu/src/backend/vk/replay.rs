@@ -177,6 +177,9 @@ pub struct VkBackend<'g> {
     /// Tests: the most device memory the images may hold (a failing allocation beyond it).
     #[cfg(test)]
     pub(super) budget: Option<u64>,
+    /// In tests: the bytes of images kept alive after a sync, in place of the device's.
+    #[cfg(test)]
+    pub(super) trim_budget: Option<u64>,
 }
 
 fn range(
@@ -310,6 +313,8 @@ impl<'g> VkBackend<'g> {
             frames: 0,
             #[cfg(test)]
             budget: None,
+            #[cfg(test)]
+            trim_budget: None,
         }
     }
 
@@ -328,6 +333,8 @@ impl<'g> VkBackend<'g> {
         super::profile::count(super::profile::Count::Submissions, 1);
         let ts = super::profile::start();
         if draws > 0 {
+            // what the draws can read gets an image; the rest stays out of device memory
+            self.tex.wanted = super::residency::scan(lists, &mut self.tex.reads);
             // The textures are synced in passes of at most `UPLOAD_CAP` staged bytes, each
             // submitted and waited for, so that the staging of a scene change's textures
             // does not pile up (pinned host memory) before the draws.
@@ -410,7 +417,7 @@ impl<'g> VkBackend<'g> {
         if let Some(Some(old)) = self.images.remove(&res) {
             self.draw.forget_image(res);
             // the descriptors that held its views are written again
-            self.tex.dirty_from = 0;
+            self.tex.rewrite_res(res);
             // SAFETY: the GPU is idle between submissions; this one has not used it yet.
             unsafe { self.destroy(old) };
         }
@@ -643,10 +650,16 @@ impl<'g> VkBackend<'g> {
     /// A line of memory counters (every 600 frames, and with `NATIV64_PROFILE`).
     pub(super) fn memory_line(&mut self) -> String {
         self.refresh_stats();
+        let keys = self.tex.placed_keys();
+        let addresses = keys
+            .iter()
+            .map(|k| k.0)
+            .collect::<HashSet<_>>()
+            .len();
         let s = &self.stats;
         format!(
             "nativ64-gpu: frame {}: images {} ({} MiB), placed {} ({} MiB), arena {} KiB, \
-             released {}, evictions {}",
+             released {}, evictions {}, wanted {}, placed keys {} over {} addresses",
             self.frames,
             s.images,
             s.image_bytes >> 20,
@@ -654,7 +667,10 @@ impl<'g> VkBackend<'g> {
             s.placed_bytes >> 20,
             self.draw.arena_bytes() >> 10,
             s.released,
-            s.evictions
+            s.evictions,
+            self.tex.wanted.len(),
+            keys.len(),
+            addresses
         )
     }
 

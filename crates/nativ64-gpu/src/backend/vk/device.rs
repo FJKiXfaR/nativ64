@@ -9,7 +9,7 @@
 //! refusal names the first missing feature (chunk 10).
 
 use super::{instance, log_once, vk_try, Result, VkError};
-use ash::{ext::external_memory_host, khr, vk, Device, Entry, Instance};
+use ash::{ext::external_memory_host, ext::memory_budget, khr, vk, Device, Entry, Instance};
 use std::sync::Mutex;
 
 pub struct Gpu {
@@ -29,6 +29,8 @@ pub struct Gpu {
     pub(super) instance: Instance,
     /// Sampler and texture features optional in Vulkan (chunk 10b).
     pub(super) caps: Caps,
+    /// `VK_EXT_memory_budget` is enabled on the device.
+    memory_budget: bool,
 }
 
 /// Optional features the images and samplers of the replay use when they are there.
@@ -193,8 +195,14 @@ impl Gpu {
                     bc: have.core.texture_compression_bc != 0,
                     geometry: have.core.geometry_shader != 0,
                 };
+                // SAFETY: a valid device of this instance.
+                let memory_budget = unsafe { instance.enumerate_device_extension_properties(phys) }
+                    .unwrap_or_default()
+                    .iter()
+                    .any(|e| e.extension_name_as_c_str() == Ok(memory_budget::NAME));
                 Ok(Gpu {
                     caps,
+                    memory_budget,
                     device,
                     ext_host,
                     queue: Mutex::new(queue),
@@ -328,6 +336,12 @@ impl Gpu {
         {
             exts.push(ext_shader_stencil_export_name().as_ptr());
         }
+        if have
+            .iter()
+            .any(|e| e.extension_name_as_c_str() == Ok(memory_budget::NAME))
+        {
+            exts.push(memory_budget::NAME.as_ptr());
+        }
         let info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&qi)
             .enabled_extension_names(&exts)
@@ -408,6 +422,37 @@ impl Gpu {
             d.destroy_command_pool(pool, None);
             r
         }
+    }
+
+    /// How many bytes of images the device should keep alive: 80% of the device-local heap
+    /// budget `VK_EXT_memory_budget` reports when the device has it, else 60% of the largest
+    /// device-local heap.
+    pub(super) fn image_budget(&self) -> u64 {
+        let p = &self.mem_props;
+        let heaps = &p.memory_heaps[..p.memory_heap_count as usize];
+        let local = |h: &vk::MemoryHeap| h.flags.contains(vk::MemoryHeapFlags::DEVICE_LOCAL);
+        let Some((at, largest)) = heaps
+            .iter()
+            .enumerate()
+            .filter(|(_, h)| local(h))
+            .max_by_key(|(_, h)| h.size)
+        else {
+            return u64::MAX;
+        };
+        if self.memory_budget {
+            let mut b = vk::PhysicalDeviceMemoryBudgetPropertiesEXT::default();
+            let mut p2 = vk::PhysicalDeviceMemoryProperties2::default().push_next(&mut b);
+            // SAFETY: a valid physical device of this instance, the extension is enabled.
+            unsafe {
+                self.instance
+                    .get_physical_device_memory_properties2(self.phys, &mut p2)
+            };
+            let budget = b.heap_budget[at];
+            if budget > 0 {
+                return budget / 5 * 4;
+            }
+        }
+        largest.size / 5 * 3
     }
 
     /// First memory type allowed by `bits` with all of `flags`.

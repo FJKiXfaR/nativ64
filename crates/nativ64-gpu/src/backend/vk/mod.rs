@@ -17,6 +17,7 @@ mod pipeline;
 mod present;
 mod profile;
 mod replay;
+mod residency;
 mod rootblock;
 mod sampler;
 mod swapchain;
