@@ -1804,10 +1804,7 @@ impl<'a> Tr<'a> {
         let mut out = Vec::new();
         for (j, ch) in chans.into_iter().enumerate() {
             let v = match ch {
-                0 | 1 => {
-                    let x = self.g.op(Op::CompositeExtract, tu, &[size, ch]);
-                    x
-                }
+                0 | 1 => self.g.op(Op::CompositeExtract, tu, &[size, ch]),
                 2 if ncomp == 3 => self.g.op(Op::CompositeExtract, tu, &[size, 2]),
                 2 => one,
                 _ => levels,
