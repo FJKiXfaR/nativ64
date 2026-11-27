@@ -99,7 +99,10 @@ impl<'g> Pipelines<'g> {
         let gpu = self.gpu;
         let key = (pd.serial, rect, formats.to_vec());
         self.map.entry(key).or_insert_with(|| {
-            match build(gpu, bindless, samplers, pd, rect, formats) {
+            // The first use of a pipeline translates and creates it; one that takes most of a
+            // second is what a frame's stall is made of, so name it.
+            let started = std::time::Instant::now();
+            let outcome = match build(gpu, bindless, samplers, pd, rect, formats) {
                 Ok(b) => Outcome::Built(b),
                 Err(why) => {
                     let kind = if rect { " as a rectangle list" } else { "" };
@@ -109,7 +112,18 @@ impl<'g> Pipelines<'g> {
                     ));
                     Outcome::Failed(why)
                 }
+            };
+            let elapsed = started.elapsed();
+            if elapsed.as_secs_f64() > 0.5 {
+                let bytes: usize = pd.stages.iter().map(|s| s.bytes.len()).sum();
+                eprintln!(
+                    "nativ64-gpu: building pipeline {} ({bytes} shader bytes, rect {rect}) took {:.2} s ({})",
+                    pd.serial,
+                    elapsed.as_secs_f64(),
+                    if matches!(outcome, Outcome::Built(_)) { "built" } else { "failed" }
+                );
             }
+            outcome
         })
     }
 
