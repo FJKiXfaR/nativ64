@@ -750,11 +750,9 @@ fn lower(i: &Instr) -> Result<Option<Lowered>, IrError> {
     // register takes the old destination
     if name == "v_swap_b32" {
         if let Some(Operand::Reg { code, .. }) = i.operands.get(1) {
-            if let Ok(reg) = operand_dword(*code, 0, false, i.at) {
-                if let Rd::Reg(r) = reg {
-                    lo.dsts.push(r);
-                    lo.olds.push(r);
-                }
+            if let Ok(Rd::Reg(r)) = operand_dword(*code, 0, false, i.at) {
+                lo.dsts.push(r);
+                lo.olds.push(r);
             }
         }
     }
