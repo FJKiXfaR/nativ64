@@ -61,10 +61,14 @@ impl<'a> Stage<'a> {
         match self.io {
             StageIo::Vertex(_) => ExecutionModel::Vertex,
             StageIo::Pixel(_) => ExecutionModel::Fragment,
+            StageIo::Compute(_) => ExecutionModel::GLCompute,
         }
     }
 
     pub(super) fn exec_modes(&self, m: &mut super::Module, main: u32) {
+        if let StageIo::Compute(c) = self.io {
+            m.exec_mode(main, ExecutionMode::LocalSize, &c.group);
+        }
         if matches!(self.io, StageIo::Pixel(_)) {
             m.exec_mode(main, ExecutionMode::OriginUpperLeft, &[]);
             if self.depth.is_some() {
@@ -193,6 +197,7 @@ impl<'a> Tr<'a> {
     /// The value of an entry register, as a `Src` the program reads.
     pub(super) fn begin_stage(&mut self) -> R<()> {
         let io = self.io();
+        let tu = self.g.t_u32();
         self.check_barycentrics()?;
         // the root block's address is read once, in the entry block, where it dominates
         // every use
@@ -209,12 +214,22 @@ impl<'a> Tr<'a> {
                     }
                     Opd::V(self.user_dword(root, u32::from(n)))
                 }
+                Reg::S(n) if matches!(io, StageIo::Compute(_)) => {
+                    let StageIo::Compute(c) = io else { unreachable!() };
+                    let Some(&(_, axis)) = c.group_ids.iter().find(|(s, _)| *s == n) else {
+                        return unsupported(&format!("entry {reg}"));
+                    };
+                    let v3 = self.g.m.global(Op::TypeVector, None, &[tu, 3]);
+                    let id = self.load_builtin(BuiltIn::WorkgroupId, v3);
+                    Opd::V(self.g.op(Op::CompositeExtract, tu, &[id, u32::from(axis)]))
+                }
                 Reg::S(n) => {
                     // below the user SGPRs: the VS fetch routine's address (s4, s5); above:
                     // the PS primitive mask and ordered-section id, only read for m0
                     let ok = match io {
                         StageIo::Vertex(_) => n == 4 || n == 5,
                         StageIo::Pixel(p) => n >= p.user.end && n < p.user.end + 2,
+                        StageIo::Compute(_) => false,
                     };
                     if !ok {
                         return unsupported(&format!("entry {reg}"));
@@ -286,6 +301,14 @@ impl<'a> Tr<'a> {
                 };
                 let (a, b) = (self.load_builtin(id, tu), self.load_builtin(base, tu));
                 Ok(self.g.op(Op::ISub, tu, &[a, b]))
+            }
+            StageIo::Compute(c) => {
+                if n >= c.thread_ids {
+                    return unsupported(&format!("entry v{n}"));
+                }
+                let v3 = self.g.m.global(Op::TypeVector, None, &[tu, 3]);
+                let id = self.load_builtin(BuiltIn::LocalInvocationId, v3);
+                Ok(self.g.op(Op::CompositeExtract, tu, &[id, u32::from(n)]))
             }
             StageIo::Pixel(p) => match p.vgprs.get(&n).copied() {
                 Some(PsVgpr::Bary { .. }) => Ok(self.g.k(0)),
@@ -411,6 +434,9 @@ impl<'a> Tr<'a> {
         }
         let i = &c.inst.instr;
         let name = i.name();
+        if name == "s_barrier" {
+            return self.barrier().map(|()| Some(Vec::new()));
+        }
         if name == "s_swappc_b64" {
             return self.fetch(c).map(Some);
         }

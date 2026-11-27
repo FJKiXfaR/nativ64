@@ -1365,6 +1365,38 @@ it says otherwise.
      features (all three drivers here have them). Real validation: the windowed scripted run,
      frames 565-700 dumped with targets: the 3D table written (not zero), then the intro
      against what the user saw.
+   **As built (chunk 10c, part 1)** **[seen]** for the translation, **[unverified]** where said:
+   `io::stage_io` / `translate_stage(&cs, &[], None)` give a `GLCompute` entry (`StageIo::Compute(CsIo)`:
+   user SGPRs `0..user_sgprs()`, tables, group, group-id SGPRs, thread-id VGPR count, the used rows,
+   LDS size); `LocalSize` = group, the push constant is the root block as for VS/PS, group ids =
+   `WorkgroupId`, v0..v2 = `LocalInvocationId`. `io::refuse_entry` refuses by name the group info
+   SGPR, scratch and wave32 (126 programs of the corpus are wave32). `image_load[_mip]` /
+   `image_store[_mip]` (dims 1D, 2D, 3D, 2D array; `a16` packs two u16 per dword; NSA as given)
+   find the slot kind through `Analysis::origin` (the constant byte offset a loaded descriptor
+   came from, through copies and agreeing phis) and the used row at that offset: SRV =
+   `OpImageFetch` on `textures[]`, UAV = `OpImageRead` / `OpImageWrite` on `images[]`
+   (`images[]` is set 0 binding 1, sampled type f32, format `Unknown`, with the two formatless
+   capabilities). `Translated::storage_images` says binding 1 is used (`images` is then set too).
+   DS: `ds_read` / `ds_write` b32..b128 and the `2` / `2st64` pairs on a `Workgroup` u32 array of
+   the record's LDS size (out of range: read 0, write dropped); `s_barrier` = `OpControlBarrier`
+   (Workgroup, AcquireRelease | WorkgroupMemory). Refused by name (chunk 9 entries of the report):
+   store with a dmask other than 0xf, `_mip` on a UAV, cube / MSAA / 1D-array dims, d16 / tfe /
+   lwe, a slot no used row names or loaded at a non-constant offset, a store to an SRV,
+   `s_barrier` outside compute or under a per-lane `If`, LDS access with no LDS, GDS, and
+   **`image_sample` with implicit derivatives** (Vulkan wants `DerivativeGroupLinearKHR` in
+   compute; 7 programs failed `spirv-val` on it before the refusal; lane-linear quads, the HLSL
+   meaning, are the likely fix). Not wired: the console lane index (`LocalInvocationIndex % 64`)
+   for `v_mbcnt` and the other wave ops stay refused as chunk 7. Tests: spirv-val'd synthetic
+   blobs, and (with `NATIV64_SPIRV_RUN=1`, lavapipe) real dispatches through `Gpu::run_stage`
+   (ids, an LDS mirror through a barrier, a 2D `a16` fetch stored to a 3D image). cs 1e32f251
+   translates and `spirv-val`s (114k words). Corpus (2718 cs with IR, 693 structured):
+   translated 5 -> 228, all 228 validated (first run: 235 translated, 7 invalid, the implicit
+   derivatives above). Left: wave32 126, loaded-descriptor words as numbers 49, typed buffers
+   (`buffer_*_format*`, `tbuffer_*`) ~150, own address 38, `image_gather4` 30, DS atomics ~35.
+   **[unverified]**: lanes of one wave exchanging through LDS without `s_barrier` (the console's
+   lockstep is not reproduced; our invocations are free-running), a barrier after a lane-driven
+   loop break, f32 sampled/storage image types against integer-format views (backend picks).
+
    * **As built (chunk 10c, part 2)**: `backend/vk/compute.rs` (new), `pipeline.rs`,
      `rootblock.rs`, `replay.rs`, `textures.rs`, `residency.rs`, `bindless.rs`, `device.rs`.
      * `Gpu::open` refuses a device without `shaderStorageImageReadWithoutFormat` or
