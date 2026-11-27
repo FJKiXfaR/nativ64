@@ -206,19 +206,10 @@ fn cross_lane_use_names_the_instruction() {
     let words = [0x7c020300, 0xbe80106a, 0x7e020500, 0xbf810000];
     let f = func(&words);
     let m = type_masks(&f);
-    let names: Vec<_> = m
-        .cross_lane
-        .iter()
-        .map(|c| (c.at, c.name.as_str()))
-        .collect();
-    // a non-uniform `v_readfirstlane` is a subgroup broadcast, not a cross-lane refusal
-    assert_eq!(names, vec![(4, "s_bcnt1_i32_b64")]);
-    match structure(&f) {
-        Err(StructError::CrossLane(c)) => {
-            assert_eq!((c.at, c.name.as_str()), (4, "s_bcnt1_i32_b64"))
-        }
-        r => panic!("{r:?}"),
-    }
+    // neither is a cross-lane refusal any more: a mask's set bits are a ballot count and a
+    // non-uniform `v_readfirstlane` is a subgroup broadcast
+    assert!(m.cross_lane.is_empty(), "{:?}", m.cross_lane);
+    assert!(structure(&f).is_ok(), "{:?}", structure(&f));
 }
 
 #[test]

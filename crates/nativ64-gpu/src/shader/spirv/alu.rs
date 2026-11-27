@@ -151,6 +151,10 @@ pub trait Backend {
     fn broadcast_first(&mut self, a: Self::V) -> Self::V;
     /// This invocation's lane in the wave (`v_mbcnt`).
     fn lane_id(&mut self) -> Self::V;
+    /// The number of invocations active in the wave (`s_bcnt1` of the exec mask).
+    fn active_count(&mut self) -> Self::V;
+    /// The lowest active lane in the wave (`s_ff1` of the exec mask).
+    fn active_first(&mut self) -> Self::V;
 }
 
 /// A value of an operand or result: bits, or a lane mask.
@@ -238,6 +242,8 @@ impl Backend for Dry {
     fn bxor(&mut self, _: (), _: ()) {}
     fn broadcast_first(&mut self, _: ()) {}
     fn lane_id(&mut self) {}
+    fn active_count(&mut self) {}
+    fn active_first(&mut self) {}
 }
 
 /// Runs the table on host numbers.
@@ -457,6 +463,13 @@ impl Backend for Cpu {
     }
     fn lane_id(&mut self) -> u32 {
         // one invocation per run: lane 0
+        0
+    }
+    fn active_count(&mut self) -> u32 {
+        // one invocation per run
+        1
+    }
+    fn active_first(&mut self) -> u32 {
         0
     }
 }
@@ -1649,6 +1662,18 @@ impl<K: Backend> X<'_, K> {
                 })
             }
             "s_bcnt0_i32_b32" | "s_bcnt1_i32_b32" | "s_bcnt0_i32_b64" | "s_bcnt1_i32_b64" => {
+                // a mask the IR keeps per lane is the wave's own: count the active lanes
+                if matches!(self.src(0, 0)?, Opd::B(_)) {
+                    if !name.starts_with("s_bcnt1") {
+                        return Err(self.un());
+                    }
+                    let total = self.b.active_count();
+                    let s = self.scc_nz(&[Opd::V(total)]);
+                    return Ok(Res {
+                        data: vec![Opd::V(total)],
+                        scc: s,
+                    });
+                }
                 let words = if name.ends_with("b64") { 2 } else { 1 };
                 let mut total = self.k(0);
                 for k in 0..words {
@@ -1668,6 +1693,19 @@ impl<K: Backend> X<'_, K> {
                 })
             }
             "s_ff1_i32_b32" | "s_ff0_i32_b32" | "s_ff1_i32_b64" | "s_ff0_i32_b64" => {
+                // a mask the IR keeps per lane is the wave's own: the lowest active lane
+                if matches!(self.src(0, 0)?, Opd::B(_)) {
+                    if !name.starts_with("s_ff1") {
+                        return Err(self.un());
+                    }
+                    let first = self.b.active_first();
+                    let found = self.ick(ICmp::Ne, first, u32::MAX);
+                    let s = self.bv(found);
+                    return Ok(Res {
+                        data: vec![Opd::V(first)],
+                        scc: Some(s),
+                    });
+                }
                 let words = if name.ends_with("b64") { 2 } else { 1 };
                 let mut r = self.k(u32::MAX);
                 for k in (0..words).rev() {

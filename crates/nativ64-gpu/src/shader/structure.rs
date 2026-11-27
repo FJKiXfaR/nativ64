@@ -526,6 +526,14 @@ pub fn cross_lane_use(m: &Masks, inst: &Inst) -> Option<String> {
             return None;
         }
     }
+    // counting the bits of a mask and finding its first set bit are subgroup ballot counts
+    // the emitter translates (`s_bcnt0` and `s_ff0` of a mask are not)
+    if matches!(
+        i.name(),
+        "s_bcnt1_i32_b32" | "s_bcnt1_i32_b64" | "s_ff1_i32_b32" | "s_ff1_i32_b64"
+    ) {
+        return None;
+    }
     Some(i.name().to_string())
 }
 

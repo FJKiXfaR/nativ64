@@ -222,6 +222,33 @@ impl Gen {
 }
 
 impl Backend for Gen {
+    fn active_count(&mut self) -> u32 {
+        // `s_bcnt1_i32_b64` of the exec mask: the number of active lanes
+        self.m.capability(Capability::GroupNonUniformBallot);
+        let t = self.t_u32();
+        let scope = self.k(3);
+        let tv4 = self.m.global(Op::TypeVector, None, &[t, 4]);
+        let one = self.kb(true);
+        let ballot = self.op(Op::GroupNonUniformBallot, tv4, &[scope, one]);
+        let reduce = self.k(0);
+        self.op(
+            Op::GroupNonUniformBallotBitCount,
+            t,
+            &[scope, reduce, ballot],
+        )
+    }
+
+    fn active_first(&mut self) -> u32 {
+        // `s_ff1_i32_b64` of the exec mask: the lowest active lane
+        self.m.capability(Capability::GroupNonUniformBallot);
+        let t = self.t_u32();
+        let scope = self.k(3);
+        let tv4 = self.m.global(Op::TypeVector, None, &[t, 4]);
+        let one = self.kb(true);
+        let ballot = self.op(Op::GroupNonUniformBallot, tv4, &[scope, one]);
+        self.op(Op::GroupNonUniformBallotFindLSB, t, &[scope, ballot])
+    }
+
     fn lane_id(&mut self) -> u32 {
         self.m.capability(Capability::GroupNonUniform);
         let t = self.t_u32();
