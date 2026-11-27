@@ -142,6 +142,10 @@ pub trait Backend {
     fn pack_half(&mut self, a: Self::V) -> Self::V;
     /// The f16 in the low half as f32 bits.
     fn unpack_half(&mut self, a: Self::V) -> Self::V;
+    /// The two f16s of a dword as f32 bits.
+    fn unpack_half2(&mut self, a: Self::V) -> (Self::V, Self::V);
+    /// Two f32s as a packed pair of f16s (round to nearest even).
+    fn pack_half2(&mut self, a: Self::V, b: Self::V) -> Self::V;
     fn select(&mut self, c: Self::B, a: Self::V, b: Self::V) -> Self::V;
     fn bnot(&mut self, a: Self::B) -> Self::B;
     fn band(&mut self, a: Self::B, b: Self::B) -> Self::B;
@@ -189,8 +193,8 @@ pub struct Ctx<'a, K: Backend> {
 /// The plan chunk an instruction that is not ALU belongs to, `None` for the ALU ones.
 pub fn non_alu_chunk(i: &Instr) -> Option<u8> {
     let n = i.name();
-    if i.dpp.is_some()
-        || n.starts_with("v_readfirstlane")
+    // a DPP instruction is translated before the table runs: its source is a shuffle
+    if n.starts_with("v_readfirstlane")
         || n.starts_with("v_permlane")
         || n.starts_with("ds_permute")
         || n.starts_with("ds_bpermute")
@@ -234,6 +238,10 @@ impl Backend for Dry {
     fn ldexp(&mut self, _: (), _: ()) {}
     fn pack_half(&mut self, _: ()) {}
     fn unpack_half(&mut self, _: ()) {}
+    fn unpack_half2(&mut self, _: ()) -> ((), ()) {
+        ((), ())
+    }
+    fn pack_half2(&mut self, _: (), _: ()) {}
     fn select(&mut self, _: (), _: (), _: ()) {}
     fn bnot(&mut self, _: ()) {}
     fn band(&mut self, _: (), _: ()) {}
@@ -439,6 +447,12 @@ impl Backend for Cpu {
     }
     fn unpack_half(&mut self, a: u32) -> u32 {
         f16_to_f32(a)
+    }
+    fn unpack_half2(&mut self, a: u32) -> (u32, u32) {
+        (f16_to_f32(a & 0xffff), f16_to_f32(a >> 16))
+    }
+    fn pack_half2(&mut self, a: u32, b: u32) -> u32 {
+        f32_to_f16_rte(a) | (f32_to_f16_rte(b) << 16)
     }
     fn select(&mut self, c: bool, a: u32, b: u32) -> u32 {
         if c {
@@ -2495,6 +2509,33 @@ impl<K: Backend> X<'_, K> {
                 };
                 let fl = self.b.fun(FUn::Floor, a);
                 Ok(Res::v(self.f2i(fl)))
+            }
+            // f16 arithmetic: the halves are converted to f32, computed and packed back
+            "v_add_f16" | "v_sub_f16" | "v_mul_f16" => {
+                let op = match name {
+                    "v_add_f16" => FBin::Add,
+                    "v_sub_f16" => FBin::Sub,
+                    _ => FBin::Mul,
+                };
+                let a = self.v(0)?;
+                let b = self.v(1)?;
+                let a = self.b.unpack_half(a);
+                let b = self.b.unpack_half(b);
+                let r = self.b.fbin(op, a, b);
+                Ok(Res::v(self.b.pack_half(r)))
+            }
+            "v_pk_add_f16" | "v_pk_sub_f16" | "v_pk_mul_f16" => {
+                let op = match name {
+                    "v_pk_add_f16" => FBin::Add,
+                    "v_pk_sub_f16" => FBin::Sub,
+                    _ => FBin::Mul,
+                };
+                let (a, b) = (self.v(0)?, self.v(1)?);
+                let (a0, a1) = self.b.unpack_half2(a);
+                let (b0, b1) = self.b.unpack_half2(b);
+                let r0 = self.b.fbin(op, a0, b0);
+                let r1 = self.b.fbin(op, a1, b1);
+                Ok(Res::v(self.b.pack_half2(r0, r1)))
             }
             "v_cvt_f32_f16" => {
                 let a = self.v(0)?;

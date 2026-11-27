@@ -492,6 +492,22 @@ impl Backend for Gen {
         self.as_bits(r)
     }
 
+    fn unpack_half2(&mut self, a: u32) -> (u32, u32) {
+        let v2 = self.t_v2();
+        let v = self.ext(v2, GL::UnpackHalf2x16, &[a]);
+        let f = self.t_f32();
+        let x = self.op(Op::CompositeExtract, f, &[v, 0]);
+        let y = self.op(Op::CompositeExtract, f, &[v, 1]);
+        (x, y)
+    }
+
+    fn pack_half2(&mut self, a: u32, b: u32) -> u32 {
+        let v2 = self.t_v2();
+        let v = self.op(Op::CompositeConstruct, v2, &[a, b]);
+        let u = self.t_u32();
+        self.ext(u, GL::PackHalf2x16, &[v])
+    }
+
     fn pack_half(&mut self, a: u32) -> u32 {
         let fa = self.as_f32(a);
         let v2 = self.t_v2();
