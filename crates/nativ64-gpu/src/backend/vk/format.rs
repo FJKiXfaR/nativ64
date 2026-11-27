@@ -125,7 +125,7 @@ pub fn lookup(dxgi: u32, flags: u32) -> Option<FormatInfo> {
         // depth-stencil texture (depth + 8-bit stencil, as VIctory's 2-plane model says).
         115 => info(F::B4G4R4A4_UNORM_PACK16, COLOR, 2),
         116 | 117 => info(F::R16G16B16A16_SFLOAT, COLOR, 8),
-        118 => info(F::D16_UNORM_S8_UINT, DEPTH_STENCIL, 3),
+        118 => info(F::D16_UNORM, DEPTH, 2),
         // Block-compressed colour (BC1 to BC7).
         70 | 71 => block(F::BC1_RGBA_UNORM_BLOCK, 8),
         72 => block(F::BC1_RGBA_SRGB_BLOCK, 8),
@@ -293,7 +293,7 @@ mod tests {
         assert_eq!(f(115, 0).format, vk::Format::B4G4R4A4_UNORM_PACK16);
         assert_eq!(f(116, 0).format, vk::Format::R16G16B16A16_SFLOAT);
         assert_eq!(f(117, 0).format, vk::Format::R16G16B16A16_SFLOAT);
-        assert_eq!(f(118, 0).format, vk::Format::D16_UNORM_S8_UINT);
+        assert_eq!(f(118, 0).format, vk::Format::D16_UNORM);
     }
 
     #[test]
