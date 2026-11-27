@@ -1855,10 +1855,10 @@ impl<'a> Tr<'a> {
         if is_vertex && !explicit {
             return refuse("image_sample in a vertex stage");
         }
-        if matches!(self.io(), StageIo::Compute(_)) && !explicit {
-            // quad derivatives need DerivativeGroupLinearKHR (an extension and a device check)
-            return refuse("image_sample with implicit derivatives in a compute program");
-        }
+        // A compute program has no quad derivatives: the sample takes LOD 0 instead (the
+        // derivative-based mip choice is lost, which a compute sample of a known level does
+        // not need).
+        let compute_implicit = matches!(self.io(), StageIo::Compute(_)) && !explicit;
         let chans: Vec<u32> = (0..4).filter(|ch| m.dmask >> ch & 1 != 0).collect();
         if chans.len() != c.inst.dsts.len() {
             return bad("an image sample whose results do not match its dmask");
@@ -1900,8 +1900,12 @@ impl<'a> Tr<'a> {
             return Ok(Some(out));
         }
         let v4 = self.vec4(Class::Float);
-        let res = if !explicit {
+        let res = if !explicit && !compute_implicit {
             self.g.op(Op::ImageSampleImplicitLod, v4, &[si, coord])
+        } else if compute_implicit {
+            let lod = self.g.fconst(0.0);
+            self.g
+                .op(Op::ImageSampleExplicitLod, v4, &[si, coord, 2, lod])
         } else {
             let lod = if zero_lod {
                 self.g.fconst(0.0)
