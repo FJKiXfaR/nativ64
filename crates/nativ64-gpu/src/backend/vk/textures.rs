@@ -46,7 +46,7 @@
 
 use super::format::FormatInfo;
 use super::profile::{self, Count, Phase};
-use super::replay::{global_barrier, mip_count, stage_bytes, Staging, TitleImage, VkBackend};
+use super::replay::{global_barrier, mip_count, TitleImage, VkBackend};
 use super::sampler::Spec;
 use super::{log_once, Gpu};
 use crate::d3d12::descriptor::{view_at, views_from, View};
@@ -130,6 +130,8 @@ pub(super) struct TexState {
     /// Submissions that synced, to hash a texture once in each.
     pub(super) submission: u64,
     hole: Option<Hole>,
+    /// The staging memory of the uploads, reset after each submission.
+    pub(super) ring: super::staging::StagingRing,
     /// The storage image of binding 1's holes.
     hole_storage: Option<Hole>,
     /// While the textures are synced in passes: an upload stops once `staged` reaches the cap
@@ -472,7 +474,6 @@ fn upload(
     d: &Device,
     cb: vk::CommandBuffer,
     t: &mut TitleImage,
-    staging: &mut Vec<Staging>,
     stats: &mut super::ReplayStats,
     tex: &mut TexState,
 ) -> bool {
@@ -533,8 +534,9 @@ fn upload(
     };
     let plane = &layout.planes[0];
     let e = plane.element_bytes as usize;
-    let mut bytes: Vec<u8> = Vec::new();
-    let mut regions = Vec::new();
+    // where each subresource goes in the staging memory
+    let mut parts = Vec::new();
+    let mut total = 0usize;
     for layer in 0..layers {
         for mip in 0..layout.mip_levels {
             let m = &plane.mips[mip as usize];
@@ -545,48 +547,47 @@ fn upload(
                 1
             };
             let slice = row * rows;
-            let offset = bytes.len().next_multiple_of(16);
-            bytes.resize(offset + slice * depth as usize, 0);
-            let sub = mip + layer * layout.mip_levels;
-            if let Err(err) = detile(
-                layout,
-                0,
-                sub,
-                t.address,
-                data,
-                &mut bytes[offset..],
-                (row, slice),
-            ) {
-                log_once(format!("cannot detile {:?}: {err}", t.desc));
-                return false;
-            }
-            regions.push(vk::BufferImageCopy {
-                buffer_offset: offset as u64,
-                buffer_row_length: 0,
-                buffer_image_height: 0,
-                image_subresource: vk::ImageSubresourceLayers {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    mip_level: mip,
-                    base_array_layer: layer,
-                    layer_count: 1,
-                },
-                image_offset: vk::Offset3D::default(),
-                image_extent: vk::Extent3D {
-                    width: super::replay::mip_size(t.desc.width as u32, mip),
-                    height: super::replay::mip_size(t.desc.height, mip),
-                    depth,
-                },
-            });
+            let offset = total.next_multiple_of(16);
+            total = offset + slice * depth as usize;
+            parts.push((layer, mip, offset, row, slice, depth));
         }
     }
-    tex.staged += bytes.len() as u64;
-    let buffer = match stage_bytes(gpu, &bytes, staging) {
-        Ok(b) => b,
+    // detiled straight into the mapped staging buffer
+    let (buffer, base, dst) = match tex.ring.alloc(gpu, total, UPLOAD_CAP) {
+        Ok(x) => x,
         Err(err) => {
             log_once(format!("staging of a texture upload failed: {err}"));
             return false;
         }
     };
+    let mut regions = Vec::new();
+    for (layer, mip, offset, row, slice, depth) in parts {
+        let sub = mip + layer * layout.mip_levels;
+        let out = &mut dst[offset..offset + slice * depth as usize];
+        if let Err(err) = detile(layout, 0, sub, t.address, data, out, (row, slice)) {
+            log_once(format!("cannot detile {:?}: {err}", t.desc));
+            tex.ring.rollback(total);
+            return false;
+        }
+        regions.push(vk::BufferImageCopy {
+            buffer_offset: base + offset as u64,
+            buffer_row_length: 0,
+            buffer_image_height: 0,
+            image_subresource: vk::ImageSubresourceLayers {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                mip_level: mip,
+                base_array_layer: layer,
+                layer_count: 1,
+            },
+            image_offset: vk::Offset3D::default(),
+            image_extent: vk::Extent3D {
+                width: super::replay::mip_size(t.desc.width as u32, mip),
+                height: super::replay::mip_size(t.desc.height, mip),
+                depth,
+            },
+        });
+    }
+    tex.staged += total as u64;
     // SAFETY: `cb` is recording outside a rendering instance; the staging buffer lives until
     // the submission is done; the image is in GENERAL.
     unsafe { d.cmd_copy_buffer_to_image(cb, buffer, t.image, vk::ImageLayout::GENERAL, &regions) };
@@ -606,13 +607,7 @@ fn placed_desc(words: &[u32; 14]) -> ResourceDesc {
 impl<'g> VkBackend<'g> {
     /// Ensures the image of `res` exists and holds the host memory's current content when the
     /// host owns it; records no barrier. True when a copy was recorded.
-    fn host_upload(
-        &mut self,
-        d: &Device,
-        cb: vk::CommandBuffer,
-        staging: &mut Vec<Staging>,
-        res: usize,
-    ) -> bool {
+    fn host_upload(&mut self, d: &Device, cb: vk::CommandBuffer, res: usize) -> bool {
         // a view of a resource the title released stays in the registry
         profile::count(Count::Visited, 1);
         let ti = profile::start();
@@ -624,28 +619,14 @@ impl<'g> VkBackend<'g> {
         let Some(Some(mut t)) = self.images.remove(&res) else {
             return false;
         };
-        let did = upload(
-            self.gpu,
-            d,
-            cb,
-            &mut t,
-            staging,
-            &mut self.stats,
-            &mut self.tex,
-        );
+        let did = upload(self.gpu, d, cb, &mut t, &mut self.stats, &mut self.tex);
         self.images.insert(res, Some(t));
         did
     }
 
     /// As `host_upload`, then a barrier: for the source of a copy.
-    pub(super) fn host_to_image(
-        &mut self,
-        d: &Device,
-        cb: vk::CommandBuffer,
-        staging: &mut Vec<Staging>,
-        res: usize,
-    ) {
-        if self.host_upload(d, cb, staging, res) {
+    pub(super) fn host_to_image(&mut self, d: &Device, cb: vk::CommandBuffer, res: usize) {
+        if self.host_upload(d, cb, res) {
             global_barrier(d, cb);
         }
     }
@@ -681,20 +662,14 @@ impl<'g> VkBackend<'g> {
         ok
     }
 
-    fn placed_upload(
-        &mut self,
-        d: &Device,
-        cb: vk::CommandBuffer,
-        staging: &mut Vec<Staging>,
-        key: PlacedKey,
-    ) -> bool {
+    fn placed_upload(&mut self, d: &Device, cb: vk::CommandBuffer, key: PlacedKey) -> bool {
         if !self.placed_image(d, cb, key) {
             return false;
         }
         let Some(Some(t)) = self.placed.get_mut(&key) else {
             return false;
         };
-        upload(self.gpu, d, cb, t, staging, &mut self.stats, &mut self.tex)
+        upload(self.gpu, d, cb, t, &mut self.stats, &mut self.tex)
     }
 
     /// Start of a submission: frees what was made for the resources the title released since
@@ -1045,12 +1020,7 @@ impl<'g> VkBackend<'g> {
     }
 
     /// The first step of a submission with draws: see the module documentation.
-    pub(super) fn sync_textures(
-        &mut self,
-        d: &Device,
-        cb: vk::CommandBuffer,
-        staging: &mut Vec<Staging>,
-    ) {
+    pub(super) fn sync_textures(&mut self, d: &Device, cb: vk::CommandBuffer) {
         let Some(count) = self.draw.bindless().map(|b| b.count as usize) else {
             return;
         };
@@ -1097,12 +1067,12 @@ impl<'g> VkBackend<'g> {
         placed.dedup();
         let th = profile::start();
         for res in resources {
-            uploaded |= self.host_upload(d, cb, staging, res);
+            uploaded |= self.host_upload(d, cb, res);
         }
         profile::stop(Phase::HostUp, th);
         let tp = profile::start();
         for key in placed {
-            uploaded |= self.placed_upload(d, cb, staging, key);
+            uploaded |= self.placed_upload(d, cb, key);
         }
         profile::stop(Phase::PlacedUp, tp);
         if uploaded {
@@ -1499,6 +1469,35 @@ mod tests {
         assert_eq!((uploads_of(&b, a), uploads_of(&b, c)), (1, 1));
         assert!(all_pixels(&b.read_back(target).unwrap(), [0, 0, 255, 255]));
         assert!(!b.tex.capped && !b.tex.more);
+    }
+
+    #[test]
+    fn consecutive_upload_passes_reuse_the_staging_buffer() {
+        let Some(g) = gpu_or_skip() else { return };
+        let mut b = VkBackend::new(&g);
+        let d = desc(8, 8, 1, 28, 0, 0);
+        let (red, blue) = (vec![255, 0, 0, 255], vec![0, 0, 255, 255]);
+        let a = resource_at(tiled_memory(&d, |_, _, _, _| red.clone()), d);
+        let c = resource_at(tiled_memory(&d, |_, _, _, _| blue.clone()), d);
+        let pipe = sampling_pipeline(SAMPLING());
+        let target = texture(16, 8, 28, TARGET);
+        let handle = rtv(target);
+        let (t1, t2) = (table(), table());
+        srv(a, None, t1 + 0x20);
+        srv(c, None, t2 + 0x20);
+        let mut first = clear(handle, [0.0, 1.0, 0.0, 1.0]);
+        first.extend(textured_draw(pipe, handle, t1));
+        let mut second = clear(handle, [0.0, 1.0, 0.0, 1.0]);
+        second.extend(textured_draw(pipe, handle, t2));
+        b.execute(&[first]);
+        assert_eq!(uploads_of(&b, a), 1);
+        assert!(all_pixels(&b.read_back(target).unwrap(), [255, 0, 0, 255]));
+        let made = b.tex.ring.made;
+        assert!(made >= 1);
+        b.execute(&[second]);
+        assert_eq!(uploads_of(&b, c), 1);
+        assert!(all_pixels(&b.read_back(target).unwrap(), [0, 0, 255, 255]));
+        assert_eq!(b.tex.ring.made, made, "no new staging buffer");
     }
 
     #[test]
