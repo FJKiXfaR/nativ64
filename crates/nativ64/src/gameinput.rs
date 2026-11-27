@@ -80,6 +80,103 @@ pub const KIND_GAMEPAD: u32 = 0x4_0000;
 pub const KIND_UI_NAVIGATION: u32 = 0x0100_0000;
 /// What the virtual pad reports as its supported input and reading kind.
 pub const PAD_KINDS: u32 = KIND_GAMEPAD | KIND_UI_NAVIGATION;
+/// `GameInputKindKeyboard`: a second virtual device whose key state follows the pad's buttons
+/// (the title's last screens read a keyboard and ignore the pad).
+pub const KIND_KEYBOARD: u32 = 0x10;
+
+/// `GameInputKeyState`: the scan code, code point and virtual key of one key.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct KeyState {
+    pub scan_code: u32,
+    pub code_point: u32,
+    pub virtual_key: u32,
+}
+
+/// The keys a reading's buttons stand for: `(button mask, key)`, the pad mapped to the keys the
+/// Wayland seat uses (Enter for A, Escape for B, arrows for the d-pad).
+const KEY_MAP: &[(u32, KeyState)] = &[
+    (
+        A,
+        KeyState {
+            scan_code: 0x1C,
+            code_point: 13,
+            virtual_key: 0x0D,
+        },
+    ),
+    (
+        B,
+        KeyState {
+            scan_code: 0x01,
+            code_point: 27,
+            virtual_key: 0x1B,
+        },
+    ),
+    (
+        X,
+        KeyState {
+            scan_code: 0x2D,
+            code_point: 0x78,
+            virtual_key: 0x58,
+        },
+    ),
+    (
+        Y,
+        KeyState {
+            scan_code: 0x15,
+            code_point: 0x79,
+            virtual_key: 0x59,
+        },
+    ),
+    (
+        UP,
+        KeyState {
+            scan_code: 0x48,
+            code_point: 0,
+            virtual_key: 0x26,
+        },
+    ),
+    (
+        DOWN,
+        KeyState {
+            scan_code: 0x50,
+            code_point: 0,
+            virtual_key: 0x28,
+        },
+    ),
+    (
+        LEFT,
+        KeyState {
+            scan_code: 0x4B,
+            code_point: 0,
+            virtual_key: 0x25,
+        },
+    ),
+    (
+        RIGHT,
+        KeyState {
+            scan_code: 0x4D,
+            code_point: 0,
+            virtual_key: 0x27,
+        },
+    ),
+    (
+        MENU,
+        KeyState {
+            scan_code: 0x01,
+            code_point: 27,
+            virtual_key: 0x1B,
+        },
+    ),
+    (
+        VIEW,
+        KeyState {
+            scan_code: 0x0F,
+            code_point: 9,
+            virtual_key: 0x09,
+        },
+    ),
+];
 pub const STATUS_CONNECTED: u32 = 0x3;
 /// `GameInputAsyncEnumeration`; 2 is the blocking one.
 const ASYNC_ENUMERATION: u32 = 1;
@@ -470,6 +567,40 @@ pub fn device() -> *mut c_void {
     *DEVICE as *mut c_void
 }
 
+/// The virtual keyboard: a second device of `GameInputKindKeyboard` whose key state is the pad's
+/// buttons (see [`KEY_MAP`]). It exists because the title's last start-up screens ask for a
+/// keyboard device (the device callback for `GameInputKindKeyboard` used to answer no device).
+static KEYBOARD_DEVICE: LazyLock<usize> = LazyLock::new(|| {
+    let mut id = [0u8; 32];
+    id[..14].copy_from_slice(b"nativ64-keybrd");
+    id[31] = 2;
+    let info = DeviceInfo {
+        size: size_of::<DeviceInfo>() as u32,
+        id,
+        root_id: id,
+        supported_input: KIND_KEYBOARD,
+        ..DeviceInfo::default()
+    };
+    let device = DeviceObject::create(&DEVICE_VTBL, &[], info);
+    // SAFETY: just made.
+    unsafe { add_ref(device) };
+    device as usize
+});
+
+/// The virtual keyboard, as the pointer titles get.
+pub fn keyboard_device() -> *mut c_void {
+    *KEYBOARD_DEVICE as *mut c_void
+}
+
+/// The keys a reading holds down, from its buttons.
+fn keys_of(buttons: u32) -> Vec<KeyState> {
+    KEY_MAP
+        .iter()
+        .filter(|(mask, _)| buttons & mask != 0)
+        .map(|(_, key)| *key)
+        .collect()
+}
+
 type Device = *mut DeviceObject;
 
 static LOGGED: Mutex<Vec<(u8, usize)>> = Mutex::new(Vec::new());
@@ -623,10 +754,10 @@ fn new_reading(entry: Entry) -> *mut c_void {
 }
 
 extern "win64" fn reading_kind(_: Reading) -> u32 {
-    PAD_KINDS
+    PAD_KINDS | KIND_KEYBOARD
 }
 extern "win64" fn reading_sequence(this: Reading, kind: u32) -> u64 {
-    if kind & PAD_KINDS != 0 {
+    if kind & (PAD_KINDS | KIND_KEYBOARD) != 0 {
         // SAFETY: a reading we handed out.
         unsafe { (*this).data.sequence }
     } else {
@@ -730,6 +861,27 @@ extern "win64" fn reading_trap<const SLOT: usize>(_: Reading) -> usize {
     0
 }
 
+/// `GetKeyCount()`: how many keys the reading holds down.
+extern "win64" fn key_count(this: Reading) -> u32 {
+    // SAFETY: a reading we handed out.
+    let buttons = unsafe { (*this).data.buttons };
+    keys_of(buttons).len() as u32
+}
+/// `GetKeyState(index, out)`: one of the keys the reading holds down.
+extern "win64" fn key_state(this: Reading, index: u32, out: *mut KeyState) -> bool {
+    // SAFETY: a reading we handed out.
+    let buttons = unsafe { (*this).data.buttons };
+    let keys = keys_of(buttons);
+    match keys.get(index as usize) {
+        Some(key) if !out.is_null() => {
+            // SAFETY: non-null out with room for the state.
+            unsafe { out.write(*key) };
+            true
+        }
+        _ => false,
+    }
+}
+
 static READING_VTBL: Table<READING_SLOTS> = table!(READING_SLOTS, Entry;
     reading_kind,      // 3
     reading_sequence,  // 4
@@ -742,8 +894,8 @@ static READING_VTBL: Table<READING_SLOTS> = table!(READING_SLOTS, Entry;
     reading_trap::<11>, // 11 controller button state
     reading_trap::<12>, // 12 controller switch count
     reading_trap::<13>, // 13 controller switch state
-    reading_trap::<14>, // 14 key count
-    reading_trap::<15>, // 15 key state
+    key_count,          // 14 key count
+    key_state,          // 15 key state
     reading_trap::<16>, // 16 mouse state
     reading_trap::<17>, // 17 touch count
     reading_trap::<18>, // 18 touch state
@@ -842,17 +994,23 @@ fn selects_pad(kinds: u32, device: *mut c_void) -> bool {
     kinds & PAD_KINDS != 0 && (device.is_null() || device == self::device())
 }
 
+/// Whether a query for `kinds` on `device` (NULL: any) reaches the virtual keyboard.
+fn selects_keyboard(kinds: u32, device: *mut c_void) -> bool {
+    kinds & KIND_KEYBOARD != 0 && (device.is_null() || device == keyboard_device())
+}
+
 unsafe extern "win64" fn get_current_reading(
     this: This,
     kinds: u32,
     dev: *mut c_void,
     out: Out,
 ) -> HRESULT {
-    if !dev.is_null() && dev != device() {
+    if !dev.is_null() && dev != device() && dev != keyboard_device() {
         return fail(out, E_INVALIDARG);
     }
     let entry = (*this).data.poll();
-    hand(out, selects_pad(kinds, dev).then_some(entry))
+    let wanted = selects_pad(kinds, dev) || selects_keyboard(kinds, dev);
+    hand(out, wanted.then_some(entry))
 }
 /// The reading after (`forward`) or before `reference`, in the history.
 unsafe fn relative(
@@ -946,14 +1104,23 @@ unsafe extern "win64" fn register_device_callback(
     }
     let state = &(*this).data;
     let token = state.register(Kind::Device, context, callback, out);
-    let wanted = enumeration != 0 && selects_pad(kinds, dev) && status & STATUS_CONNECTED != 0;
+    let pad = enumeration != 0 && selects_pad(kinds, dev) && status & STATUS_CONNECTED != 0;
+    let keyboard =
+        enumeration != 0 && selects_keyboard(kinds, dev) && status & STATUS_CONNECTED != 0;
+    let wanted = pad || keyboard;
     eprintln!(
         "nativ64: gameinput device callback (kinds {kinds:#x}, status {status:#x}, enumeration {enumeration}): {}",
-        if wanted { "the virtual gamepad" } else { "no device" }
+        match (pad, keyboard) {
+            (true, true) => "the virtual gamepad and keyboard",
+            (true, false) => "the virtual gamepad",
+            (false, true) => "the virtual keyboard",
+            (false, false) => "no device",
+        }
     );
     if wanted {
         let regs = state.regs.clone();
-        let (context, callback, device) = (context as usize, callback as usize, device() as usize);
+        let device = if pad { device() } else { keyboard_device() } as usize;
+        let (context, callback) = (context as usize, callback as usize);
         let deliver = move || {
             let live = regs
                 .lock()
@@ -1463,20 +1630,21 @@ mod tests {
             let slot = |n| {
                 crate::xgameruntime::method::<unsafe extern "win64" fn(*mut c_void) -> u64>(r, n)
             };
-            assert_eq!(slot(3)(r), PAD_KINDS as u64);
+            assert_eq!(slot(3)(r), (PAD_KINDS | KIND_KEYBOARD) as u64);
             assert_eq!(slot(5)(r), 77);
             let seq: unsafe extern "win64" fn(*mut c_void, u32) -> u64 =
                 crate::xgameruntime::method(r, 4);
             assert_eq!(seq(r, KIND_GAMEPAD), 9);
-            assert_eq!(seq(r, 0x10), 0, "not a keyboard reading");
+            // the keyboard kind answers too now (the reading is the pad's state as keys)
+            assert_eq!(seq(r, KIND_KEYBOARD), 9);
             let dev: unsafe extern "win64" fn(*mut c_void, *mut *mut c_void) =
                 crate::xgameruntime::method(r, 6);
             let mut d = std::ptr::null_mut();
             dev(r, &mut d);
             assert_eq!(d, device());
             assert_eq!(pad_buttons(r), B);
-            // Kinds the pad does not have: no keys, no count.
-            assert_eq!(slot(14)(r), 0);
+            // B is the keyboard's Escape: one key down.
+            assert_eq!(slot(14)(r), 1);
             let state: unsafe extern "win64" fn(*mut c_void, *mut PadState) -> bool =
                 crate::xgameruntime::method(r, 22);
             assert!(!state(r, std::ptr::null_mut()));
@@ -1582,7 +1750,7 @@ mod tests {
             // connected devices: nothing is delivered.
             for (kinds, status, enumeration, ctx) in [
                 (KIND_GAMEPAD, 3, 0, 0x222),
-                (0x10, 3, 2, 0x333),
+                (KIND_KEYBOARD, 0, 2, 0x333),
                 (KIND_GAMEPAD, 0, 2, 0x444),
             ] {
                 assert_eq!(
@@ -1645,16 +1813,56 @@ mod tests {
     }
 
     #[test]
+    fn the_keyboard_device_reports_the_pads_keys() {
+        unsafe {
+            let r = new_reading(Entry {
+                sequence: 1,
+                timestamp: 2,
+                buttons: A | DOWN,
+            });
+            let count: unsafe extern "win64" fn(*mut c_void) -> u32 =
+                crate::xgameruntime::method(r, 14);
+            assert_eq!(count(r), 2);
+            let key: unsafe extern "win64" fn(*mut c_void, u32, *mut KeyState) -> bool =
+                crate::xgameruntime::method(r, 15);
+            let mut state = KeyState::default();
+            assert!(key(r, 0, &mut state));
+            assert_eq!(
+                (state.virtual_key, state.code_point),
+                (0x0D, 13),
+                "Enter for A"
+            );
+            assert!(key(r, 1, &mut state));
+            assert_eq!(state.virtual_key, 0x28, "the down arrow");
+            assert!(!key(r, 2, &mut state));
+            // the reading is a reference of its own: release it through its own vtable
+            let rel: unsafe extern "win64" fn(*mut c_void) -> u32 =
+                crate::xgameruntime::method(r, 2);
+            rel(r);
+        }
+    }
+
+    #[test]
     fn lookups_and_dispatchers() {
         unsafe {
             let (o, v) = create();
             let np = std::ptr::null_mut();
             let mut out: *mut c_void = 8 as *mut c_void;
             let r = 16 as *mut c_void;
-            // Not the pad's kind, or a device that is not ours.
+            // A keyboard reading is the pad's keys.
             assert_eq!(
-                (v.get_current_reading)(o, 0x10, np, &mut out),
-                GAMEINPUT_E_READING_NOT_FOUND
+                (v.get_current_reading)(o, KIND_KEYBOARD, np, &mut out),
+                S_OK
+            );
+            assert!(!out.is_null());
+            let rel: unsafe extern "win64" fn(*mut c_void) -> u32 =
+                crate::xgameruntime::method(out, 2);
+            rel(out);
+            out = std::ptr::null_mut();
+            // A device that is not ours.
+            assert_eq!(
+                (v.get_current_reading)(o, KIND_GAMEPAD, r, &mut out),
+                E_INVALIDARG
             );
             assert!(out.is_null());
             assert_eq!(
@@ -1662,9 +1870,9 @@ mod tests {
                 E_INVALIDARG
             );
             assert_eq!((v.get_next_reading)(o, np, 1, np, &mut out), E_INVALIDARG);
-            // NULL out pointers are tolerated.
+            // NULL out pointers are tolerated; a mouse is not ours.
             assert_eq!(
-                (v.get_current_reading)(o, 0x10, np, std::ptr::null_mut()),
+                (v.get_current_reading)(o, 0x20, np, std::ptr::null_mut()),
                 GAMEINPUT_E_READING_NOT_FOUND
             );
             assert_eq!((v.create_dispatcher)(o, &mut out), E_NOTIMPL);
