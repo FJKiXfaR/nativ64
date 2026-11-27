@@ -206,6 +206,14 @@ impl Gen {
 }
 
 impl Gen {
+    /// `a` from the lane `index` (`OpGroupNonUniformShuffle`).
+    pub(super) fn shuffle(&mut self, a: u32, index: u32) -> u32 {
+        self.m.capability(Capability::GroupNonUniformShuffle);
+        let scope = self.k(3);
+        let t = self.t_u32();
+        self.op(Op::GroupNonUniformShuffle, t, &[scope, a, index])
+    }
+
     /// A builtin input variable (`gl_SubgroupInvocationID`, ...), made once.
     fn builtin(&mut self, b: BuiltIn, ty: u32) -> u32 {
         if let Some(&v) = self.builtins.get(&(b as u32)) {
@@ -836,6 +844,87 @@ impl Tr<'_> {
         Ok(())
     }
 
+    /// The lane a DPP control fetches its source from (`lane & 15` rows and the quad and dpp8
+    /// groups), or a refusal for a pattern not translated.
+    fn dpp_lane(&mut self, dpp: &crate::shader::gfx10::Dpp) -> R<u32> {
+        use crate::shader::gfx10::DppKind;
+        let g = &mut self.g;
+        let lane = <Gen as Backend>::lane_id(g);
+        let (three, not3, seven, not7, fifteen, not15) =
+            (g.k(3), g.k(!3u32), g.k(7), g.k(!7u32), g.k(15), g.k(!15u32));
+        let pick = |g: &mut Gen, src: u32, shift: u32, mask: u32| {
+            let t = g.t_u32();
+            let sh = g.op(Op::ShiftRightLogical, t, &[src, shift]);
+            g.op(Op::BitwiseAnd, t, &[sh, mask])
+        };
+        match dpp.kind {
+            DppKind::Dpp8 | DppKind::Dpp8Fi => {
+                let mut sel = 0u32;
+                for (k, s) in dpp.sel.iter().enumerate() {
+                    sel |= u32::from(*s) << (3 * k);
+                }
+                let t = g.t_u32();
+                let p = g.op(Op::BitwiseAnd, t, &[lane, seven]);
+                let sh = g.op(Op::IMul, t, &[p, three]);
+                let all = g.k(sel);
+                let pickv = pick(g, all, sh, seven);
+                let base = g.op(Op::BitwiseAnd, t, &[lane, not7]);
+                Ok(g.op(Op::BitwiseOr, t, &[base, pickv]))
+            }
+            DppKind::Dpp16 => {
+                let ctrl = u32::from(dpp.ctrl);
+                let n = ctrl & 15;
+                let t = g.t_u32();
+                match ctrl {
+                    0..=0xff => {
+                        let p = g.op(Op::BitwiseAnd, t, &[lane, three]);
+                        let one = g.k(1);
+                        let sh = g.op(Op::ShiftLeftLogical, t, &[p, one]);
+                        let perm = g.k(ctrl);
+                        let pickv = pick(g, perm, sh, three);
+                        let base = g.op(Op::BitwiseAnd, t, &[lane, not3]);
+                        Ok(g.op(Op::BitwiseOr, t, &[base, pickv]))
+                    }
+                    0x101..=0x10f | 0x111..=0x11f => {
+                        let nn = g.k(n);
+                        let r = if ctrl < 0x110 {
+                            g.op(Op::IAdd, t, &[lane, nn])
+                        } else {
+                            g.op(Op::ISub, t, &[lane, nn])
+                        };
+                        let row = g.op(Op::BitwiseAnd, t, &[lane, not15]);
+                        let low = g.op(Op::BitwiseAnd, t, &[r, fifteen]);
+                        Ok(g.op(Op::BitwiseOr, t, &[row, low]))
+                    }
+                    0x121..=0x12f => {
+                        let nn = g.k(n);
+                        let r = g.op(Op::IAdd, t, &[lane, nn]);
+                        let row = g.op(Op::BitwiseAnd, t, &[lane, not15]);
+                        let low = g.op(Op::BitwiseAnd, t, &[r, fifteen]);
+                        Ok(g.op(Op::BitwiseOr, t, &[row, low]))
+                    }
+                    0x140 | 0x141 => {
+                        let m = g.k(if ctrl == 0x140 { 15 } else { 8 });
+                        Ok(g.op(Op::BitwiseXor, t, &[lane, m]))
+                    }
+                    0x150..=0x15f => {
+                        let row = g.op(Op::BitwiseAnd, t, &[lane, not15]);
+                        let nn = g.k(n);
+                        Ok(g.op(Op::BitwiseOr, t, &[row, nn]))
+                    }
+                    0x160..=0x16f => {
+                        let m = g.k(n);
+                        Ok(g.op(Op::BitwiseXor, t, &[lane, m]))
+                    }
+                    _ => Err(SpirvError::Unsupported(Unsupported {
+                        chunk: 7,
+                        op: "a DPP lane pattern".to_string(),
+                    })),
+                }
+            }
+        }
+    }
+
     fn code(&mut self, b: usize) -> R<()> {
         let f = self.f;
         let blk = &f.blocks[b];
@@ -876,6 +965,15 @@ impl Tr<'_> {
             } else {
                 None
             };
+            // a DPP instruction takes its first source from another lane
+            if let Some(dpp) = &i.instr.dpp {
+                let sw = self.dpp_lane(dpp)?;
+                if let Some(first) = srcs.first_mut().and_then(|v| v.first_mut()) {
+                    if let Opd::V(v) = *first {
+                        *first = Opd::V(self.g.shuffle(v, sw));
+                    }
+                }
+            }
             let ctx = Ctx {
                 inst: i,
                 srcs,

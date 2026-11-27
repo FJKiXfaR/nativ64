@@ -495,9 +495,6 @@ fn uniform_readfirstlane(f: &Func, m: &Masks, inst: &Inst) -> bool {
 /// The name under which `inst` crosses lanes, when it does.
 pub fn cross_lane_use(m: &Masks, inst: &Inst) -> Option<String> {
     let i = &inst.instr;
-    if i.dpp.is_some() {
-        return Some(format!("{} (dpp)", i.name()));
-    }
     if cross_lane_by_nature(i) {
         return Some(i.name().to_string());
     }
