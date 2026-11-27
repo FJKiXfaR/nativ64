@@ -15,11 +15,14 @@
 //! blocking enumeration, on a thread of ours for an asynchronous one. Its readings (an
 //! `IGameInputReading` of kind gamepad, with `GetGamepadState`) have no sticks or triggers; the
 //! buttons come from two sources, OR-ed:
-//! - `NATIV64_INPUT_SCRIPT`, comma-separated `<mask hex>@<seconds>[+<duration>]` presses, the
-//!   seconds counted from the first reading query, the duration 0.3 s by default
-//!   (`4@25,20@30+1`: A at 25 s for 0.3 s, X at 30 s for one second). Bits: Menu 0x1, View 0x2,
-//!   A 0x4, B 0x8, X 0x10, Y 0x20, dpad up/down/left/right 0x40/0x80/0x100/0x200. Bad entries are
-//!   logged and skipped.
+//! - `NATIV64_INPUT_SCRIPT`, comma-separated entries, the times counted from the first reading
+//!   query and the hold 0.3 s by default. A button press is `<mask hex>@<seconds>[+<duration>]`
+//!   (`4@25,20@30+1`: A at 25 s for 0.3 s, X at 30 s for one second); bits: Menu 0x1, View 0x2,
+//!   A 0x4, B 0x8, X 0x10, Y 0x20, dpad up/down/left/right 0x40/0x80/0x100/0x200, LB/RB 0x400/
+//!   0x800, LS/RS 0x1000/0x2000. A stick or trigger is `<axis>=<value>@<seconds>[+<duration>]`,
+//!   axis `lx`, `ly`, `rx`, `ry` (sticks, -1..1) or `lt`, `rt` (triggers, 0..1), e.g.
+//!   `ry=-1@40+2` scrolls the focused panel down for two seconds. Bad entries are logged and
+//!   skipped.
 //! - a Linux joystick (`NATIV64_GAMEPAD`, default `/dev/input/js0` when started by the loader), see
 //!   [`start_joystick`], so a real controller presses the virtual gamepad's buttons;
 //! - [`set_keyboard_buttons`], for a window backend that turns key events into buttons (the
@@ -135,10 +138,32 @@ impl Physical {
 }
 
 static PHYSICAL: Mutex<Physical> = Mutex::new(Physical::REST);
+/// The axes `NATIV64_INPUT_SCRIPT` holds right now (merged over the joystick's).
+static SCRIPT_AXES: Mutex<Physical> = Mutex::new(Physical::REST);
 
-/// The host joystick state as last read.
+/// The host joystick state as last read, with the scripted axes over it.
 pub fn physical() -> Physical {
-    *PHYSICAL.lock().unwrap_or_else(|e| e.into_inner())
+    let mut p = *PHYSICAL.lock().unwrap_or_else(|e| e.into_inner());
+    let s = *SCRIPT_AXES.lock().unwrap_or_else(|e| e.into_inner());
+    if s.left_x != 0.0 {
+        p.left_x = s.left_x;
+    }
+    if s.left_y != 0.0 {
+        p.left_y = s.left_y;
+    }
+    if s.right_x != 0.0 {
+        p.right_x = s.right_x;
+    }
+    if s.right_y != 0.0 {
+        p.right_y = s.right_y;
+    }
+    if s.left_trigger != 0.0 {
+        p.left_trigger = s.left_trigger;
+    }
+    if s.right_trigger != 0.0 {
+        p.right_trigger = s.right_trigger;
+    }
+    p
 }
 
 fn update_physical(f: impl FnOnce(&mut Physical)) {
@@ -150,22 +175,56 @@ pub fn reset_physical() {
     update_physical(|p| *p = Physical::REST);
 }
 
-/// Scripted presses: (button mask, start seconds, duration seconds).
+/// Scripted input: button presses `(mask, start, hold)` and axis values `(axis, value, start,
+/// hold)`, the axes numbered like [`Script::AXES`].
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct Script(Vec<(u32, f64, f64)>);
+pub struct Script {
+    presses: Vec<(u32, f64, f64)>,
+    axes: Vec<(u8, f32, f64, f64)>,
+}
 
 impl Script {
     /// Parses `<mask hex>@<seconds>[+<duration>]` entries separated by commas; bad entries are
     /// logged and skipped.
     pub fn parse(text: &str) -> Script {
-        let mut presses = Vec::new();
+        let mut script = Script::default();
         for entry in text.split(',').map(str::trim).filter(|e| !e.is_empty()) {
-            match Script::entry(entry) {
-                Some(press) => presses.push(press),
-                None => eprintln!("nativ64: NATIV64_INPUT_SCRIPT: bad entry {entry:?} skipped"),
+            if entry.contains('=') {
+                match Script::axis_entry(entry) {
+                    Some(axis) => script.axes.push(axis),
+                    None => eprintln!("nativ64: NATIV64_INPUT_SCRIPT: bad entry {entry:?} skipped"),
+                }
+            } else {
+                match Script::entry(entry) {
+                    Some(press) => script.presses.push(press),
+                    None => eprintln!("nativ64: NATIV64_INPUT_SCRIPT: bad entry {entry:?} skipped"),
+                }
             }
         }
-        Script(presses)
+        script
+    }
+
+    /// The axis names of [`Script::axes_at`].
+    pub const AXES: [&'static str; 6] = ["lx", "ly", "rx", "ry", "lt", "rt"];
+
+    /// `<axis>=<value>@<seconds>[+<duration>]`.
+    fn axis_entry(entry: &str) -> Option<(u8, f32, f64, f64)> {
+        let (name, rest) = entry.split_once('=')?;
+        let axis = Script::AXES.iter().position(|a| *a == name.trim())? as u8;
+        let (value, when) = rest.split_once('@')?;
+        let value: f32 = value.trim().parse().ok()?;
+        let (start, hold) = match when.split_once('+') {
+            Some((start, hold)) => (start, hold.parse::<f64>().ok()?),
+            None => (when, 0.3),
+        };
+        let start: f64 = start.parse().ok()?;
+        (start >= 0.0
+            && hold > 0.0
+            && start.is_finite()
+            && hold.is_finite()
+            && value.is_finite()
+            && (-1.0..=1.0).contains(&value))
+        .then_some((axis, value, start, hold))
     }
 
     fn entry(entry: &str) -> Option<(u32, f64, f64)> {
@@ -185,10 +244,29 @@ impl Script {
 
     /// The buttons held `seconds` after the first reading query.
     pub fn buttons_at(&self, seconds: f64) -> u32 {
-        self.0
+        self.presses
             .iter()
             .filter(|(_, start, hold)| seconds >= *start && seconds < start + hold)
             .fold(0, |all, (mask, _, _)| all | mask)
+    }
+
+    /// The axes held `seconds` after the first reading query (rest where none is scripted).
+    pub fn axes_at(&self, seconds: f64) -> Physical {
+        let mut p = Physical::REST;
+        for (axis, value, start, hold) in &self.axes {
+            if seconds < *start || seconds >= start + hold {
+                continue;
+            }
+            match axis {
+                0 => p.left_x = *value,
+                1 => p.left_y = *value,
+                2 => p.right_x = *value,
+                3 => p.right_y = *value,
+                4 => p.left_trigger = *value,
+                _ => p.right_trigger = *value,
+            }
+        }
+        p
     }
 }
 
@@ -257,7 +335,9 @@ impl State {
     }
 
     fn poll_at(&self, elapsed: Duration, timestamp: u64) -> Entry {
-        let buttons = self.buttons_at(elapsed.as_secs_f64());
+        let seconds = elapsed.as_secs_f64();
+        let buttons = self.buttons_at(seconds);
+        *SCRIPT_AXES.lock().unwrap_or_else(|e| e.into_inner()) = self.script.axes_at(seconds);
         let mut history = self.history.lock().unwrap_or_else(|e| e.into_inner());
         match history.last() {
             Some(last) if last.buttons == buttons => *last,
@@ -1256,7 +1336,10 @@ mod tests {
     #[test]
     fn script_parsing_and_timing() {
         let s = Script::parse("4@25,0x20@30+1, 3@1.5+0.5 ,bad,4@,@3,zz@1,4@-1,4@1+0");
-        assert_eq!(s.0, vec![(4, 25.0, 0.3), (0x20, 30.0, 1.0), (3, 1.5, 0.5)]);
+        assert_eq!(
+            s.presses,
+            vec![(4, 25.0, 0.3), (0x20, 30.0, 1.0), (3, 1.5, 0.5)]
+        );
         assert_eq!(s.buttons_at(0.0), 0);
         assert_eq!(s.buttons_at(1.5), 3);
         assert_eq!(s.buttons_at(1.99), 3);
@@ -1266,6 +1349,31 @@ mod tests {
         assert_eq!(s.buttons_at(30.9), Y);
         // Overlapping presses are OR-ed.
         assert_eq!(Script::parse("4@1+2,8@2").buttons_at(2.1), A | B);
+    }
+
+    #[test]
+    fn scripted_axes_are_parsed_and_held() {
+        let s = Script::parse("ry=-1@40+2,rx=0.5@1,lt=1@5+0.5,bad=1@1,bogus,ry=2@1");
+        assert_eq!(s.axes_at(40.5).right_y, -1.0);
+        assert_eq!(s.axes_at(42.0).right_y, 0.0);
+        assert_eq!(s.axes_at(1.1).right_x, 0.5);
+        assert_eq!(s.axes_at(5.2).left_trigger, 1.0);
+        // a value outside -1..=1 is a bad entry and is skipped
+        assert!(s
+            .axes
+            .iter()
+            .all(|(_, value, _, _)| (-1.0..=1.0).contains(value)));
+    }
+
+    #[test]
+    fn a_scripted_axis_shows_through_the_joystick_state() {
+        *SCRIPT_AXES.lock().unwrap_or_else(|e| e.into_inner()) = Physical {
+            right_y: -1.0,
+            ..Physical::REST
+        };
+        assert_eq!(physical().right_y, -1.0);
+        *SCRIPT_AXES.lock().unwrap_or_else(|e| e.into_inner()) = Physical::REST;
+        assert_eq!(physical().right_y, 0.0);
     }
 
     #[test]

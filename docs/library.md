@@ -65,7 +65,9 @@ logged.
 `ws2_32`, wired in `lookup_ordinal`. It exposes an `IGameInput` with one virtual gamepad (always
 connected; device callbacks enumerate it, readings answer `GetGamepadState`). Buttons come from
 `NATIV64_INPUT_SCRIPT` (`<mask hex>@<seconds>[+<duration>]`, comma separated, seconds from the
-first reading query, default hold 0.3 s: `4@25,4@35` presses A twice) and from
+first reading query, default hold 0.3 s: `4@25,4@35` presses A twice; sticks and triggers are
+`<axis>=<value>@<seconds>[+<duration>]` with the axis `lx`, `ly`, `rx`, `ry` (-1..1) or `lt`,
+`rt` (0..1), e.g. `ry=-1@40+2` scrolls a focused panel down) and from
 `gameinput::set_keyboard_buttons`, which the Wayland window backend calls from its keyboard
 events (OR-ed with the script). Keys are raw evdev codes, i.e. physical positions of a QWERTY
 layout (the keymap is ignored); key repeat is ignored and focus loss releases everything.
