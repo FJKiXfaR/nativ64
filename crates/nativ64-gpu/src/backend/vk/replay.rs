@@ -242,6 +242,8 @@ pub struct VkBackend<'g> {
     /// Set when a submission failed with a lost device: the device does not come back, so
     /// replaying is pointless (and every later Vulkan call would fail the same way).
     pub(super) device_lost: bool,
+    /// The `GpuMemory` import generation the import table was last filled from.
+    imports_gen: u64,
     /// Tests: the most device memory the images may hold (a failing allocation beyond it).
     #[cfg(test)]
     pub(super) budget: Option<u64>,
@@ -439,6 +441,7 @@ impl<'g> VkBackend<'g> {
             dump: None,
             frames: 0,
             device_lost: false,
+            imports_gen: 0,
             #[cfg(test)]
             budget: None,
             #[cfg(test)]
@@ -549,6 +552,16 @@ impl<'g> VkBackend<'g> {
                 self.end_rendering(d, cb);
             }
             super::profile::stop(super::profile::Phase::Replay, replay_started);
+            // The flat/global addresses the recorded shaders translate go through the import
+            // table: fill it after recording, before the submit runs the commands.
+            let generation = self.draw.mem.import_generation();
+            if generation != self.imports_gen {
+                self.imports_gen = generation;
+                let ranges = self.draw.mem.import_ranges();
+                if let Some(Some(bl)) = self.draw.bindless.as_mut() {
+                    bl.update_imports(&ranges);
+                }
+            }
         });
         if let Err(e) = r {
             let lost = format!("{e}").contains("device has been lost");

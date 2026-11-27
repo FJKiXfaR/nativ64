@@ -176,7 +176,12 @@ pub struct Bindless<'g> {
     /// Descriptors per binding: registry indices from here on cannot be written.
     pub count: u32,
     statics: HashMap<Vec<SamplerDesc>, StaticSet>,
+    /// The import ranges a flat/global address is translated through (set 0, binding 3).
+    imports: HostBuf<'g>,
 }
+
+/// Words of the import table: one count then `(start, end, device address)` per import.
+const IMPORTS_CAPACITY: usize = (4 << 20) / 24;
 
 impl<'g> Bindless<'g> {
     pub fn new(gpu: &'g Gpu) -> Result<Bindless<'g>> {
@@ -211,7 +216,7 @@ impl<'g> Bindless<'g> {
                 vk::DescriptorType::STORAGE_IMAGE,
                 vk::DescriptorType::SAMPLER,
             ];
-            let bindings: Vec<_> = kinds
+            let mut bindings: Vec<_> = kinds
                 .iter()
                 .enumerate()
                 .map(|(i, &t)| {
@@ -222,8 +227,23 @@ impl<'g> Bindless<'g> {
                         .stage_flags(stages)
                 })
                 .collect();
-            let flags = [vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
-                | vk::DescriptorBindingFlags::PARTIALLY_BOUND; 3];
+            // binding 3: the import ranges a flat/global address is translated through
+            bindings.push(
+                vk::DescriptorSetLayoutBinding::default()
+                    .binding(3)
+                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                    .descriptor_count(1)
+                    .stage_flags(stages),
+            );
+            let flags = [
+                vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
+                    | vk::DescriptorBindingFlags::PARTIALLY_BOUND,
+                vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
+                    | vk::DescriptorBindingFlags::PARTIALLY_BOUND,
+                vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
+                    | vk::DescriptorBindingFlags::PARTIALLY_BOUND,
+                vk::DescriptorBindingFlags::empty(),
+            ];
             let mut bf =
                 vk::DescriptorSetLayoutBindingFlagsCreateInfo::default().binding_flags(&flags);
             let set_layout = vk_try(
@@ -246,11 +266,17 @@ impl<'g> Bindless<'g> {
                 layout: vk::PipelineLayout::null(),
                 count: n,
                 statics: HashMap::new(),
+                imports: HostBuf::new(gpu, 8 + IMPORTS_CAPACITY * 24)?,
             };
-            let sizes: Vec<_> = kinds
+            let mut sizes: Vec<_> = kinds
                 .iter()
                 .map(|&t| vk::DescriptorPoolSize::default().ty(t).descriptor_count(n))
                 .collect();
+            sizes.push(
+                vk::DescriptorPoolSize::default()
+                    .ty(vk::DescriptorType::STORAGE_BUFFER)
+                    .descriptor_count(1),
+            );
             this.pool = vk_try(
                 "vkCreateDescriptorPool",
                 d.create_descriptor_pool(
@@ -270,6 +296,16 @@ impl<'g> Bindless<'g> {
                         .set_layouts(&layouts),
                 ),
             )?[0];
+            let info = [vk::DescriptorBufferInfo::default()
+                .buffer(this.imports.buffer)
+                .offset(0)
+                .range(vk::WHOLE_SIZE)];
+            let write = [vk::WriteDescriptorSet::default()
+                .dst_set(this.set)
+                .dst_binding(3)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .buffer_info(&info)];
+            d.update_descriptor_sets(&write, &[]);
             let push = [vk::PushConstantRange::default()
                 .stage_flags(PUSH_STAGES)
                 .offset(0)
@@ -285,6 +321,19 @@ impl<'g> Bindless<'g> {
             )?;
             Ok(this)
         }
+    }
+
+    /// Fills the import table a flat/global address is translated through (set 0, binding 3).
+    pub fn update_imports(&mut self, ranges: &[(u64, u64, u64)]) {
+        let n = ranges.len().min(IMPORTS_CAPACITY);
+        let mut bytes = Vec::with_capacity(8 + n * 24);
+        bytes.extend((n as u64).to_le_bytes());
+        for &(start, end, dev) in &ranges[..n] {
+            bytes.extend(start.to_le_bytes());
+            bytes.extend(end.to_le_bytes());
+            bytes.extend(dev.to_le_bytes());
+        }
+        self.imports.write(0, &bytes);
     }
 
     /// The pipeline layout for `samplers` (the pair's static samplers, set 1 binding k being

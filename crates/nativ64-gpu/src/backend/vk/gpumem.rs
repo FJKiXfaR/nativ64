@@ -86,6 +86,8 @@ pub struct GpuMemory<'g> {
     changed: Vec<(usize, usize)>,
     /// The `(start, end)` title ranges of the imports the last `sync` dropped.
     dropped: Vec<(usize, usize)>,
+    /// How many imports have been made (changes when the import table must be refilled).
+    imports_made: u64,
 }
 
 impl<'g> GpuMemory<'g> {
@@ -99,6 +101,7 @@ impl<'g> GpuMemory<'g> {
             epoch: 0,
             changed: Vec::new(),
             dropped: Vec::new(),
+            imports_made: 0,
         }
     }
 
@@ -256,6 +259,13 @@ impl<'g> GpuMemory<'g> {
             buffer,
             used: self.epoch,
         };
+        if std::env::var_os("NATIV64_LOG_IMPORT_ADDR").is_some() {
+            log_once(format!(
+                "import: title {start:#x}..{run_end:#x} -> device {:#x} (offset {:#x})",
+                import.buffer.address,
+                import.buffer.address - start as u64
+            ));
+        }
         let m = Self::mapped(start, &import, at);
         for s in old {
             if let Some(i) = self.imports.remove(&s) {
@@ -263,6 +273,7 @@ impl<'g> GpuMemory<'g> {
             }
         }
         self.imports.insert(start, import);
+        self.imports_made += 1;
         Some(m)
     }
 
@@ -297,6 +308,20 @@ impl<'g> GpuMemory<'g> {
             start = s;
         }
         Some((start, end))
+    }
+
+    /// The title ranges imported so far, as `(start, end, device address)`, in start order:
+    /// what a flat/global address needs to be translated by the shader.
+    pub fn import_ranges(&self) -> Vec<(u64, u64, u64)> {
+        self.imports
+            .iter()
+            .map(|(&start, i)| (start as u64, i.end as u64, i.buffer.address))
+            .collect()
+    }
+
+    /// A counter that changes whenever an import is made.
+    pub fn import_generation(&self) -> u64 {
+        self.imports_made
     }
 
     fn mapped(start: usize, i: &Import<'_>, at: usize) -> Mapped {

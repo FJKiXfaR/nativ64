@@ -531,6 +531,8 @@ pub(in crate::shader::spirv) struct Res {
     lds: Option<u32>,
     /// Static samplers: set 1, binding k = `samplers[k]`.
     pub(super) samplers: Vec<SamplerDesc>,
+    /// The import table variable and its struct type (set 0, binding 3).
+    imports: Option<(u32, u32)>,
     static_vars: Vec<u32>,
     /// A `Function` variable the guarded loads write their result to.
     tmp: Option<u32>,
@@ -559,6 +561,7 @@ impl Res {
             images: BTreeMap::new(),
             lds: None,
             samplers: Vec::new(),
+            imports: None,
             static_vars: Vec::new(),
             tmp: None,
         }
@@ -843,6 +846,7 @@ impl<'a> Tr<'a> {
             Enc::Mimg if c.inst.instr.name().starts_with("image_store") => self.image_store(c),
             Enc::Mimg => self.image_sample(c),
             Enc::Ds => self.ds(c),
+            Enc::Flat => self.flat(c),
             _ => Ok(None),
         }
     }
@@ -2132,6 +2136,152 @@ impl<'a> Tr<'a> {
 
     /// `ds_read*` / `ds_write*` (b32 to b128, the `2` and `2st64` pairs): byte address plus
     /// offset, divided by 4; a dword past the LDS reads 0 and its write is dropped.
+    /// The import table (set 0, binding 3): a `u64` array of a count then
+    /// `(start, end, device address)` per imported title range.
+    fn imports_table(&mut self) -> (u32, u32) {
+        if let Some(t) = self.res().imports {
+            return t;
+        }
+        let t64 = self.t64();
+        // a runtime array of u64, strided by 8
+        let rarr = self.g.m.global(Op::TypeRuntimeArray, None, &[t64]);
+        self.g.m.decorate(rarr, Decoration::ArrayStride, &[8]);
+        let st = self.g.m.global(Op::TypeStruct, None, &[rarr]);
+        self.g.m.decorate(st, Decoration::Block, &[]);
+        self.g.m.member_decorate(st, 0, Decoration::Offset, &[0]);
+        let var = self.global(StorageClass::StorageBuffer, st);
+        self.g
+            .m
+            .decorate(var, Decoration::DescriptorSet, &[SET_BINDLESS]);
+        self.g.m.decorate(var, Decoration::Binding, &[3]);
+        self.g.m.name(var, "imports");
+        self.res().imports = Some((var, st));
+        (var, st)
+    }
+
+    /// A word of the import table.
+    fn import_word(&mut self, at: u32) -> u32 {
+        let t64 = self.t64();
+        let p = self.g.t_ptr(StorageClass::StorageBuffer, t64);
+        let zero = self.g.k(0);
+        let var = self.imports_table().0;
+        let ptr = self.g.op(Op::AccessChain, p, &[var, zero, at]);
+        self.g.load(t64, ptr)
+    }
+
+    /// Translates a title address through the import table: `(device address, range end)` and
+    /// whether it was found.
+    fn va_to_device(&mut self, va: u32) -> (u32, u32, u32) {
+        let (var, _st) = self.imports_table();
+        let _ = var;
+        let tu = self.g.t_u32();
+        let t64 = self.t64();
+        let tb = self.g.t_bool();
+        let (zero, one, three) = (self.g.k(0), self.g.k(1), self.g.k(3));
+        // the count is word 0
+        let count = self.import_word(zero);
+        let count = self.g.op(Op::UConvert, tu, &[count]);
+        // unrolled binary search: the first entry whose start is above `va`
+        let mut lo = zero;
+        let mut hi = self.g.op(Op::IAdd, tu, &[count, zero]);
+        for _ in 0..14 {
+            let sum = self.g.op(Op::IAdd, tu, &[lo, hi]);
+            let mid = self.g.op(Op::ShiftRightLogical, tu, &[sum, one]);
+            let word = self.g.op(Op::IMul, tu, &[mid, three]);
+            let word = self.g.op(Op::IAdd, tu, &[word, one]);
+            let start = self.import_word(word);
+            let le = self.g.op(Op::ULessThanEqual, tb, &[start, va]);
+            let next = self.g.op(Op::IAdd, tu, &[mid, one]);
+            lo = self.g.select(le, next, lo);
+            hi = self.g.select(le, hi, mid);
+        }
+        // the candidate is the entry before `lo`
+        let has = self.g.op(Op::UGreaterThan, tb, &[lo, zero]);
+        let idx = self.g.op(Op::ISub, tu, &[lo, one]);
+        let safe = self.g.select(has, idx, zero);
+        let word = self.g.op(Op::IMul, tu, &[safe, three]);
+        let word = self.g.op(Op::IAdd, tu, &[word, one]);
+        let start = self.import_word(word);
+        let next = self.g.op(Op::IAdd, tu, &[word, one]);
+        let end = self.import_word(next);
+        let next = self.g.op(Op::IAdd, tu, &[word, three]);
+        let dev = self.import_word(next);
+        let lt = self.g.op(Op::ULessThan, tb, &[va, end]);
+        let ok = self.g.op(Op::LogicalAnd, tb, &[has, lt]);
+        let delta = self.g.op(Op::ISub, t64, &[va, start]);
+        let addr = self.g.op(Op::IAdd, t64, &[dev, delta]);
+        (addr, end, ok)
+    }
+
+    /// `global_load_dword*` / `global_store_dword*` / the `flat_` forms: the address is a
+    /// title address, translated through the import table to a device address.
+    fn flat(&mut self, c: &Ctx<Gen>) -> R<Option<Vec<Opd<Gen>>>> {
+        let i = &c.inst.instr;
+        let m = i.mem;
+        let name = i.name();
+        let base = name
+            .strip_prefix("global_")
+            .or_else(|| name.strip_prefix("flat_"));
+        let Some(rest) = base else {
+            return Ok(None);
+        };
+        if i.mem.seg == 1 {
+            return refuse(&format!("{name} on scratch"));
+        }
+        let (load, n) = match rest {
+            "load_dword" => (true, 1u32),
+            "load_dwordx2" => (true, 2),
+            "load_dwordx3" => (true, 3),
+            "load_dwordx4" => (true, 4),
+            "store_dword" => (false, 1),
+            "store_dwordx2" => (false, 2),
+            "store_dwordx3" => (false, 3),
+            "store_dwordx4" => (false, 4),
+            _ => return refuse(name),
+        };
+        if c.srcs.is_empty() || c.srcs[0].len() < 2 {
+            return bad("a flat access without its address");
+        }
+        let t64 = self.t64();
+        let (lo, hi) = (self.bits_of(c.srcs[0][0]), self.bits_of(c.srcs[0][1]));
+        let (lo, hi) = (self.zext(lo), self.zext(hi));
+        let thirty_two = self.g.k(32);
+        let hi = self.g.op(Op::ShiftLeftLogical, t64, &[hi, thirty_two]);
+        let addr = self.g.op(Op::BitwiseOr, t64, &[lo, hi]);
+        let off = self.k64(u64::from(m.offset as u32));
+        let addr = self.add64(addr, off);
+        let (dev, end, ok) = self.va_to_device(addr);
+        let tb = self.g.t_bool();
+        let mut out = Vec::new();
+        let data = if load { 0 } else { 1 };
+        for k in 0..n {
+            let a = self.add_k64(dev, 4 * u64::from(k));
+            let kk = self.k64(4 * u64::from(k));
+            let at = self.add64(addr, kk);
+            let inside = self.g.op(Op::ULessThanEqual, tb, &[at, end]);
+            let ok = self.g.op(Op::LogicalAnd, tb, &[ok, inside]);
+            let ok = self.and(ok, c.active);
+            if load {
+                let v = self.guarded_load(a, ok)?;
+                out.push(self.lane_result(c, k as usize, v));
+            } else {
+                let Some(&d) = c.srcs.get(data).and_then(|s| s.get(k as usize)) else {
+                    return bad("a flat store with too few data dwords");
+                };
+                let d = self.bits_of(d);
+                self.guarded(Some(ok), |t| {
+                    t.bda_store_u32(a, d);
+                    Ok(())
+                })?;
+            }
+        }
+        if load {
+            Ok(Some(out))
+        } else {
+            Ok(Some(Vec::new()))
+        }
+    }
+
     /// `ds_add_u32`, `ds_max_u32`, ...: an atomic on a workgroup-memory dword.
     fn ds_atomic(&mut self, c: &Ctx<Gen>, rest: &str) -> R<Option<Vec<Opd<Gen>>>> {
         let i = &c.inst.instr;
