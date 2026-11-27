@@ -591,6 +591,7 @@ impl<'g> VkBackend<'g> {
             ));
             if lost {
                 self.device_lost = true;
+                gpu.log_device_fault();
             }
         }
         self.draw.end();

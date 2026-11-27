@@ -13,6 +13,13 @@ use super::{instance, log_once, vk_try, Result, VkError};
 use ash::{ext::external_memory_host, ext::memory_budget, khr, vk, Device, Entry, Instance};
 use std::sync::Mutex;
 
+/// `vkGetDeviceFaultInfoEXT` (VK_EXT_device_fault): the fault a lost device reports.
+pub(super) type DeviceFaultFn = unsafe extern "system" fn(
+    vk::Device,
+    *mut vk::DeviceFaultCountsEXT<'_>,
+    *mut vk::DeviceFaultInfoEXT<'_>,
+) -> vk::Result;
+
 pub struct Gpu {
     pub(super) device: Device,
     pub(super) ext_host: external_memory_host::Device,
@@ -34,6 +41,8 @@ pub struct Gpu {
     memory_budget: bool,
     /// Command pool, buffer and fence `submit_once` reuses (created on first use).
     submit: Mutex<Option<SubmitState>>,
+    /// `vkGetDeviceFaultInfoEXT` when the device has `VK_EXT_device_fault`.
+    device_fault: Option<DeviceFaultFn>,
 }
 
 struct SubmitState {
@@ -174,6 +183,52 @@ fn type_rank(t: vk::PhysicalDeviceType) -> u32 {
 }
 
 impl Gpu {
+    /// The fault a lost device reports (`VK_EXT_device_fault`), logged.
+    pub fn log_device_fault(&self) {
+        let Some(f) = self.device_fault else {
+            return;
+        };
+        let mut counts = vk::DeviceFaultCountsEXT::default();
+        // SAFETY: the device exists; a lost device answers this query.
+        let r = unsafe { f(self.device.handle(), &mut counts, std::ptr::null_mut()) };
+        if r != vk::Result::SUCCESS && r != vk::Result::INCOMPLETE {
+            log_once(format!("vkGetDeviceFaultInfoEXT: {r:?}"));
+            return;
+        }
+        let naddr = counts.address_info_count as usize;
+        let nvendor = counts.vendor_info_count as usize;
+        let mut addrs = vec![vk::DeviceFaultAddressInfoEXT::default(); naddr];
+        let mut vendors = vec![vk::DeviceFaultVendorInfoEXT::default(); nvendor];
+        // the ash builders take a slice of one: build the struct by hand
+        let mut info = vk::DeviceFaultInfoEXT {
+            s_type: vk::StructureType::DEVICE_FAULT_INFO_EXT,
+            p_next: std::ptr::null_mut(),
+            description: [0; vk::MAX_DESCRIPTION_SIZE],
+            p_address_infos: addrs.as_mut_ptr(),
+            p_vendor_infos: vendors.as_mut_ptr(),
+            p_vendor_binary_data: std::ptr::null_mut(),
+            _marker: std::marker::PhantomData,
+        };
+        // SAFETY: the arrays outlive the call.
+        let r = unsafe { f(self.device.handle(), &mut counts, &mut info) };
+        if r != vk::Result::SUCCESS {
+            log_once(format!("vkGetDeviceFaultInfoEXT (filled): {r:?}"));
+            return;
+        }
+        log_once(format!(
+            "device fault: {}",
+            info.description_as_c_str()
+                .map(|c| c.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        ));
+        for a in &addrs {
+            log_once(format!(
+                "device fault address: {:#x} (reported {:#x}, type {:?})",
+                a.reported_address, a.address_precision, a.address_type
+            ));
+        }
+    }
+
     /// Open the best device, honouring the `NATIV64_GPU` environment variable.
     pub fn open() -> Result<Gpu> {
         Gpu::open_with(std::env::var("NATIV64_GPU").ok().as_deref())
@@ -185,7 +240,7 @@ impl Gpu {
         let entry = unsafe { Entry::load() }.map_err(|e| VkError::Load(e.to_string()))?;
         let (instance, wsi_instance) = instance::create(&entry)?;
         match Self::pick_and_create(&instance, over) {
-            Ok((device, queue_family, phys, name, wsi_device)) => {
+            Ok((device, queue_family, phys, name, wsi_device, device_fault)) => {
                 // SAFETY: valid handles of this instance.
                 let (mem_props, import_align, ext_host, queue) = unsafe {
                     let mut hp = vk::PhysicalDeviceExternalMemoryHostPropertiesEXT::default();
@@ -219,6 +274,7 @@ impl Gpu {
                     .any(|e| e.extension_name_as_c_str() == Ok(memory_budget::NAME));
                 Ok(Gpu {
                     caps,
+                    device_fault,
                     memory_budget,
                     device,
                     ext_host,
@@ -246,7 +302,14 @@ impl Gpu {
     fn pick_and_create(
         instance: &Instance,
         over: Option<&str>,
-    ) -> Result<(Device, u32, vk::PhysicalDevice, String, bool)> {
+    ) -> Result<(
+        Device,
+        u32,
+        vk::PhysicalDevice,
+        String,
+        bool,
+        Option<DeviceFaultFn>,
+    )> {
         // SAFETY: plain enumeration.
         let devs = vk_try("vkEnumeratePhysicalDevices", unsafe {
             instance.enumerate_physical_devices()
@@ -280,8 +343,8 @@ impl Gpu {
         for (_, d, name, _) in cands {
             match check(instance, d) {
                 Ok(family) => {
-                    let (device, wsi) = Self::create_device(instance, d, family)?;
-                    return Ok((device, family, d, name, wsi));
+                    let (device, wsi, fault) = Self::create_device(instance, d, family)?;
+                    return Ok((device, family, d, name, wsi, fault));
                 }
                 Err(why) => {
                     log_once(format!("skipping {name}: {why}"));
@@ -301,7 +364,7 @@ impl Gpu {
         instance: &Instance,
         phys: vk::PhysicalDevice,
         family: u32,
-    ) -> Result<(Device, bool)> {
+    ) -> Result<(Device, bool, Option<DeviceFaultFn>)> {
         let prio = [1.0f32];
         let qi = [vk::DeviceQueueCreateInfo::default()
             .queue_family_index(family)
@@ -362,18 +425,41 @@ impl Gpu {
         {
             exts.push(memory_budget::NAME.as_ptr());
         }
-        let info = vk::DeviceCreateInfo::default()
+        // a lost device then says what faulted (VK_EXT_device_fault)
+        let faults = have
+            .iter()
+            .any(|e| e.extension_name_as_c_str() == Ok(vk::EXT_DEVICE_FAULT_NAME));
+        if faults {
+            exts.push(vk::EXT_DEVICE_FAULT_NAME.as_ptr());
+        }
+        let mut fault_features = vk::PhysicalDeviceFaultFeaturesEXT::default().device_fault(true);
+        let mut info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&qi)
             .enabled_extension_names(&exts)
             .push_next(&mut f2)
             .push_next(&mut f11)
             .push_next(&mut f12)
             .push_next(&mut f13);
+        if faults {
+            info = info.push_next(&mut fault_features);
+        }
         // SAFETY: `info` and its pointees outlive the call.
         let device = vk_try("vkCreateDevice", unsafe {
             instance.create_device(phys, &info, None)
         })?;
-        Ok((device, swapchain))
+        let fault_fn = if faults {
+            // SAFETY: the device exists; the name is the extension's one function.
+            let f = unsafe {
+                instance.get_device_proc_addr(device.handle(), vk::EXT_DEVICE_FAULT_NAME.as_ptr())
+            };
+            // SAFETY: the extension's function has this signature.
+            f.map(|f| unsafe {
+                std::mem::transmute::<unsafe extern "system" fn(), DeviceFaultFn>(f)
+            })
+        } else {
+            None
+        };
+        Ok((device, swapchain, fault_fn))
     }
 
     /// Name of the chosen physical device.
