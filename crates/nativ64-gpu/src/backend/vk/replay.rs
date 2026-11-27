@@ -614,11 +614,7 @@ impl<'g> VkBackend<'g> {
         desc: ResourceDesc,
         address: u64,
     ) -> Option<TitleImage> {
-        if desc.dimension == TEXTURE1D {
-            log_once("no image for a 1D texture".into());
-            return None;
-        }
-        if desc.dimension != TEXTURE2D && desc.dimension != TEXTURE3D {
+        if !matches!(desc.dimension, TEXTURE1D | TEXTURE2D | TEXTURE3D) {
             log_once(format!(
                 "no image for resource dimension {}",
                 desc.dimension
