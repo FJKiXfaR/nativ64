@@ -1365,6 +1365,52 @@ it says otherwise.
      features (all three drivers here have them). Real validation: the windowed scripted run,
      frames 565-700 dumped with targets: the 3D table written (not zero), then the intro
      against what the user saw.
+   * **As built (chunk 10c, part 2)**: `backend/vk/compute.rs` (new), `pipeline.rs`,
+     `rootblock.rs`, `replay.rs`, `textures.rs`, `residency.rs`, `bindless.rs`, `device.rs`.
+     * `Gpu::open` refuses a device without `shaderStorageImageReadWithoutFormat` or
+       `shaderStorageImageWriteWithoutFormat` (the refusal names the missing one); both are
+       enabled. The push constant range is VS | PS | CS.
+     * Compute pipelines: `build` falls to `build_compute` for a pipeline with no graphics
+       state: its CS through `io::translate_stage(&cs, &[], None)` (the translator's error is the
+       `Failed` reason, so until part 1 covers a program its dispatches are skipped as `pipeline`),
+       the layout of its static samplers, `vkCreateComputePipelines`; cached by serial like the
+       graphics ones. `HeapReads` now includes the UAV rows (kind 3) of the CS.
+     * Root arguments: `RootArgs::compute()` folds the `compute: true` commands (a new compute
+       root signature drops only them); `ListState.croot` beside `root`. `Dispatch` fills the
+       block from the CS's layout rows exactly as a draw does (an unset table or a root address
+       that is not GPU memory skips it), writes it in the arena (sized for draws plus
+       dispatches), binds set 0 / set 1, pushes the address, `vkCmdDispatch`, then the global
+       barrier. A group count of 0 does nothing; above 65535 (the Vulkan minimum limit) skips.
+     * Skips are counted in `ReplayStats::dispatch_skips` (`DispatchSkips`: `pipeline` = none
+       bound, graphics pipeline, translator or Vulkan refusal; `memory` = root block address;
+       `state` = no bindless set, no arena room, too many groups), `dispatched` counts the
+       recorded ones, `dispatches` still counts every `Dispatch*` seen. Mesh dispatches stay
+       counted only. Each skip is logged once as `dispatch skipped: ...`.
+     * UAV views: `View::Unordered` of a 2D or 3D texture is an `Entry::Storage`. Its view goes
+       to binding 1 at the registry index (`storage_view`: type from the description, 2D, 2D array
+       or 3D, one mip; the format of the view, an sRGB one taking its UNORM twin; refused with a
+       log when the format has no storage support or has no Vulkan mapping, which covers the
+       integer classes since `format::lookup` only maps float, unorm and snorm); binding 0 holds
+       the sampled hole there. Every other index holds a 1x1 RGBA8 storage hole of its own
+       (separate from binding 0's, shaders may write to it). Views are cached on the image with
+       the top bit of the first key word set and die with it. Images of a resource with the
+       unordered flag (0x4) get `STORAGE` usage when the format (or the UNORM twin of an sRGB one,
+       with `EXTENDED_USAGE`) supports it (`TitleImage::storage`).
+     * Residency: `residency::scan` reads a `Dispatch` like a draw from the compute signature's
+       tables, so the UAV entries of its ranges are wanted; `sync_textures` makes their images
+       (uploading the host content first) and then marks them GPU-owned, so they are never
+       uploaded again nor evicted. A submission with only dispatches syncs textures too.
+     * Deviations: a 3D UAV view is the whole mip (its range of W slices is logged, not applied);
+       integer UAV formats are refused (no f32 variable would match); a UAV on a 1D texture, a
+       placed UAV or a depth image is a hole. Counter resources are ignored.
+     * Tests (lavapipe, `NATIV64_GPU=llvmpipe`, `compute::tests`): a fixture module compiled
+       with glslc (injected through `pipeline::COMPUTE_MODULES`, test only, since the translator
+       does not cover compute yet) writes a root buffer and an 8x2 storage image through the
+       push-constant root block; the image is read back (255, 128, 0, 255), is `STORAGE` and
+       GPU-owned; an image without the flag reads the hole while the buffer is still written;
+       the skip reasons are counted; compute and graphics root arguments are separate.
+     * Not verified: the real cs 1e32f251 (needs part 1), real hardware (only llvmpipe), the
+       windowed scripted run of frames 565-700.
 
 ## Open questions
 

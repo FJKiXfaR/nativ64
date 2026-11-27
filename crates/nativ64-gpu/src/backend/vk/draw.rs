@@ -63,8 +63,7 @@ impl DrawSkips {
     }
 }
 
-/// What a list set, as far as draws are concerned (graphics side only).
-#[derive(Default)]
+/// What a list set, as far as draws and dispatches are concerned.
 pub(super) struct ListState {
     pub(super) pipeline: usize,
     pub(super) topology: u32,
@@ -77,6 +76,27 @@ pub(super) struct ListState {
     targets: Vec<u64>,
     depth: Option<u64>,
     pub(super) root: RootArgs,
+    /// The arguments of the compute root signature (dispatches).
+    pub(super) croot: RootArgs,
+}
+
+impl Default for ListState {
+    fn default() -> Self {
+        ListState {
+            pipeline: 0,
+            topology: 0,
+            viewport: None,
+            scissor: None,
+            blend: None,
+            stencil_ref: 0,
+            index: None,
+            vertex: BTreeMap::new(),
+            targets: Vec::new(),
+            depth: None,
+            root: RootArgs::default(),
+            croot: super::compute::new_args(),
+        }
+    }
 }
 
 impl ListState {
@@ -129,6 +149,7 @@ impl ListState {
             }
             _ => {
                 self.root.apply(c);
+                self.croot.apply(c);
             }
         }
     }
@@ -154,7 +175,7 @@ pub(super) struct DrawState<'g> {
     pub(super) bindless: Option<Option<Bindless<'g>>>,
     views: Option<ViewTable<'g>>,
     views_ready: bool,
-    pipelines: Pipelines<'g>,
+    pub(super) pipelines: Pipelines<'g>,
     image_views: HashMap<ViewKey, vk::ImageView>,
     open: Option<Open>,
     /// The submission's root blocks: the buffer and the bytes used.
@@ -269,7 +290,7 @@ impl<'g> DrawState<'g> {
     }
 
     /// The view table, with the records of the views registered since the last submission.
-    fn view_table(&mut self) -> Option<u64> {
+    pub(super) fn view_table(&mut self) -> Option<u64> {
         if self.views.is_none() {
             match ViewTable::new(self.gpu) {
                 Ok(v) => self.views = Some(v),
@@ -306,7 +327,7 @@ impl<'g> DrawState<'g> {
     }
 
     /// Room for a root block in the arena: its offset.
-    fn arena_slot(&mut self) -> Option<(&mut HostBuf<'g>, usize)> {
+    pub(super) fn arena_slot(&mut self) -> Option<(&mut HostBuf<'g>, usize)> {
         if self.arena.is_none() {
             self.make_arena(self.arena_size);
         }

@@ -1,4 +1,4 @@
-//! Graphics pipelines from the title's pipeline objects (chunk 10a, `docs/shaders.md`,
+//! Graphics and compute pipelines from the title's pipeline objects (chunk 10a, `docs/shaders.md`,
 //! Chunk 10 design): the VS and PS translated as a linked pair (`io::translate_pair`; a missing
 //! PS is a depth-only pipeline; the pair's static samplers are the immutable samplers of set 1
 //! and pick the pipeline layout, chunk 10b), the fixed state read by `pipeline_state`, the formats from the
@@ -17,6 +17,10 @@
 //! vertex binding strides and primitive restart; everything else (cull, front face, depth
 //! test, blend) is the pipeline's own. A vertex input is a VS input matched with the input
 //! element of the same semantic name and index (the VS's own location), binding = input slot.
+//!
+//! A compute pipeline (chunk 10c) is its one CS translated by `io::translate_stage` (pipeline
+//! layout as the graphics ones: set 0, the static samplers' set 1, the root block address as
+//! push constant); a translator refusal is its `Failed` reason.
 //!
 //! shortcuts: the depth bias clamp and the depth bounds test are ignored; one viewport and one
 //! scissor; `FrontCounterClockwise` false is `CLOCKWISE` **[unverified]** (the viewport is
@@ -141,9 +145,9 @@ pub struct HeapReads {
     /// A stage reads the resource heap directly (a layout row of type 5): any descriptor of the
     /// heap can be read, by an index the shader computes.
     pub whole: bool,
-    /// The shader resource views read through a root table: root parameter, slot in the table
-    /// (the used row's table dword / 8: slots are 32 bytes) and whether it is an array (a
-    /// stride), whose length is not known.
+    /// The shader resource and unordered access views read through a root table: root
+    /// parameter, slot in the table (the used row's table dword / 8: slots are 32 bytes) and
+    /// whether it is an array (a stride), whose length is not known.
     pub views: Vec<(u32, u32, bool)>,
 }
 
@@ -151,7 +155,7 @@ pub struct HeapReads {
 /// (the pipeline is not replayed).
 pub fn heap_reads(pd: &PipelineData) -> HeapReads {
     let mut out = HeapReads::default();
-    for name in ["vertex", "pixel"] {
+    for name in ["vertex", "pixel", "compute"] {
         let Some(r) = stage(pd, name)
             .and_then(|b| parse_stage(b, name).ok())
             .and_then(|s| s.record().cloned())
@@ -159,7 +163,12 @@ pub fn heap_reads(pd: &PipelineData) -> HeapReads {
             continue;
         };
         out.whole |= r.layout.iter().any(|l| l.root_type == 5);
-        for u in r.used.iter().filter(|u| u.kind == 0 && u.root_type == 3) {
+        // shader resource views (kind 0) and unordered access views (kind 3, compute)
+        for u in r
+            .used
+            .iter()
+            .filter(|u| matches!(u.kind, 0 | 3) && u.root_type == 3)
+        {
             let v = (u32::from(u.root_slot), u.table_offset / 8, u.stride != 0);
             if !out.views.contains(&v) {
                 out.views.push(v);
@@ -412,10 +421,9 @@ fn build(
     rect: bool,
     formats: &[u32],
 ) -> Result<Built, String> {
-    let g = pd
-        .graphics
-        .as_ref()
-        .ok_or("a compute pipeline (chunk 10c)")?;
+    let Some(g) = pd.graphics.as_ref() else {
+        return build_compute(gpu, bindless, samplers, pd);
+    };
     let varied;
     let g = if formats.is_empty() {
         g
@@ -663,6 +671,88 @@ fn build(
             strip_cut: fixed.strip_cut != 0,
             topology: topo,
             topology_type: g.topology_type,
+        })
+    }
+}
+
+/// A translated module and the layout rows of its program.
+#[cfg(test)]
+type Injected = (Vec<u32>, Vec<RootLayout>);
+
+#[cfg(test)]
+thread_local! {
+    /// Modules (and layout rows) that stand for the translation of the compute pipelines of
+    /// these serials, so that dispatches are tested whatever the translator covers.
+    pub(super) static COMPUTE_MODULES: std::cell::RefCell<HashMap<u64, Injected>> =
+        Default::default();
+}
+
+#[cfg(test)]
+fn injected(serial: u64) -> Option<(Vec<u32>, Vec<RootLayout>)> {
+    COMPUTE_MODULES.with(|m| m.borrow().get(&serial).cloned())
+}
+
+#[cfg(not(test))]
+fn injected(_serial: u64) -> Option<(Vec<u32>, Vec<RootLayout>)> {
+    None
+}
+
+/// A compute pipeline (chunk 10c): the CS translated alone (`io::translate_stage`), the pipeline
+/// layout of its static samplers, the push constant being the root block's address.
+fn build_compute(
+    gpu: &Gpu,
+    bindless: &mut Bindless<'_>,
+    samplers: &mut SamplerCache<'_>,
+    pd: &PipelineData,
+) -> Result<Built, String> {
+    if let Some(s) = pd.stages.iter().find(|s| s.name != "compute") {
+        return Err(format!("a stage {} in a compute pipeline", s.name));
+    }
+    let (words, static_samplers, rows) = match injected(pd.serial) {
+        Some((words, rows)) => (words, Vec::new(), rows),
+        None => {
+            let bytes = stage(pd, "compute").ok_or("no compute stage")?;
+            let cs = parse_stage(bytes, "compute")?;
+            let t = io::translate_stage(&cs, &[], None).map_err(|e| e.to_string())?;
+            if t.memory_addresses {
+                return Err("a stage that reads memory through an address it loaded".into());
+            }
+            let rows = cs.record().map(|r| r.layout.clone()).unwrap_or_default();
+            (t.words, t.samplers, rows)
+        }
+    };
+    let layouts = bindless.layouts(&static_samplers, samplers)?;
+    validate(&words, "compute");
+    let d = &gpu.device;
+    // SAFETY: the module is destroyed before returning; the pipeline is owned by the `Built`.
+    unsafe {
+        let module = d
+            .create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&words), None)
+            .map_err(|e| format!("vkCreateShaderModule: {e}"))?;
+        let info = vk::ComputePipelineCreateInfo::default()
+            .stage(
+                vk::PipelineShaderStageCreateInfo::default()
+                    .stage(vk::ShaderStageFlags::COMPUTE)
+                    .module(module)
+                    .name(c"main"),
+            )
+            .layout(layouts.layout);
+        let made = d.create_compute_pipelines(vk::PipelineCache::null(), &[info], None);
+        d.destroy_shader_module(module, None);
+        let pipeline = match made {
+            Ok(p) => p[0],
+            Err((_, e)) => return Err(format!("vkCreateComputePipelines: {e}")),
+        };
+        Ok(Built {
+            pipeline,
+            layouts,
+            rows,
+            color: Vec::new(),
+            depth: None,
+            vertex_slots: Vec::new(),
+            strip_cut: false,
+            topology_type: 0,
+            topology: vk::PrimitiveTopology::POINT_LIST,
         })
     }
 }

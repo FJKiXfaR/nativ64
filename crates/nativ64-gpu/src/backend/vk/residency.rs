@@ -8,7 +8,10 @@
 //! index, which goes into the result. A signature that indexes the heaps directly marks every
 //! slot of the bound resource heaps.
 //!
-//! shortcuts: only graphics draws (compute is not replayed yet, nor `ExecuteIndirect`); with no
+//! A dispatch is read as a draw, from the compute root signature's tables (`RootArgs::compute`);
+//! the unordered access views of its ranges are marked like the others (chunk 10c).
+//!
+//! shortcuts: no `ExecuteIndirect` (not replayed); with no
 //! root signature set (nothing a title does) a table is read as 32-byte slots from its handle to
 //! the end of its committed pages, at most `FALLBACK_SLOTS`; the slots read in one submission
 //! stop at `SCAN_CAP`.
@@ -71,7 +74,8 @@ pub(super) fn scan(
     };
     for list in lists {
         let mut args = RootArgs::default();
-        let mut signature = 0usize;
+        let mut cargs = RootArgs::compute();
+        let (mut signature, mut csignature) = (0usize, 0usize);
         let mut pipeline = 0usize;
         let mut heaps: Vec<Heap> = Vec::new();
         for c in list {
@@ -80,23 +84,36 @@ pub(super) fn scan(
                     let r = reads_of(pipeline, reads);
                     s.draw(&args, pipeline, signature, &heaps, &r)
                 }
-                Command::SetPipeline { pipeline: p } | Command::ClearState { pipeline: p } => {
+                Command::Dispatch { .. } => {
+                    let r = reads_of(pipeline, reads);
+                    s.draw(&cargs, pipeline, csignature, &heaps, &r)
+                }
+                Command::SetPipeline { pipeline: p } => pipeline = *p,
+                Command::ClearState { pipeline: p } => {
                     pipeline = *p;
                     args.apply(c);
+                    cargs.apply(c);
                 }
                 Command::RootSignature {
-                    compute: false,
+                    compute,
                     signature: sig,
                 } => {
-                    signature = *sig;
+                    if *compute {
+                        csignature = *sig;
+                    } else {
+                        signature = *sig;
+                    }
                     args.apply(c);
+                    cargs.apply(c);
                 }
                 Command::Heaps(h) => {
                     heaps = heaps_of(h);
                     args.apply(c);
+                    cargs.apply(c);
                 }
                 _ => {
                     args.apply(c);
+                    cargs.apply(c);
                 }
             }
         }

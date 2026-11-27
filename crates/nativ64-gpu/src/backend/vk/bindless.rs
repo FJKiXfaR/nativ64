@@ -138,6 +138,13 @@ impl Drop for HostBuf<'_> {
     }
 }
 
+/// The stages that read the push constant (the root block's address).
+pub const PUSH_STAGES: vk::ShaderStageFlags = vk::ShaderStageFlags::from_raw(
+    vk::ShaderStageFlags::VERTEX.as_raw()
+        | vk::ShaderStageFlags::FRAGMENT.as_raw()
+        | vk::ShaderStageFlags::COMPUTE.as_raw(),
+);
+
 /// Sets of immutable samplers a pool holds room for.
 const STATIC_SETS: u32 = 512;
 /// Samplers in one such set, at most.
@@ -264,7 +271,7 @@ impl<'g> Bindless<'g> {
                 ),
             )?[0];
             let push = [vk::PushConstantRange::default()
-                .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
+                .stage_flags(PUSH_STAGES)
                 .offset(0)
                 .size(8)];
             this.layout = vk_try(
@@ -351,7 +358,7 @@ impl<'g> Bindless<'g> {
                 }
             };
             let push = [vk::PushConstantRange::default()
-                .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
+                .stage_flags(PUSH_STAGES)
                 .offset(0)
                 .size(8)];
             let layout = match d.create_pipeline_layout(

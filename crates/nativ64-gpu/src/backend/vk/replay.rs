@@ -1,8 +1,8 @@
 //! Replay of the title's recorded command streams (G3): render targets and textures as
 //! device-local images made on first use, clears, copies and barriers executed, draws replayed
-//! when they can be (`draw.rs`, chunk 10a), dispatches, mesh draws and indirect draws counted
-//! and skipped. Images are always in `GENERAL` layout, so a title barrier is one conservative
-//! global memory barrier, never a layout change.
+//! when they can be (`draw.rs`, chunk 10a), compute dispatches likewise (`compute.rs`, chunk
+//! 10c), mesh dispatches and indirect draws counted and skipped. Images are always in `GENERAL`
+//! layout, so a title barrier is one conservative global memory barrier, never a layout change.
 //!
 //! Buffers are the title's own memory, so buffer copies are plain CPU copies at record time,
 //! in order with the staging of uploads (an upload reads its source bytes while recording).
@@ -58,8 +58,11 @@ pub(super) struct TitleImage {
     pub(super) size: u64,
     /// What the write watch told this image's pages last.
     pub(super) watched: super::watch::Cursor,
-    /// The sampled views made of the image, by description.
+    /// The sampled views made of the image, by description (storage views too, with the
+    /// top bit of the first word set).
     pub(super) views: HashMap<super::textures::TexKey, vk::ImageView>,
+    /// The image has `STORAGE` usage (unordered access, chunk 10c).
+    pub(super) storage: bool,
 }
 
 /// The copyable part of a `TitleImage`, used while recording.
@@ -135,7 +138,11 @@ pub struct ReplayStats {
     /// Draws recorded into Vulkan (the rest are in `draw_skips`, or indirect).
     pub drawn: u64,
     pub draw_skips: super::draw::DrawSkips,
+    /// `Dispatch`, `DispatchMesh` and `DispatchMeshX` commands seen.
     pub dispatches: u64,
+    /// Compute dispatches recorded into Vulkan (the rest are in `dispatch_skips`, or mesh).
+    pub dispatched: u64,
+    pub dispatch_skips: super::compute::DispatchSkips,
     pub skipped: u64,
     /// Bytes of host texture memory hashed, and textures uploaded because the hash changed.
     pub hashed: u64,
@@ -323,10 +330,16 @@ impl<'g> VkBackend<'g> {
         let gpu = self.gpu;
         let mut staging = Vec::new();
         self.reap();
+        // draws and dispatches: each needs a root block, and the resources they read
         let draws = lists
             .iter()
             .flatten()
-            .filter(|c| matches!(c, Command::Draw { .. } | Command::DrawIndexed { .. }))
+            .filter(|c| {
+                matches!(
+                    c,
+                    Command::Draw { .. } | Command::DrawIndexed { .. } | Command::Dispatch { .. }
+                )
+            })
             .count();
         self.draw.begin(draws);
         self.tex.submission += 1;
@@ -486,11 +499,28 @@ impl<'g> VkBackend<'g> {
         } else if desc.flags & format::FLAG_RENDER_TARGET != 0 {
             usage |= vk::ImageUsageFlags::COLOR_ATTACHMENT;
         }
+        // Unordered access (D3D12 flag 0x4) when the format, or the UNORM twin of an sRGB
+        // one (storage views take it), supports storage images.
+        let mut flags = vk::ImageCreateFlags::MUTABLE_FORMAT;
+        let mut storage = false;
+        if desc.flags & format::FLAG_UNORDERED != 0 && info.aspect == vk::ImageAspectFlags::COLOR {
+            let twin_ok = super::pipeline::srgb_twin(desc.format)
+                .and_then(|t| format::lookup(t, 0))
+                .is_some_and(|t| self.gpu.storage_format(t.format));
+            if !info.compressed && self.gpu.storage_format(info.format) {
+                storage = true;
+            } else if twin_ok {
+                storage = true;
+                flags |= vk::ImageCreateFlags::EXTENDED_USAGE;
+            }
+        }
+        if storage {
+            usage |= vk::ImageUsageFlags::STORAGE;
+        }
         let n = u32::from(desc.depth_or_array_size).max(1);
         let volume = desc.dimension == TEXTURE3D;
         // views may reinterpret the format (typeless, sRGB); 2D arrays of 6 layers or a
         // multiple may be cubes
-        let mut flags = vk::ImageCreateFlags::MUTABLE_FORMAT;
         if !volume && n % 6 == 0 && u64::from(h) == desc.width {
             flags |= vk::ImageCreateFlags::CUBE_COMPATIBLE;
         }
@@ -590,6 +620,7 @@ impl<'g> VkBackend<'g> {
                 size: req.size,
                 watched: Default::default(),
                 views: HashMap::new(),
+                storage,
             })
         }
     }
@@ -738,9 +769,11 @@ impl<'g> VkBackend<'g> {
                 self.stats.draws += 1;
                 self.draw_command(d, cb, c);
             }
-            C::Dispatch { .. } | C::DispatchMesh { .. } | C::DispatchMeshX { .. } => {
-                self.stats.dispatches += 1
+            C::Dispatch { .. } => {
+                self.stats.dispatches += 1;
+                self.dispatch_command(d, cb, c);
             }
+            C::DispatchMesh { .. } | C::DispatchMeshX { .. } => self.stats.dispatches += 1,
             C::ExecuteIndirect { .. } => {
                 self.stats.draws += 1;
                 self.stats.draw_skips.state += 1;

@@ -4,7 +4,8 @@
 //! enumeration or a case-insensitive part of the device name. A device must offer Vulkan 1.3
 //! (dynamic rendering, the extended dynamic state of 1.3, demote to helper invocation),
 //! `VK_EXT_external_memory_host`, buffer device address, timeline semaphores, 64-bit integers,
-//! draw parameters and the descriptor indexing the bindless set needs (update after bind,
+//! draw parameters, formatless storage image reads and writes (compute, chunk 10c)
+//! and the descriptor indexing the bindless set needs (update after bind,
 //! partially bound, runtime arrays, non-uniform indexing of sampled and storage images); the
 //! refusal names the first missing feature (chunk 10).
 
@@ -72,6 +73,14 @@ impl Features {
     fn missing(&self) -> Option<&'static str> {
         let need = [
             (self.core.shader_int64, "shaderInt64"),
+            (
+                self.core.shader_storage_image_read_without_format,
+                "shaderStorageImageReadWithoutFormat",
+            ),
+            (
+                self.core.shader_storage_image_write_without_format,
+                "shaderStorageImageWriteWithoutFormat",
+            ),
             (self.core.depth_clamp, "depthClamp"),
             (self.core.independent_blend, "independentBlend"),
             (self.f11.shader_draw_parameters, "shaderDrawParameters"),
@@ -294,6 +303,8 @@ impl Gpu {
         let have_f = Features::query(instance, phys);
         let core = vk::PhysicalDeviceFeatures::default()
             .shader_int64(true)
+            .shader_storage_image_read_without_format(true)
+            .shader_storage_image_write_without_format(true)
             .depth_clamp(true)
             .independent_blend(true)
             .shader_clip_distance(have_f.core.shader_clip_distance != 0)
@@ -453,6 +464,17 @@ impl Gpu {
             }
         }
         largest.size / 5 * 3
+    }
+
+    /// Whether images of `format` can be storage images (optimal tiling).
+    pub(super) fn storage_format(&self, format: vk::Format) -> bool {
+        // SAFETY: a query on a physical device of this instance.
+        let p = unsafe {
+            self.instance
+                .get_physical_device_format_properties(self.phys, format)
+        };
+        p.optimal_tiling_features
+            .contains(vk::FormatFeatureFlags::STORAGE_IMAGE)
     }
 
     /// First memory type allowed by `bits` with all of `flags`.

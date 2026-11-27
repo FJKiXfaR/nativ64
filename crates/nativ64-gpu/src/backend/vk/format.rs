@@ -29,6 +29,9 @@ pub const FLAG_RENDER_TARGET: u32 = 1;
 /// `D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL`.
 pub const FLAG_DEPTH_STENCIL: u32 = 2;
 
+/// `D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS`.
+pub const FLAG_UNORDERED: u32 = 4;
+
 fn info(format: vk::Format, aspect: vk::ImageAspectFlags, bytes: u32) -> Option<FormatInfo> {
     Some(FormatInfo {
         format,

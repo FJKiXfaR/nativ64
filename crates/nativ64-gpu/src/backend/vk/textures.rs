@@ -24,6 +24,14 @@
 //!   evicted or released (`TexState::rewrite`), or when a wanted index holds another view than
 //!   the one it names now (an image that became resident). The table is never written whole.
 //!
+//! Unordered access views (chunk 10c, compute): a `View::Unordered` of a texture is an
+//! `Entry::Storage`; its descriptor is in binding 1 (`images[index]`, storage images), written
+//! with the same rules as binding 0 (a 1x1 storage hole for every other index, rewritten when
+//! the image changes). Binding 0 holds the hole at such an index. The resource of a storage
+//! entry a dispatch can read is made resident like a texture, then marked GPU-owned: its host
+//! memory is never uploaded again. A storage view is one mip of the image, in the view's
+//! format (an sRGB one takes its UNORM twin), when that format supports storage images.
+//!
 //! Copies from a host-owned image upload it first (`host_to_image`).
 //!
 //! Only the textures whose pages were written since their last look are hashed
@@ -72,6 +80,11 @@ enum Entry {
         key: PlacedKey,
         desc: Option<[u32; 10]>,
     },
+    /// An unordered access view of a texture (binding 1).
+    Storage {
+        res: usize,
+        desc: Option<[u32; 10]>,
+    },
     Sampler(Spec),
 }
 
@@ -105,6 +118,8 @@ pub(super) struct TexState {
     pub(super) reads: HashMap<u64, super::pipeline::HeapReads>,
     /// By registry index: the view its descriptor holds (null: the hole).
     bound: Vec<vk::ImageView>,
+    /// The same for binding 1 (storage images).
+    bound1: Vec<vk::ImageView>,
     /// The resources and placed images with a view.
     sources: Vec<usize>,
     source_set: HashSet<usize>,
@@ -115,6 +130,8 @@ pub(super) struct TexState {
     /// Submissions that synced, to hash a texture once in each.
     pub(super) submission: u64,
     hole: Option<Hole>,
+    /// The storage image of binding 1's holes.
+    hole_storage: Option<Hole>,
     /// While the textures are synced in passes: an upload stops once `staged` reaches the cap
     /// (`UPLOAD_CAP`, or `cap` when set), leaves the rest for the next pass and sets `more`.
     pub(super) capped: bool,
@@ -143,7 +160,7 @@ impl TexState {
 
     /// Destroys the hole image; the queue is idle.
     pub(super) fn destroy(&mut self, d: &Device) {
-        if let Some(h) = self.hole.take() {
+        for h in [self.hole.take(), self.hole_storage.take()].into_iter().flatten() {
             // SAFETY: made by `hole`; the queue is idle when the backend drops.
             unsafe {
                 d.destroy_image_view(h.view, None);
@@ -311,6 +328,126 @@ fn texture_view(gpu: &Gpu, t: &mut TitleImage, desc: Option<[u32; 10]>) -> Optio
         }
         Err(e) => {
             log_once(format!("vkCreateImageView (sampled) for {:?}: {e}", t.desc));
+            None
+        }
+    }
+}
+
+/// Set in the first word of the key of a storage view (a sampled one never has it).
+const STORAGE_KEY: u32 = 1 << 31;
+
+/// The storage view of `t` that `desc` (a `D3D12_UNORDERED_ACCESS_VIEW_DESC` as words: format,
+/// dimension, then the mip slice, and the first slice and count of an array or of a 3D
+/// image's depth; none: the resource's own) describes, made on first use and cached on the
+/// image. One mip; a 3D view is the whole mip (a range of depth slices is not applied:
+/// logged). None when the image has no storage usage or the format has no storage view.
+fn storage_view(gpu: &Gpu, t: &mut TitleImage, desc: Option<[u32; 10]>) -> Option<vk::ImageView> {
+    if !t.storage {
+        log_once(format!("no unordered access to {:?}: not a storage image", t.desc));
+        return None;
+    }
+    let volume = t.desc.dimension == TEXTURE3D;
+    let all_mips = mip_count(&t.desc);
+    let all_layers = if volume {
+        1
+    } else {
+        u32::from(t.desc.depth_or_array_size).max(1)
+    };
+    // (type, dxgi format, mip, first layer, layers)
+    let (ty, dxgi, mip, first, layers) = match desc {
+        None if volume => (vk::ImageViewType::TYPE_3D, 0, 0, 0, 1),
+        None if all_layers > 1 => (vk::ImageViewType::TYPE_2D_ARRAY, 0, 0, 0, all_layers),
+        None => (vk::ImageViewType::TYPE_2D, 0, 0, 0, 1),
+        Some(w) => match w[1] {
+            4 => (vk::ImageViewType::TYPE_2D, w[0], w[2], 0, 1),
+            5 => (vk::ImageViewType::TYPE_2D_ARRAY, w[0], w[2], w[3], w[4]),
+            8 => {
+                let depth = (u32::from(t.desc.depth_or_array_size) >> w[2].min(31)).max(1);
+                if w[3] != 0 || (w[4] != u32::MAX && w[4] < depth) {
+                    log_once(format!(
+                        "a 3D unordered access view of slices {}..+{} is the whole mip",
+                        w[3], w[4]
+                    ));
+                }
+                (vk::ImageViewType::TYPE_3D, w[0], w[2], 0, 1)
+            }
+            d => {
+                log_once(format!("no unordered access view for view dimension {d}"));
+                return None;
+            }
+        },
+    };
+    if (ty == vk::ImageViewType::TYPE_3D) != volume {
+        log_once(format!("an unordered access view of dimension {ty:?} of {:?}", t.desc));
+        return None;
+    }
+    if t.info.aspect != vk::ImageAspectFlags::COLOR {
+        return None;
+    }
+    // images are MUTABLE_FORMAT: an sRGB view takes its UNORM twin (no storage in sRGB)
+    let format = match dxgi {
+        0 => match super::pipeline::srgb_twin(t.desc.format).filter(|_| {
+            matches!(t.info.format, vk::Format::R8G8B8A8_SRGB | vk::Format::B8G8R8A8_SRGB)
+        }) {
+            Some(twin) => super::format::lookup(twin, 0)?.format,
+            None => t.info.format,
+        },
+        d => {
+            let d = match d {
+                29 => 28,
+                91 => 87,
+                d => d,
+            };
+            match super::format::lookup(d, 0) {
+                Some(f) => f.format,
+                None => {
+                    log_once(format!("no storage view in DXGI format {d}"));
+                    return None;
+                }
+            }
+        }
+    };
+    if !gpu.storage_format(format) {
+        log_once(format!("{format:?} cannot be a storage image"));
+        return None;
+    }
+    let mip = mip.min(all_mips - 1);
+    let first = first.min(all_layers - 1);
+    let layers = layers.min(all_layers - first).max(1);
+    let key: TexKey = [
+        ty.as_raw() as u32 | STORAGE_KEY,
+        format.as_raw() as u32,
+        mip,
+        1,
+        first,
+        layers,
+        0,
+        0,
+        0,
+        0,
+    ];
+    if let Some(&v) = t.views.get(&key) {
+        return Some(v);
+    }
+    let ci = vk::ImageViewCreateInfo::default()
+        .image(t.image)
+        .view_type(ty)
+        .format(format)
+        .subresource_range(vk::ImageSubresourceRange {
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            base_mip_level: mip,
+            level_count: 1,
+            base_array_layer: first,
+            layer_count: layers,
+        });
+    // SAFETY: a valid image of ours; destroyed with it (`VkBackend::destroy`).
+    match unsafe { gpu.device.create_image_view(&ci, None) } {
+        Ok(v) => {
+            t.views.insert(key, v);
+            Some(v)
+        }
+        Err(e) => {
+            log_once(format!("vkCreateImageView (storage) for {:?}: {e}", t.desc));
             None
         }
     }
@@ -580,7 +717,7 @@ impl<'g> VkBackend<'g> {
             let mut kept = Vec::new();
             for i in indices {
                 let entry = view_at(i as usize).map_or(Entry::Hole, |v| self.classify(&v));
-                if let Entry::Texture { res: r, .. } = &entry {
+                if let Entry::Texture { res: r, .. } | Entry::Storage { res: r, .. } = &entry {
                     // a live resource at the same address
                     if self.tex.source_set.insert(*r) {
                         self.tex.sources.push(*r);
@@ -641,9 +778,14 @@ impl<'g> VkBackend<'g> {
         }
     }
 
-    /// The 1x1 zero RGBA8 view every index that is not a texture holds.
-    fn hole(&mut self, d: &Device, cb: vk::CommandBuffer) -> Option<vk::ImageView> {
-        if let Some(h) = &self.tex.hole {
+    /// The 1x1 zero RGBA8 view every index that is not a texture holds (`storage`: the one of
+    /// binding 1, a storage image of its own, since shaders may write to it).
+    fn hole(&mut self, d: &Device, cb: vk::CommandBuffer, storage: bool) -> Option<vk::ImageView> {
+        if let Some(h) = if storage {
+            &self.tex.hole_storage
+        } else {
+            &self.tex.hole
+        } {
             return Some(h.view);
         }
         let g = self.gpu;
@@ -659,7 +801,11 @@ impl<'g> VkBackend<'g> {
             .array_layers(1)
             .samples(vk::SampleCountFlags::TYPE_1)
             .tiling(vk::ImageTiling::OPTIMAL)
-            .usage(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST)
+            .usage(if storage {
+                vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_DST
+            } else {
+                vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST
+            })
             .initial_layout(vk::ImageLayout::UNDEFINED);
         // SAFETY: objects are destroyed on each failure path or owned by `TexState`.
         unsafe {
@@ -727,11 +873,16 @@ impl<'g> VkBackend<'g> {
                 &vk::ClearColorValue { float32: [0.0; 4] },
                 &[sub],
             );
-            self.tex.hole = Some(Hole {
+            let made = Some(Hole {
                 image,
                 memory,
                 view,
             });
+            if storage {
+                self.tex.hole_storage = made;
+            } else {
+                self.tex.hole = made;
+            }
             Some(view)
         }
     }
@@ -749,6 +900,15 @@ impl<'g> VkBackend<'g> {
                 Some((rd, _)) if rd.dimension == TEXTURE1D => {
                     log_once("a view of a 1D texture is left empty".into());
                     Entry::Hole
+                }
+                _ => Entry::Hole,
+            },
+            View::Unordered(res, _, desc) => match info_of_checked(*res as *mut _) {
+                Some((rd, _)) if rd.dimension == TEXTURE2D || rd.dimension == TEXTURE3D => {
+                    Entry::Storage {
+                        res: *res,
+                        desc: *desc,
+                    }
                 }
                 _ => Entry::Hole,
             },
@@ -782,6 +942,18 @@ impl<'g> VkBackend<'g> {
             },
             Entry::Placed { key, desc } => match self.placed.get_mut(&key) {
                 Some(Some(t)) => texture_view(self.gpu, t, desc),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// The storage view registry index `i` names, when it is an unordered access view of a
+    /// resident texture.
+    fn storage_view_of(&mut self, i: usize) -> Option<vk::ImageView> {
+        match self.tex.entries.get(i)?.clone() {
+            Entry::Storage { res, desc } => match self.images.get_mut(&res) {
+                Some(Some(t)) => storage_view(self.gpu, t, desc),
                 _ => None,
             },
             _ => None,
@@ -840,7 +1012,7 @@ impl<'g> VkBackend<'g> {
         for v in &new {
             let entry = self.classify(v);
             match &entry {
-                Entry::Texture { res, .. } => {
+                Entry::Texture { res, .. } | Entry::Storage { res, .. } => {
                     if self.tex.source_set.insert(*res) {
                         self.tex.sources.push(*res);
                     }
@@ -855,14 +1027,19 @@ impl<'g> VkBackend<'g> {
             }
             self.tex.entries.push(entry);
             self.tex.bound.push(vk::ImageView::null());
+            self.tex.bound1.push(vk::ImageView::null());
         }
         self.tex.scanned += new.len();
         // 2. images and uploads: of what the draws can read
         let mut uploaded = false;
-        let (mut resources, mut placed) = (Vec::new(), Vec::new());
+        let (mut resources, mut placed, mut storage) = (Vec::new(), Vec::new(), Vec::new());
         for &i in &self.tex.wanted {
             match self.tex.entries.get(i as usize) {
                 Some(Entry::Texture { res, .. }) => resources.push(*res),
+                Some(Entry::Storage { res, .. }) => {
+                    resources.push(*res);
+                    storage.push(*res);
+                }
                 Some(Entry::Placed { key, .. }) => placed.push(*key),
                 _ => {}
             }
@@ -888,6 +1065,12 @@ impl<'g> VkBackend<'g> {
             // the rest is uploaded by the next pass, which also writes the descriptors
             return;
         }
+        // what a dispatch can write is the GPU's from now on (after its last upload)
+        storage.sort_unstable();
+        storage.dedup();
+        for res in storage {
+            self.own(res);
+        }
         self.trim();
         // 3. descriptors: the new entries (image and sampler), then the image of the indices
         // whose image changed, and of those the draws read whose view is not the one written
@@ -910,7 +1093,9 @@ impl<'g> VkBackend<'g> {
             let i = i as usize;
             if i < from.min(end) && !again.contains(&i) {
                 let view = self.view_of(i);
-                if view.unwrap_or_default() != self.tex.bound[i] {
+                let storage = matches!(self.tex.entries[i], Entry::Storage { .. })
+                    && self.storage_view_of(i).unwrap_or_default() != self.tex.bound1[i];
+                if storage || view.unwrap_or_default() != self.tex.bound[i] {
                     again.insert(i);
                 }
             }
@@ -921,15 +1106,22 @@ impl<'g> VkBackend<'g> {
         }
         let td = profile::start();
         profile::count(Count::Written, (end - from.min(end) + again.len()) as u64);
-        let hole = self.hole(d, cb);
+        let hole = self.hole(d, cb, false);
+        let hole1 = self.hole(d, cb, true);
         let default = self.draw.samplers.get(Spec::default_sampler());
         let mut images = Vec::new();
+        let mut storages = Vec::new();
         let mut samplers = Vec::new();
         for i in again.into_iter().chain(from..end) {
             let view = self.view_of(i);
             self.tex.bound[i] = view.unwrap_or_default();
             if let Some(v) = view.or(hole) {
                 images.push((i, v));
+            }
+            let sview = self.storage_view_of(i);
+            self.tex.bound1[i] = sview.unwrap_or_default();
+            if let Some(v) = sview.or(hole1) {
+                storages.push((i, v));
             }
             if i >= from {
                 let sampler = match &self.tex.entries[i] {
@@ -953,11 +1145,19 @@ impl<'g> VkBackend<'g> {
                     .image_layout(vk::ImageLayout::GENERAL)
             })
             .collect();
+        let storage_infos: Vec<vk::DescriptorImageInfo> = storages
+            .iter()
+            .map(|&(_, v)| {
+                vk::DescriptorImageInfo::default()
+                    .image_view(v)
+                    .image_layout(vk::ImageLayout::GENERAL)
+            })
+            .collect();
         let sampler_infos: Vec<vk::DescriptorImageInfo> = samplers
             .iter()
             .map(|&(_, s)| vk::DescriptorImageInfo::default().sampler(s))
             .collect();
-        let mut writes = Vec::with_capacity(images.len() + samplers.len());
+        let mut writes = Vec::with_capacity(images.len() + storages.len() + samplers.len());
         for (k, &(i, _)) in images.iter().enumerate() {
             writes.push(
                 vk::WriteDescriptorSet::default()
@@ -966,6 +1166,16 @@ impl<'g> VkBackend<'g> {
                     .dst_array_element(i as u32)
                     .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
                     .image_info(&image_infos[k..=k]),
+            );
+        }
+        for (k, &(i, _)) in storages.iter().enumerate() {
+            writes.push(
+                vk::WriteDescriptorSet::default()
+                    .dst_set(set)
+                    .dst_binding(1)
+                    .dst_array_element(i as u32)
+                    .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                    .image_info(&storage_infos[k..=k]),
             );
         }
         for (k, &(i, _)) in samplers.iter().enumerate() {
