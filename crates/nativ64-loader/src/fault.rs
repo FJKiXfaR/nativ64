@@ -37,6 +37,35 @@ fn say(args: std::fmt::Arguments) {
 }
 
 /// Prints `image+0xOFF` / `dll+0xOFF` for a guest `rip`.
+/// `image+0x…`, `dll+0x…` or a bare address for `rip`.
+pub fn location(rip: u64) -> String {
+    let mut out = String::new();
+    let base = IMAGE_BASE.load(Ordering::Relaxed);
+    let size = IMAGE_SIZE.load(Ordering::Relaxed) as u64;
+    if base != 0 && rip >= base && rip < base + size {
+        out.push_str(&format!("image+{:#x}", rip - base));
+        return out;
+    }
+    for i in 0..DLL_COUNT.load(Ordering::Acquire).min(MAX_DLLS) {
+        let b = DLL_BASE[i].load(Ordering::Relaxed);
+        if rip >= b && rip < DLL_END[i].load(Ordering::Relaxed) {
+            let mut n = [0u8; NAME_LEN];
+            for (d, s) in n.iter_mut().zip(&DLL_NAME[i]) {
+                *d = s.load(Ordering::Relaxed);
+            }
+            let len = n.iter().position(|&c| c == 0).unwrap_or(NAME_LEN);
+            out.push_str(&format!(
+                "{}+{:#x}",
+                String::from_utf8_lossy(&n[..len]),
+                rip - b
+            ));
+            return out;
+        }
+    }
+    out.push_str(&format!("{rip:#x}"));
+    out
+}
+
 fn say_location(rip: u64) {
     let base = IMAGE_BASE.load(Ordering::Relaxed);
     let size = IMAGE_SIZE.load(Ordering::Relaxed) as u64;
@@ -83,8 +112,8 @@ fn report_unhandled(rec: *const nativ64::seh::ExceptionRecord) {
             "nativ64: the {} imports before the fault (the ring up to the fault):\n",
             before.len()
         ));
-        for name in before.iter().rev().take(40).rev() {
-            say(format_args!("  {name}\n"));
+        for (name, ret) in before.iter().rev().take(40).rev() {
+            say(format_args!("  {name} from {}\n", location(*ret as u64)));
         }
     }
     let recent = crate::stubs::recent_imports();
@@ -93,8 +122,8 @@ fn report_unhandled(rec: *const nativ64::seh::ExceptionRecord) {
             "nativ64: the {} imports before the fault:\n",
             recent.len()
         ));
-        for name in recent {
-            say(format_args!("  {name}\n"));
+        for (name, ret) in recent {
+            say(format_args!("  {name} from {}\n", location(ret as u64)));
         }
     }
     unsafe { libc::_exit(139) }

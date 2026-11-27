@@ -107,13 +107,13 @@ pub fn trace_calls() -> u64 {
 
 /// The imports called most recently, newest last: what a crash report shows (`--trace-imports`
 /// keeps this even when `NATIV64_TRACE_SILENT` suppresses the per-call lines).
-static RECENT: std::sync::Mutex<std::collections::VecDeque<u32>> =
+static RECENT: std::sync::Mutex<std::collections::VecDeque<(u32, usize)>> =
     std::sync::Mutex::new(std::collections::VecDeque::new());
 const RECENT_MAX: usize = 512;
 
 /// The imports called before the last hardware fault (newest last): the pre-crash view, since
 /// the fault hook snapshots the ring before any handler (the crash reporter) adds its calls.
-static BEFORE_FAULT: std::sync::Mutex<Option<Vec<String>>> = std::sync::Mutex::new(None);
+static BEFORE_FAULT: std::sync::Mutex<Option<Vec<(String, usize)>>> = std::sync::Mutex::new(None);
 
 /// Snapshots the import ring: installed as the SEH fault hook.
 pub fn snapshot_imports() {
@@ -122,7 +122,7 @@ pub fn snapshot_imports() {
 }
 
 /// The imports called before the last hardware fault (empty when the hook has not run).
-pub fn imports_before_fault() -> Vec<String> {
+pub fn imports_before_fault() -> Vec<(String, usize)> {
     BEFORE_FAULT
         .lock()
         .unwrap_or_else(|p| p.into_inner())
@@ -130,17 +130,19 @@ pub fn imports_before_fault() -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The last imports called (their names, newest last).
-pub fn recent_imports() -> Vec<String> {
+/// The last imports called (their names, newest last) with the guest return address of the
+/// call, which names the code that asked for the import.
+pub fn recent_imports() -> Vec<(String, usize)> {
     let recent = RECENT.lock().unwrap_or_else(|p| p.into_inner());
     let traced = TRACED.lock().unwrap_or_else(|p| p.into_inner());
     recent
         .iter()
-        .map(|&i| {
-            traced
+        .map(|&(i, ret)| {
+            let name = traced
                 .get(i as usize)
                 .cloned()
-                .unwrap_or_else(|| format!("<trace {i}>"))
+                .unwrap_or_else(|| format!("<trace {i}>"));
+            (name, ret)
         })
         .collect()
 }
@@ -150,13 +152,13 @@ fn trace_prints() -> bool {
     !std::env::var_os("NATIV64_TRACE_SILENT").is_some_and(|v| !v.is_empty() && v != "0")
 }
 
-extern "win64" fn trace_handler(index: u32) {
+extern "win64" fn trace_handler(index: u32, guest_ret: usize) {
     TRACE_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if let Ok(mut recent) = RECENT.try_lock() {
         if recent.len() == RECENT_MAX {
             recent.pop_front();
         }
-        recent.push_back(index);
+        recent.push_back((index, guest_ret));
     }
     if trace_prints() {
         let name = match TRACED.try_lock() {
@@ -218,7 +220,9 @@ impl TracePage {
             for k in 0..4u8 {
                 c.extend([0xF3, 0x0F, 0x7F, 0x44 | (k << 3), 0x24, 0x20 + 16 * k]);
             }
-            // mov ecx, index ; movabs rax, handler ; call rax
+            // mov rdx, [rsp+0x88] (the guest's return address) ; mov ecx, index ;
+            // movabs rax, handler ; call rax
+            c.extend([0x48, 0x8B, 0x94, 0x24, 0x88, 0x00, 0x00, 0x00]);
             c.push(0xB9);
             c.extend(((first + i) as u32).to_le_bytes());
             c.extend([0x48, 0xB8]);
@@ -304,14 +308,14 @@ mod tests {
         // Other tests of this module call traced imports in parallel: both names must be in the
         // ring, not necessarily adjacent to each other.
         let recent = recent_imports();
-        assert!(recent.iter().any(|n| n == "t!first"));
-        assert!(recent.iter().any(|n| n == "t!second"));
+        assert!(recent.iter().any(|(n, _)| n == "t!first"));
+        assert!(recent.iter().any(|(n, _)| n == "t!second"));
         // The ring is bounded.
         assert!(recent.len() <= RECENT_MAX);
         // The fault hook's snapshot keeps that view for the crash report.
         snapshot_imports();
         let before = imports_before_fault();
-        assert!(before.iter().any(|n| n == "t!first"));
-        assert!(before.iter().any(|n| n == "t!second"));
+        assert!(before.iter().any(|(n, _)| n == "t!first"));
+        assert!(before.iter().any(|(n, _)| n == "t!second"));
     }
 }
