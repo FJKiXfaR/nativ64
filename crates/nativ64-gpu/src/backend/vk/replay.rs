@@ -656,6 +656,9 @@ impl<'g> VkBackend<'g> {
         let (Ok(w), h) = (u32::try_from(desc.width), desc.height) else {
             return None;
         };
+        // A 1D texture is a width: Vulkan wants height 1 and a TYPE_1D image.
+        let one_d = desc.dimension == TEXTURE1D;
+        let h = if one_d { 1 } else { h };
         if w == 0 || h == 0 {
             return None;
         }
@@ -694,13 +697,15 @@ impl<'g> VkBackend<'g> {
         let volume = desc.dimension == TEXTURE3D;
         // views may reinterpret the format (typeless, sRGB); 2D arrays of 6 layers or a
         // multiple may be cubes
-        if !volume && n % 6 == 0 && u64::from(h) == desc.width {
+        if !volume && !one_d && n % 6 == 0 && u64::from(h) == desc.width {
             flags |= vk::ImageCreateFlags::CUBE_COMPATIBLE;
         }
         let ci = vk::ImageCreateInfo::default()
             .flags(flags)
             .image_type(if volume {
                 vk::ImageType::TYPE_3D
+            } else if one_d {
+                vk::ImageType::TYPE_1D
             } else {
                 vk::ImageType::TYPE_2D
             })

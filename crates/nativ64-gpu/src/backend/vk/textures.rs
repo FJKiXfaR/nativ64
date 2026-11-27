@@ -241,6 +241,7 @@ const DEFAULT_MAPPING: u32 = 0x1688;
 /// resource's own) describes, made on first use and cached on the image.
 fn texture_view(gpu: &Gpu, t: &mut TitleImage, desc: Option<[u32; 10]>) -> Option<vk::ImageView> {
     let volume = t.desc.dimension == TEXTURE3D;
+    let one_d = t.desc.dimension == TEXTURE1D;
     let all_mips = mip_count(&t.desc);
     let all_layers = if volume {
         1
@@ -253,6 +254,10 @@ fn texture_view(gpu: &Gpu, t: &mut TitleImage, desc: Option<[u32; 10]>) -> Optio
         None => (
             if volume {
                 vk::ImageViewType::TYPE_3D
+            } else if one_d && all_layers > 1 {
+                vk::ImageViewType::TYPE_1D_ARRAY
+            } else if one_d {
+                vk::ImageViewType::TYPE_1D
             } else if all_layers > 1 {
                 vk::ImageViewType::TYPE_2D_ARRAY
             } else {
@@ -267,6 +272,8 @@ fn texture_view(gpu: &Gpu, t: &mut TitleImage, desc: Option<[u32; 10]>) -> Optio
         ),
         Some(w) => {
             let (ty, first, layers) = match w[1] {
+                2 => (vk::ImageViewType::TYPE_1D, 0, 1),
+                3 => (vk::ImageViewType::TYPE_1D_ARRAY, w[5], w[6]),
                 4 => (vk::ImageViewType::TYPE_2D, 0, 1),
                 5 => (vk::ImageViewType::TYPE_2D_ARRAY, w[5], w[6]),
                 8 => (vk::ImageViewType::TYPE_3D, 0, 1),
@@ -376,11 +383,16 @@ fn storage_view(gpu: &Gpu, t: &mut TitleImage, desc: Option<[u32; 10]>) -> Optio
         u32::from(t.desc.depth_or_array_size).max(1)
     };
     // (type, dxgi format, mip, first layer, layers)
+    let one_d = t.desc.dimension == TEXTURE1D;
     let (ty, dxgi, mip, first, layers) = match desc {
         None if volume => (vk::ImageViewType::TYPE_3D, 0, 0, 0, 1),
+        None if one_d && all_layers > 1 => (vk::ImageViewType::TYPE_1D_ARRAY, 0, 0, 0, all_layers),
+        None if one_d => (vk::ImageViewType::TYPE_1D, 0, 0, 0, 1),
         None if all_layers > 1 => (vk::ImageViewType::TYPE_2D_ARRAY, 0, 0, 0, all_layers),
         None => (vk::ImageViewType::TYPE_2D, 0, 0, 0, 1),
         Some(w) => match w[1] {
+            2 => (vk::ImageViewType::TYPE_1D, w[0], w[2], 0, 1),
+            3 => (vk::ImageViewType::TYPE_1D_ARRAY, w[0], w[2], w[3], w[4]),
             4 => (vk::ImageViewType::TYPE_2D, w[0], w[2], 0, 1),
             5 => (vk::ImageViewType::TYPE_2D_ARRAY, w[0], w[2], w[3], w[4]),
             8 => {
@@ -975,20 +987,16 @@ impl<'g> VkBackend<'g> {
     fn classify(&self, v: &View) -> Entry {
         match v {
             View::Shader(res, desc) => match info_of_checked(*res as *mut _) {
-                Some((rd, _)) if rd.dimension == TEXTURE2D || rd.dimension == TEXTURE3D => {
+                Some((rd, _)) if matches!(rd.dimension, TEXTURE1D | TEXTURE2D | TEXTURE3D) => {
                     Entry::Texture {
                         res: *res,
                         desc: *desc,
                     }
                 }
-                Some((rd, _)) if rd.dimension == TEXTURE1D => {
-                    log_once("a view of a 1D texture is left empty".into());
-                    Entry::Hole
-                }
                 _ => Entry::Hole,
             },
             View::Unordered(res, _, desc) => match info_of_checked(*res as *mut _) {
-                Some((rd, _)) if rd.dimension == TEXTURE2D || rd.dimension == TEXTURE3D => {
+                Some((rd, _)) if matches!(rd.dimension, TEXTURE1D | TEXTURE2D | TEXTURE3D) => {
                     Entry::Storage {
                         res: *res,
                         desc: *desc,
