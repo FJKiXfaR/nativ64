@@ -259,7 +259,20 @@ impl VkBackend<'_> {
             .filter_map(|(&r, i)| i.as_ref().map(|_| r))
             .collect();
         ids.sort_unstable();
+        // `NATIV64_INSPECT_BIG=1`: only the full-size targets (the work target, the presented
+        // one, the A8 mask) - the whole-image dump is far too slow to reach a UI screen.
+        let only_big =
+            std::env::var("NATIV64_INSPECT_BIG").is_ok_and(|v| !v.is_empty() && v != "0");
         for res in ids {
+            if only_big
+                && self
+                    .images
+                    .get(&res)
+                    .and_then(Option::as_ref)
+                    .is_none_or(|t| t.desc.width < 1920)
+            {
+                continue;
+            }
             let Some(rb) = self.read_back(res) else {
                 continue;
             };
