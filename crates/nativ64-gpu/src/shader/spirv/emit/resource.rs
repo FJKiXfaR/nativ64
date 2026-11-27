@@ -2130,12 +2130,17 @@ impl<'a> Tr<'a> {
         if let Some(op) = name.strip_prefix("image_atomic_") {
             return self.image_atomic(c, op);
         }
-        let (explicit, zero_lod, dref) = match name {
-            "image_sample" => (false, false, false),
-            "image_sample_l" => (true, false, false),
-            "image_sample_lz" | "image_get_lod" => (true, true, false),
+        // (explicit level, level 0, depth compare, explicit gradients, bias)
+        let (explicit, zero_lod, dref, grad, bias) = match name {
+            "image_sample" => (false, false, false, false, false),
+            "image_sample_l" => (true, false, false, false, false),
+            "image_sample_lz" | "image_get_lod" => (true, true, false, false, false),
             // a depth compare: the address carries the comparison value after the coordinates
-            "image_sample_c_lz" | "image_sample_c_l" => (true, true, true),
+            "image_sample_c" => (false, false, true, false, false),
+            "image_sample_c_lz" | "image_sample_c_l" => (true, true, true, false, false),
+            // the gradients / the bias follow the coordinates in the address
+            "image_sample_d" => (true, false, false, true, false),
+            "image_sample_b" => (false, false, false, false, true),
             _ => return Ok(None),
         };
         let m = i.img;
@@ -2150,8 +2155,21 @@ impl<'a> Tr<'a> {
             return bad("an image sample whose operands do not match its form");
         }
         let nlod = usize::from(name == "image_sample_l");
+        // a cube or array image samples with two gradients (the array axis has none)
+        let ngrad = if grad {
+            match m.dim {
+                0 => 1usize,
+                1 => 2,
+                2 => 3,
+                _ => 2,
+            }
+        } else {
+            0
+        };
+        let extra =
+            ngrad * (if grad { 2 } else { 0 }) + usize::from(bias) + usize::from(dref) + nlod;
         let addr = &c.srcs[ns - 3];
-        if addr.len() != ncoord as usize + nlod + usize::from(dref) {
+        if addr.len() != ncoord as usize + extra {
             return refuse(&format!("{name} with an address of {} dwords", addr.len()));
         }
         let is_vertex = matches!(self.io(), StageIo::Vertex(_));
@@ -2204,7 +2222,41 @@ impl<'a> Tr<'a> {
             return Ok(Some(out));
         }
         let v4 = self.vec4(Class::Float);
-        let res = if dref {
+        let res = if grad {
+            // the address holds the x and y gradients after the coordinates
+            let (n, ng) = (ncoord as usize, ngrad);
+            let mut axes = Vec::new();
+            for axis in 0..2 {
+                let mut g = Vec::new();
+                for k in 0..ng {
+                    let bits = self.bits_of(addr[n + axis * ng + k]);
+                    g.push(self.g.as_f32(bits));
+                }
+                let v = if g.len() == 1 {
+                    g[0]
+                } else {
+                    let tv = self.g.m.global(Op::TypeVector, None, &[tf, g.len() as u32]);
+                    self.g.op(Op::CompositeConstruct, tv, &g)
+                };
+                axes.push(v);
+            }
+            // ImageOperands Grad (4) then the x and y gradients
+            let tf2 = self.g.t_f32();
+            let _ = tf2;
+            let v4f = self.vec4(Class::Float);
+            self.g.op(
+                Op::ImageSampleExplicitLod,
+                v4f,
+                &[si, coord, 4, axes[0], axes[1]],
+            )
+        } else if bias {
+            let bits = self.bits_of(addr[ncoord as usize]);
+            let b = self.g.as_f32(bits);
+            let v4f = self.vec4(Class::Float);
+            // ImageOperands Bias (1) then the bias
+            self.g
+                .op(Op::ImageSampleImplicitLod, v4f, &[si, coord, 1, b])
+        } else if dref {
             // the compare value follows the coordinates; the level is 0
             let bits = self.bits_of(addr[ncoord as usize]);
             let d = self.g.as_f32(bits);

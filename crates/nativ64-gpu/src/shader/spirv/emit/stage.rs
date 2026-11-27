@@ -727,9 +727,6 @@ impl<'a> Tr<'a> {
         let StageIo::Pixel(ps) = self.io() else {
             return unsupported(name);
         };
-        if name.contains("f16") {
-            return unsupported(name);
-        }
         let dst = c.inst.dsts.first().map(|d| d.0);
         if name == "v_interp_p2_f32" {
             let old = c.imps.iter().find(|(r, _)| Some(*r) == dst);
@@ -746,9 +743,6 @@ impl<'a> Tr<'a> {
         };
         if a.usage != 6 {
             return unsupported("a pixel input that is not a generic attribute");
-        }
-        if a.fp16 {
-            return unsupported("a half-precision pixel input");
         }
         let mode = if name == "v_interp_mov_f32" {
             if i.intrp.vsrc != 2 {
@@ -772,11 +766,18 @@ impl<'a> Tr<'a> {
                     sample,
                     ..
                 }) => (a.flat, linear || a.linear, centroid, sample),
-                _ => return unsupported("interpolation with computed barycentrics"),
+                // the program computed (or overwrote) its barycentric value: fall back to the
+                // mode the stage data declares for the attribute
+                _ => (a.flat, a.linear, false, false),
             }
         };
         let bits = self.attr_value(attr, a, mode, chan)?;
-        Ok(Opd::V(bits))
+        // the f16 forms (and a half-precision attribute) hand the arithmetic f16 bits
+        Ok(Opd::V(if name.contains("f16") || a.fp16 {
+            self.g.pack_half(bits)
+        } else {
+            bits
+        }))
     }
 
     // -----------------------------------------------------------------------------------
