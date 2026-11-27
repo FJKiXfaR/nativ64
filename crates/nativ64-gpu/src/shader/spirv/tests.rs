@@ -2732,19 +2732,19 @@ pub(crate) mod stage {
         pre[2] = "s_mov_b32 s12, s8"; // a word of user data
         let (chunk, op) = refused(&ps_tables(&ps_after(&pre, &[SAMPLE_2D])));
         assert_eq!(chunk, 9);
-        assert!(op.contains("neither constant nor loaded"), "{op}");
+        assert!(op.contains("address modes are not constants"), "{op}");
     }
 
     #[test]
-    fn descriptor_words_used_as_numbers_are_refused() {
+    fn descriptor_words_used_as_numbers_come_from_the_view_record() {
+        // the words a program builds another descriptor out of are the console V# of the
+        // descriptor's view: the load reads base, base|stride, the record count and a format
         let lines = vs_lines(&[
             "s_mov_b32 s9, 0",
             "s_load_dwordx4 s[0:3], s[8:9], 0x0",
             "s_and_b32 s5, s2, 0xff",
         ]);
-        let (chunk, op) = refused(&vs_with(&lines, one_table));
-        assert_eq!(chunk, 9);
-        assert!(op.contains("used as numbers"), "{op}");
+        translate_full(&vs_with(&lines, one_table), None);
     }
 
     #[test]

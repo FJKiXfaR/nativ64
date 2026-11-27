@@ -111,6 +111,9 @@ pub(in crate::shader::spirv) struct Analysis {
     /// offset in the table, when the program loads it at a constant one (chunk 10c: the used
     /// rows say whether such a slot is an SRV or a UAV).
     origin: HashMap<Val, (u16, u32)>,
+    /// The loaded descriptor dwords the program uses as plain numbers (to build another
+    /// descriptor out of them, say): the load emits that descriptor's V# words for them.
+    numbers: HashSet<Val>,
     /// Every value that holds a dword of a loaded descriptor (the loads' results, and copies
     /// and phis of them).
     loaded: HashSet<Val>,
@@ -346,6 +349,7 @@ pub(in crate::shader::spirv) fn analyze(
         table_loads: HashMap::new(),
         origin: HashMap::new(),
         loaded: HashSet::new(),
+        numbers: HashSet::new(),
         memory_addresses: false,
     };
     for (b, blk) in f.blocks.iter().enumerate() {
@@ -425,28 +429,48 @@ pub(in crate::shader::spirv) fn analyze(
             break;
         }
     }
-    let used_as_number = || refuse("the words of a loaded descriptor used as numbers");
     let is_loaded = |s: &Src| matches!(s, Src::Val(v) if a.loaded.contains(v));
+    // the loaded dwords some instruction uses as a plain number: the load emits the console
+    // V# words of the descriptor's view for them (a program builds a new descriptor out of
+    // them, say)
+    let mut numbers: HashSet<Val> = HashSet::new();
     for blk in &f.blocks {
-        for p in &blk.phis {
-            if !a.loaded.contains(&p.dst) && p.args.iter().any(|(_, s)| is_loaded(s)) {
-                return used_as_number();
-            }
-        }
         for i in blk.insts.iter().filter(|i| !is_copy(i)) {
             let n = i.srcs.len();
             for (j, s) in i.srcs.iter().enumerate() {
-                if s.iter().any(is_loaded) && !descriptor_operand(i, j, n) {
-                    return used_as_number();
+                if descriptor_operand(i, j, n) {
+                    continue;
                 }
+                for x in s {
+                    if let Src::Val(v) = x {
+                        if a.loaded.contains(v) {
+                            numbers.insert(*v);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // a phi may carry such numbers (the words of two descriptors, say), but not a descriptor
+    // a descriptor operand still resolves by its slot
+    let numeric = |s: &Src| matches!(s, Src::Val(v) if numbers.contains(v));
+    for blk in &f.blocks {
+        for p in &blk.phis {
+            if a.loaded.contains(&p.dst) {
+                continue;
+            }
+            let sources = |f: &dyn Fn(&Src) -> bool| p.args.iter().any(|(_, s)| f(s));
+            if sources(&is_loaded) && !p.args.iter().all(|(_, s)| numeric(s) || !is_loaded(s)) {
+                return refuse("a loaded descriptor's words mixed into a phi");
             }
         }
         if let Term::Branch { cond, .. } = &blk.term {
             if cond.iter().any(|(_, s)| is_loaded(s)) {
-                return used_as_number();
+                return refuse("a loaded descriptor's words in a branch condition");
             }
         }
     }
+    a.numbers = numbers;
     a.memory_addresses = reads_memory_addresses(f, &a.loaded, &a.table_loads);
     Ok(a)
 }
@@ -838,6 +862,48 @@ impl<'a> Tr<'a> {
             // our slots hold `"nVEW"` and the registry index
             let at = self.add_k64(slot, 4);
             let index = self.bda_u32(at);
+            if c.inst
+                .dsts
+                .iter()
+                .any(|d| self.res().analysis.numbers.contains(&d.1))
+            {
+                // the words are used as numbers (to build another descriptor out of them):
+                // the console V# of each view the records describe (a wide load reads the
+                // descriptors of consecutive table slots)
+                if n % 4 != 0 {
+                    return refuse("the words of a descriptor used as numbers, of an odd width");
+                }
+                let tu = self.g.t_u32();
+                for g in 0..(n / 4) as u32 {
+                    let slot_g = self.add_k64(slot, u64::from(32 * g));
+                    let index_g = if g == 0 {
+                        index
+                    } else {
+                        let at = self.add_k64(slot_g, 4);
+                        self.bda_u32(at)
+                    };
+                    let lo = self.record_dword(index_g, 8);
+                    let hi = self.record_dword(index_g, 12);
+                    let stride = self.record_dword(index_g, 20);
+                    let size = self.record_dword(index_g, 16);
+                    let mask = self.g.k(0xffff);
+                    let hi16 = self.g.op(Op::BitwiseAnd, tu, &[hi, mask]);
+                    let sh = self.g.k(16);
+                    let st = self.g.op(Op::ShiftLeftLogical, tu, &[stride, sh]);
+                    let word1 = self.g.op(Op::BitwiseOr, tu, &[hi16, st]);
+                    // the record count: elements for a structured buffer, bytes for a raw one
+                    let zero = self.g.k(0);
+                    let tb = self.g.t_bool();
+                    let raw = self.g.op(Op::IEqual, tb, &[stride, zero]);
+                    let count = self.g.op(Op::UDiv, tu, &[size, stride]);
+                    let word2 = self.g.select(raw, size, count);
+                    out.push(Opd::V(lo));
+                    out.push(Opd::V(word1));
+                    out.push(Opd::V(word2));
+                    out.push(Opd::V(self.g.k(0)));
+                }
+                return Ok(Some(out));
+            }
             out.push(Opd::V(index));
             for _ in 1..n {
                 out.push(Opd::V(self.g.k(0)));
@@ -1450,11 +1516,30 @@ impl<'a> Tr<'a> {
             let si = self.bits_of(c.srcs[ns - 1][0]);
             self.non_uniform(si);
             self.array_element(arr, ts, si)
-        } else if let [Src::Const(a), Src::Const(b), Src::Const(c2), Src::Const(d)] = &samp[..4] {
-            let var = self.static_sampler(SamplerDesc::from_words([*a, *b, *c2, *d]));
-            self.g.load(ts, var)
         } else {
-            return refuse("a sampler that is neither constant nor loaded from a table");
+            // the four words of a sampler state, when they are the program's constants; a
+            // word the program computes keeps a default (the address modes and the compare
+            // function are too visible to guess)
+            let word = |k: usize, default: u32| -> R<u32> {
+                match samp.get(k) {
+                    Some(Src::Const(c)) => Ok(*c),
+                    // W1: min/max LOD (0..max), W2: bilinear, mip linear, no bias,
+                    // W3: transparent black
+                    Some(_) => Ok(match k {
+                        1 => 0xfff << 12,
+                        2 => 1 << 20 | 1 << 22 | 2 << 26,
+                        3 => 0,
+                        _ => default,
+                    }),
+                    None => Ok(default),
+                }
+            };
+            if !matches!(samp.first(), Some(Src::Const(_))) {
+                return refuse("a sampler whose address modes are not constants");
+            }
+            let w = [word(0, 0)?, word(1, 0)?, word(2, 0)?, word(3, 0)?];
+            let var = self.static_sampler(SamplerDesc::from_words(w));
+            self.g.load(ts, var)
         };
         let tsi = self.g.m.global(Op::TypeSampledImage, None, &[img]);
         let si = self.g.op(Op::SampledImage, tsi, &[image, sampler]);
