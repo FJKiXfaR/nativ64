@@ -161,6 +161,12 @@ VIctory checkout next to this repository. See [`docs/import-map.md`](docs/import
 | `crates/nativ64-loader` | Native PE loader, TEB/PEB, TLS, threads, faults and SEH | [`docs/loader.md`](docs/loader.md), [`docs/seh.md`](docs/seh.md) |
 | `crates/nativ64-gpu` | Console Direct3D 12 on Vulkan, texture layouts, RDNA2 shader translator | [`docs/gpu.md`](docs/gpu.md), [`docs/shaders.md`](docs/shaders.md), [`docs/textures.md`](docs/textures.md) |
 
+## Community
+
+Discord: https://discord.gg/CtX9AArtA2 (talk about the project in the community channels; to work on the
+code, read [CONTRIBUTING.md](CONTRIBUTING.md) and ask for developer access in `#dev-access`). Bugs and
+feature requests go to GitHub issues.
+
 ## Contributing
 
 The map is the to-do list: pick a grey cell, say so on its issue, implement the function in
