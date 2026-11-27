@@ -573,12 +573,14 @@ impl<'g> ViewTable<'g> {
     /// Writes the records of the views registered since the last call, and retries the ones
     /// whose memory did not translate. The queue is idle.
     pub fn update(&mut self, mem: &mut GpuMemory<'_>) {
-        let total = crate::d3d12::descriptor::view_count();
-        if self.grow(total).is_err() {
+        // One snapshot: the title's threads keep registering views, so a count taken apart
+        // from the list could be smaller than the list.
+        let first = self.written;
+        let views = crate::d3d12::descriptor::views_from(first);
+        if self.grow(first + views.len()).is_err() {
             log_once("view table: cannot grow the buffer".into());
             return;
         }
-        let first = self.written;
         // views tried before and not translated, then the new ones
         let again = std::mem::take(&mut self.retry);
         for index in again {
@@ -591,7 +593,6 @@ impl<'g> ViewTable<'g> {
                 Rec::None => {}
             }
         }
-        let views = crate::d3d12::descriptor::views_from(first);
         for (k, v) in views.iter().enumerate() {
             let index = first + k;
             match record_of(v, mem) {
