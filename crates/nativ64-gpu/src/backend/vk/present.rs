@@ -73,10 +73,15 @@ pub fn dump_wanted(frame: u64) -> bool {
             .and_then(|v| v.parse().ok())
             .unwrap_or(0)
     });
+    // `NATIV64_DUMP_EVERY` picks the spacing between dumps (the default keeps the power-of-two
+    // frames and one a second)
     frame >= from
         && (frame.is_power_of_two()
-            || frame.is_multiple_of(60)
-            || (every > 0 && frame.is_multiple_of(every)))
+            || if every > 0 {
+                frame.is_multiple_of(every)
+            } else {
+                frame.is_multiple_of(60)
+            })
 }
 
 impl<'g> VkBackend<'g> {
