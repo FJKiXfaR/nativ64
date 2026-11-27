@@ -220,6 +220,29 @@ fn ping_loop(conn: Connection, mut queue: EventQueue<Ping>, stop: Arc<AtomicBool
     }
 }
 
+/// Time the title gets to quit after `WM_CLOSE` before the run is ended for it.
+const CLOSE_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+static CLOSE_ARMED: AtomicBool = AtomicBool::new(false);
+
+/// A console title has no window-close path, so it never quits on `WM_CLOSE`. Arms (once) a
+/// detached timer that ends the process with status 0, like `--timeout` ends it with 124.
+/// Returns whether this call armed the timer.
+fn arm_close_exit(armed: &AtomicBool, grace: std::time::Duration) -> bool {
+    if armed.swap(true, Ordering::SeqCst) {
+        return false;
+    }
+    std::thread::spawn(move || {
+        std::thread::sleep(grace);
+        let msg = b"nativ64: window closed\n";
+        // SAFETY: async-signal-safe write of a static buffer, then immediate process exit.
+        unsafe {
+            libc::write(2, msg.as_ptr().cast(), msg.len());
+            libc::_exit(0)
+        }
+    });
+    true
+}
+
 struct State {
     wm_base: Option<XdgWmBase>,
     compositor: Option<wl_compositor::WlCompositor>,
@@ -618,7 +641,10 @@ impl Dispatch<XdgToplevel, usize> for State {
                     win.pending = Some(((width, height), active, maximized));
                 }
             }
-            xdg_toplevel::Event::Close => st.out.push(Msg::new(hwnd, WM_CLOSE, 0, 0)),
+            xdg_toplevel::Event::Close => {
+                st.out.push(Msg::new(hwnd, WM_CLOSE, 0, 0));
+                arm_close_exit(&CLOSE_ARMED, CLOSE_GRACE);
+            }
             _ => {}
         }
     }
@@ -627,6 +653,13 @@ impl Dispatch<XdgToplevel, usize> for State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn close_exit_is_armed_once() {
+        let flag = AtomicBool::new(true);
+        // Already armed: no second timer (and no exit) is started.
+        assert!(!arm_close_exit(&flag, std::time::Duration::from_secs(3600)));
+    }
 
     #[test]
     fn states_decode() {
