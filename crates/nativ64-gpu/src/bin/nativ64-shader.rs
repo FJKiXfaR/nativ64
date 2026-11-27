@@ -1,5 +1,6 @@
 //! Prints the parsed container of shader blobs (the files `NATIV64_DUMP_SHADERS` writes):
-//! `nativ64-shader [--disasm | --ir | --textures] <blob>...`. With `--textures` the program's
+//! `nativ64-shader [--disasm | --ir | --textures | --origins] <blob>...`. With `--origins` the
+//! descriptor slot (user SGPR and table offset) of each image use is printed. With `--textures` the program's
 //! memory and image instructions are listed with a count per op name (which textures a shader
 //! samples, with dmask and dimension - matching a draw to its resources). With `--disasm` each program's code is followed
 //! from its entry and printed in LLVM syntax; with `--ir` it is printed as the SSA IR. `nativ64-shader --hex <file>` disassembles one
@@ -25,6 +26,7 @@ fn main() -> ExitCode {
     let disasm = args.first().is_some_and(|a| a == "--disasm");
     let ir = args.first().is_some_and(|a| a == "--ir");
     let textures = args.first().is_some_and(|a| a == "--textures");
+    let origins = args.first().is_some_and(|a| a == "--origins");
     let structure = args.first().is_some_and(|a| a == "--structure");
     if args.first().is_some_and(|a| a == "--spirv") {
         args.remove(0);
@@ -46,6 +48,10 @@ fn main() -> ExitCode {
                 ExitCode::from(2)
             }
         };
+    }
+    if origins {
+        args.remove(0);
+        return origins_print(&args);
     }
     if disasm || ir || textures {
         args.remove(0);
@@ -108,6 +114,64 @@ fn main() -> ExitCode {
             }
             Err(e) => {
                 println!("refused: {e}");
+                failed = true;
+            }
+        }
+    }
+    if failed {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+/// `--origins`: translates each program and lets the emitter print the user SGPR and table
+/// offset each image use loads its descriptor from (the descriptor slot a draw's texture comes
+/// from, for matching a draw's rows to a shader's samples).
+fn origins_print(files: &[String]) -> ExitCode {
+    use nativ64_gpu::shader::{self, ir, spirv, structure};
+    std::env::set_var("NATIV64_ORIGINS", "1");
+    let mut failed = false;
+    for f in files {
+        let Ok(bytes) = std::fs::read(f) else {
+            eprintln!("{f}: cannot read");
+            failed = true;
+            continue;
+        };
+        println!("== {f}");
+        let Ok(p) = shader::parse(&bytes) else {
+            println!("refused");
+            failed = true;
+            continue;
+        };
+        let Some(rec) = p.record() else {
+            println!("no record for the blob's stage");
+            continue;
+        };
+        let io = shader::io::stage_io(&p, &[], None);
+        let code = match io {
+            Some(_) => shader::io::stage_code(&p, rec),
+            None => p.native.code(rec).to_vec(),
+        };
+        let regs = ir::EntryRegs::from_stage(rec);
+        match ir::build(&code, gfx10::ENTRY, rec.wave32(), &regs) {
+            Ok(func) => match structure::structure(&func) {
+                Ok(st) => {
+                    let built = match io {
+                        Some(io) => spirv::translate_io(&func, &st, &io).map(|t| t.words),
+                        None => spirv::translate(&func, &st).map(|p| p.words),
+                    };
+                    if built.is_err() {
+                        println!("  translation refused");
+                    }
+                }
+                Err(e) => {
+                    println!("  structure error: {e}");
+                    failed = true;
+                }
+            },
+            Err(e) => {
+                println!("  IR error: {e}");
                 failed = true;
             }
         }

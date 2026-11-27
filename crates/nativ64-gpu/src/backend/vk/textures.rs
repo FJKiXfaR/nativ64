@@ -164,6 +164,13 @@ impl TexState {
 pub(super) const UPLOAD_CAP: u64 = 256 << 20;
 
 impl TexState {
+    /// Whether the descriptor written for sampled index `i` is a real view (not the hole).
+    pub(super) fn bound_is_view(&self, i: usize) -> bool {
+        self.bound
+            .get(i)
+            .is_some_and(|v| *v != vk::ImageView::null())
+    }
+
     /// A one-line description of the entry at sampled index `i` (a diagnostic).
     pub(super) fn describe_entry(&self, i: usize) -> String {
         match self.entries.get(i) {
@@ -577,6 +584,18 @@ fn upload(
     let th = profile::start();
     // SAFETY: the range lies in committed, accessible pages of the memory table.
     let data = unsafe { std::slice::from_raw_parts(at as *const u8, size) };
+    // `NATIV64_TEX_STATS=1`: how much of a big texture is nonzero - whether the memory an
+    // upload reads is the content the title wrote (a blank font atlas hides text).
+    if size >= (1 << 20)
+        && std::env::var("NATIV64_TEX_STATS").is_ok_and(|v| !v.is_empty() && v != "0")
+    {
+        let nz = data.iter().filter(|&&b| b != 0).count();
+        eprintln!(
+            "texture stats: {:?} {size} bytes, {nz} nonzero ({:.1}%)",
+            t.desc,
+            100.0 * nz as f64 / size as f64
+        );
+    }
     let hash = hash64(data);
     stats.hashed += size as u64;
     profile::stop(Phase::Hash, th);

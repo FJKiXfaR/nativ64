@@ -487,6 +487,11 @@ impl<'g> VkBackend<'g> {
             }
         }
         let heap = self.draw.list.root.resource_heap();
+        let ps = pd
+            .stages
+            .iter()
+            .find(|s| s.name == "pixel")
+            .map(|s| crate::shader::fnv1a64(&s.bytes));
         for row in &built.rows {
             if !matches!(row.root_type, 3 | 5) {
                 continue;
@@ -503,7 +508,12 @@ impl<'g> VkBackend<'g> {
             let viewed = unsafe { crate::d3d12::descriptor::registry_index_at(slot) };
             let what = match viewed {
                 Some(index) => {
-                    let entry = self.tex.describe_entry(index as usize);
+                    let bound = if self.tex.bound_is_view(index as usize) {
+                        "bound"
+                    } else {
+                        "NOT bound (hole)"
+                    };
+                    let entry = format!("{bound}; {}", self.tex.describe_entry(index as usize));
                     if entry == "hole" {
                         // the reason a hole: the registered view, to name its resource
                         match crate::d3d12::descriptor::view_at(index as usize) {
@@ -517,10 +527,13 @@ impl<'g> VkBackend<'g> {
                 None => "an unwritten slot".to_owned(),
             };
             super::log_once(format!(
-                "draw rows: pipeline {} row root_type {} slot {} table_offset {} addr {addr:#x} heap {heap:#x} slot {slot:#x} is {what}",
+                "draw rows: pipeline {} ps {:016x} row root_type {} slot {} user sgpr {}..{} table_offset {} addr {addr:#x} heap {heap:#x} slot {slot:#x} is {what}",
                 pd.serial,
+                ps.unwrap_or(0),
                 row.root_type,
                 row.root_slot,
+                row.first_user_dword,
+                row.first_user_dword as u32 + row.user_sgprs.max(1),
                 row.table_offset,
                 slot = slot,
             ));

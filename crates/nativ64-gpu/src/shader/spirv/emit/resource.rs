@@ -1021,6 +1021,13 @@ impl<'a> Tr<'a> {
         if !loaded(self, rsrc.first()) {
             return refuse("an image that is not loaded from a table");
         }
+        if std::env::var_os("NATIV64_ORIGINS").is_some() {
+            let origin = rsrc.first().and_then(|s| match s {
+                Src::Val(v) => self.res().analysis.origin.get(v).copied(),
+                _ => None,
+            });
+            eprintln!("origin: {name} image {origin:?}");
+        }
         let (tex, img) = self.texture_array(m.dim);
         let index = self.bits_of(c.srcs[ns - 2][0]);
         self.non_uniform(index);
@@ -1181,6 +1188,9 @@ impl<'a> Tr<'a> {
         let Some((sgpr, offset)) = origin else {
             return refuse("an image that is not loaded from a table slot at a constant offset");
         };
+        if std::env::var_os("NATIV64_ORIGINS").is_some() {
+            eprintln!("origin: {name} user sgpr {sgpr} table offset {offset} bytes");
+        }
         let Some(kind) = self.io().descriptor_kind(sgpr, offset) else {
             return refuse("an image whose table slot no used-resource row names");
         };
