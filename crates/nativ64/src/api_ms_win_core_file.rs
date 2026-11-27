@@ -12,7 +12,7 @@ use crate::api_ms_win_core_errorhandling::set_last_error;
 use crate::paths::map_read_path;
 use std::ffi::c_void;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
 const INVALID_FILE_ATTRIBUTES: u32 = 0xFFFF_FFFF;
 const FILE_ATTRIBUTE_READONLY: u32 = 0x1;
@@ -22,6 +22,7 @@ pub(crate) const ERROR_FILE_NOT_FOUND: u32 = 2;
 pub(crate) const ERROR_PATH_NOT_FOUND: u32 = 3;
 const ERROR_ACCESS_DENIED: u32 = 5;
 const ERROR_INVALID_HANDLE: u32 = 6;
+const ERROR_INVALID_PARAMETER: u32 = 87;
 const ERROR_FILE_EXISTS: u32 = 80;
 const ERROR_ALREADY_EXISTS: u32 = 183;
 const ERROR_NO_MORE_FILES: u32 = 18;
@@ -509,6 +510,174 @@ unsafe fn local_filetime_to_filetime(in_ft: *const u64, out_ft: *mut u64) -> i32
     1
 }
 
+/// `SetFileAttributesW`: read-only maps to the write bits of the host file; the other Windows
+/// attributes (hidden, system, archive) have no host equivalent and are accepted.
+fn set_file_attributes(path: &str, attrs: u32) -> Result<(), u32> {
+    let Some(host) = crate::paths::map_write_path(path)
+        .filter(|p| p.exists())
+        .or_else(|| {
+            let r = map_read_path(path);
+            r.exists().then_some(r)
+        })
+    else {
+        return Err(ERROR_FILE_NOT_FOUND);
+    };
+    let meta =
+        std::fs::metadata(&host).map_err(|e| last_error_of(e.raw_os_error().unwrap_or(0)))?;
+    if attrs & FILE_ATTRIBUTE_DIRECTORY != 0 && !meta.is_dir() {
+        return Err(ERROR_INVALID_PARAMETER);
+    }
+    let mode = meta.permissions().mode() & 0o7777;
+    let mode = if attrs & FILE_ATTRIBUTE_READONLY != 0 {
+        mode & !0o222
+    } else {
+        mode | 0o200
+    };
+    let c = std::ffi::CString::new(host.as_os_str().as_encoded_bytes())
+        .map_err(|_| ERROR_FILE_NOT_FOUND)?;
+    // SAFETY: a valid NUL-terminated path.
+    if unsafe { libc::chmod(c.as_ptr(), mode as libc::mode_t) } != 0 {
+        return Err(last_error_of(errno()));
+    }
+    Ok(())
+}
+
+/// The host path for something about to be created: under the write directory, parents made.
+fn host_create_path(path: &str) -> Result<std::path::PathBuf, u32> {
+    let host = crate::paths::map_write_path(path).ok_or(ERROR_FILE_NOT_FOUND)?;
+    if let Some(parent) = host.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    Ok(host)
+}
+
+/// `GetTempPathW`: `TMPDIR`, `TEMP`, `TMP` or `/tmp`, with a trailing separator.
+fn temp_path() -> String {
+    for var in ["TMPDIR", "TEMP", "TMP"] {
+        if let Some(v) = std::env::var_os(var) {
+            let s = v.to_string_lossy().into_owned();
+            if !s.is_empty() {
+                return if s.ends_with('/') { s } else { format!("{s}/") };
+            }
+        }
+    }
+    "/tmp/".to_string()
+}
+
+/// A `FILETIME` as a `timespec`, or `UTIME_OMIT` for a NULL pointer.
+unsafe fn timespec_of(ft: *const u64) -> libc::timespec {
+    if ft.is_null() {
+        return libc::timespec {
+            tv_sec: 0,
+            tv_nsec: libc::UTIME_OMIT,
+        };
+    }
+    let (secs, ticks) = crate::filetime::split(unsafe { ft.read_unaligned() });
+    libc::timespec {
+        tv_sec: secs as libc::time_t,
+        tv_nsec: i64::from(ticks) * 100,
+    }
+}
+
+/// `SetFileTime`: atime and mtime on the handle's file; creation time has no host equivalent and
+/// is ignored.
+unsafe fn set_file_time(
+    h: usize,
+    created: *const u64,
+    accessed: *const u64,
+    written: *const u64,
+) -> i32 {
+    let _ = created;
+    let times = [unsafe { timespec_of(accessed) }, unsafe {
+        timespec_of(written)
+    }];
+    let r = crate::handles::with_file(h, |f| unsafe {
+        libc::futimens(f.fd.as_raw_fd(), times.as_ptr()) == 0
+    });
+    match r {
+        Some(true) => 1,
+        Some(false) => {
+            set_last_error(ERROR_ACCESS_DENIED);
+            0
+        }
+        None => 0,
+    }
+}
+
+/// `GetFileInformationByHandle`: `BY_HANDLE_FILE_INFORMATION` (52 bytes) from `fstat`.
+unsafe fn file_information(h: usize, out: *mut u8) -> i32 {
+    if out.is_null() {
+        set_last_error(crate::handles::ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    let r = crate::handles::with_file(h, |f| {
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        (unsafe { libc::fstat(f.fd.as_raw_fd(), &mut st) } == 0).then_some(st)
+    });
+    let Some(Some(st)) = r else {
+        return 0;
+    };
+    let attrs = if st.st_mode & libc::S_IFMT == libc::S_IFDIR {
+        FILE_ATTRIBUTE_DIRECTORY
+    } else if st.st_mode & 0o222 == 0 {
+        FILE_ATTRIBUTE_READONLY
+    } else {
+        FILE_ATTRIBUTE_NORMAL
+    };
+    let ft = |secs: i64, nsec: i64| crate::filetime::from_parts(secs, (nsec / 100) as u32);
+    let size = st.st_size as u64;
+    let ino = st.st_ino;
+    let put32 = |at: usize, v: u32| unsafe { (out.add(at) as *mut u32).write_unaligned(v) };
+    let put64 = |at: usize, v: u64| unsafe { (out.add(at) as *mut u64).write_unaligned(v) };
+    put32(0, attrs);
+    put64(4, ft(st.st_ctime, st.st_ctime_nsec));
+    put64(12, ft(st.st_atime, st.st_atime_nsec));
+    put64(20, ft(st.st_mtime, st.st_mtime_nsec));
+    put32(28, st.st_dev as u32);
+    put32(32, (size >> 32) as u32);
+    put32(36, size as u32);
+    put32(40, st.st_nlink as u32);
+    put32(44, (ino >> 32) as u32);
+    put32(48, ino as u32);
+    1
+}
+
+/// `HRESULT_FROM_WIN32`.
+fn hresult_of(win32: u32) -> i32 {
+    (0x8007_0000u32 | (win32 & 0xffff)) as i32
+}
+
+/// `CopyFile2`: a plain copy with the fail-if-exists flag; the progress callback is not called.
+unsafe fn copy_file2(src: *const u16, dst: *const u16, params: *const u8) -> i32 {
+    let (Some(from), Some(to)) = (crate::handles::name_w(src), crate::handles::name_w(dst)) else {
+        return hresult_of(crate::handles::ERROR_INVALID_PARAMETER);
+    };
+    let mut flags = 0u32;
+    if !params.is_null() {
+        let size = unsafe { (params as *const u32).read_unaligned() };
+        if size >= 8 {
+            flags = unsafe { (params.add(4) as *const u32).read_unaligned() };
+        }
+    }
+    const FAIL_IF_EXISTS: u32 = 0x1;
+    let source = crate::paths::map_write_path(&from)
+        .filter(|p| p.exists())
+        .unwrap_or_else(|| map_read_path(&from));
+    if !source.exists() {
+        return hresult_of(ERROR_FILE_NOT_FOUND);
+    }
+    let Ok(target) = host_create_path(&to) else {
+        return hresult_of(ERROR_FILE_NOT_FOUND);
+    };
+    if flags & FAIL_IF_EXISTS != 0 && target.exists() {
+        return hresult_of(ERROR_FILE_EXISTS);
+    }
+    match std::fs::copy(&source, &target) {
+        Ok(_) => 0,
+        Err(e) => hresult_of(last_error_of(e.raw_os_error().unwrap_or(0))),
+    }
+}
+
 crate::win32! {
     module "api-ms-win-core-file" => "kernel32";
 
@@ -762,6 +931,111 @@ crate::win32! {
             }
         }
     }
+    Native fn SetFileAttributesW(path: *const u16, attrs: u32) -> i32 {
+        let r = match crate::handles::name_w(path) {
+            Some(p) => set_file_attributes(&p, attrs),
+            None => Err(crate::handles::ERROR_INVALID_PARAMETER),
+        };
+        status(r)
+    }
+    Native fn SetFileTime(h: usize, created: *const u64, accessed: *const u64, written: *const u64) -> i32 {
+        unsafe { set_file_time(h, created, accessed, written) }
+    }
+    Native fn GetFileInformationByHandle(h: usize, out: *mut u8) -> i32 {
+        unsafe { file_information(h, out) }
+    }
+    Native fn GetTempPathW(len: u32, buf: *mut u16) -> u32 {
+        let path: Vec<u16> = temp_path().encode_utf16().collect();
+        let need = path.len() as u32 + 1;
+        if buf.is_null() || len < need {
+            return need;
+        }
+        for (i, c) in path.iter().enumerate() {
+            unsafe { buf.add(i).write_unaligned(*c) };
+        }
+        unsafe { buf.add(path.len()).write(0) };
+        path.len() as u32
+    }
+    Native fn CreateFile2(path: *const u16, access: u32, share: u32, disposition: u32,
+                          params: *const c_void) -> usize {
+        let _ = (share, params);
+        let Some(p) = crate::handles::name_w(path) else {
+            set_last_error(crate::handles::ERROR_INVALID_PARAMETER);
+            return INVALID_HANDLE_VALUE;
+        };
+        match open_path(&p, access, disposition) {
+            Ok((fd, existed)) => {
+                set_last_error(if existed && matches!(disposition, CREATE_ALWAYS | OPEN_ALWAYS) {
+                    ERROR_ALREADY_EXISTS
+                } else {
+                    0
+                });
+                crate::handles::create_file_handle(fd)
+            }
+            Err(e) => {
+                set_last_error(e);
+                INVALID_HANDLE_VALUE
+            }
+        }
+    }
+    Native fn CopyFile2(src: *const u16, dst: *const u16, params: *const u8) -> i32 {
+        unsafe { copy_file2(src, dst, params) }
+    }
+    Native fn CreateHardLinkW(link: *const u16, existing: *const u16, security: *const c_void) -> i32 {
+        let _ = security;
+        let (Some(new), Some(old)) = (crate::handles::name_w(link), crate::handles::name_w(existing)) else {
+            set_last_error(crate::handles::ERROR_INVALID_PARAMETER);
+            return 0;
+        };
+        let Ok(target) = host_create_path(&new) else {
+            set_last_error(ERROR_FILE_NOT_FOUND);
+            return 0;
+        };
+        let source = crate::paths::map_write_path(&old)
+            .filter(|p| p.exists())
+            .unwrap_or_else(|| map_read_path(&old));
+        let (Ok(c_new), Ok(c_old)) = (
+            std::ffi::CString::new(target.as_os_str().as_encoded_bytes()),
+            std::ffi::CString::new(source.as_os_str().as_encoded_bytes()),
+        ) else {
+            set_last_error(crate::handles::ERROR_INVALID_PARAMETER);
+            return 0;
+        };
+        // SAFETY: both are valid NUL-terminated paths.
+        if unsafe { libc::link(c_old.as_ptr(), c_new.as_ptr()) } != 0 {
+            set_last_error(last_error_of(errno()));
+            return 0;
+        }
+        1
+    }
+    Native fn CreateSymbolicLinkW(link: *const u16, target: *const u16, flags: u32) -> i32 {
+        let _ = flags;
+        let (Some(new), Some(old)) = (crate::handles::name_w(link), crate::handles::name_w(target)) else {
+            set_last_error(crate::handles::ERROR_INVALID_PARAMETER);
+            return 0;
+        };
+        let Ok(target_path) = host_create_path(&new) else {
+            set_last_error(ERROR_FILE_NOT_FOUND);
+            return 0;
+        };
+        let source = crate::paths::map_write_path(&old)
+            .filter(|p| p.exists())
+            .unwrap_or_else(|| map_read_path(&old));
+        let (Ok(c_new), Ok(c_old)) = (
+            std::ffi::CString::new(target_path.as_os_str().as_encoded_bytes()),
+            std::ffi::CString::new(source.as_os_str().as_encoded_bytes()),
+        ) else {
+            set_last_error(crate::handles::ERROR_INVALID_PARAMETER);
+            return 0;
+        };
+        // SAFETY: both are valid NUL-terminated paths.
+        if unsafe { libc::symlink(c_old.as_ptr(), c_new.as_ptr()) } != 0 {
+            set_last_error(last_error_of(errno()));
+            return 0;
+        }
+        1
+    }
+
 }
 
 #[cfg(test)]
@@ -1086,6 +1360,154 @@ mod tests {
             assert_eq!(GetDiskFreeSpaceExW(bad.as_ptr(), &mut a, &mut t, &mut f), 0);
             assert_eq!(last_error(), ERROR_PATH_NOT_FOUND);
             assert!(crate::lookup("kernel32", "FindFirstFileW").is_some());
+        }
+    }
+
+    fn write_path(name: &str) -> std::path::PathBuf {
+        let p = crate::paths::map_write_path(name).unwrap();
+        if let Some(parent) = p.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        p
+    }
+
+    #[test]
+    fn temp_path_answers_the_needed_length() {
+        let mut small = [0u16; 4];
+        let need = unsafe { GetTempPathW(4, small.as_mut_ptr()) };
+        assert!(need >= 2, "need {need}");
+        let mut buf = vec![0u16; need as usize];
+        let n = unsafe { GetTempPathW(buf.len() as u32, buf.as_mut_ptr()) };
+        assert_eq!(n as usize + 1, need as usize);
+        assert_eq!(buf[n as usize], 0);
+        assert_eq!(buf[n as usize - 1], b'/' as u16);
+        // A NULL buffer still answers the needed length.
+        assert_eq!(unsafe { GetTempPathW(0, std::ptr::null_mut()) }, need);
+    }
+
+    #[test]
+    fn attributes_and_file_information() {
+        let _g = sandbox();
+        let name = "nativ64-file-batch-attr.txt";
+        let path = w(name);
+        unsafe {
+            let h = CreateFile2(
+                path.as_ptr(),
+                0x4000_0000,
+                0,
+                CREATE_ALWAYS,
+                std::ptr::null(),
+            );
+            assert_ne!(h, INVALID_HANDLE_VALUE);
+            let data = b"hello";
+            let mut written = 0u32;
+            assert_eq!(
+                WriteFile(h, data.as_ptr(), 5, &mut written, std::ptr::null()),
+                1
+            );
+            assert_eq!(written, 5);
+            let mut info = [0u8; 52];
+            assert_eq!(GetFileInformationByHandle(h, info.as_mut_ptr()), 1);
+            assert!(u64::from_le_bytes(info[20..28].try_into().unwrap()) > 0);
+            assert_eq!(u32::from_le_bytes(info[36..40].try_into().unwrap()), 5);
+            assert!(u32::from_le_bytes(info[40..44].try_into().unwrap()) >= 1);
+            crate::handles::close_handle(h);
+
+            // Read-only through the host write bits, then back to normal.
+            assert_eq!(
+                SetFileAttributesW(path.as_ptr(), FILE_ATTRIBUTE_READONLY),
+                1
+            );
+            let mode = std::fs::metadata(write_path(name))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o222, 0, "read-only");
+            assert_eq!(SetFileAttributesW(path.as_ptr(), FILE_ATTRIBUTE_NORMAL), 1);
+            let mode = std::fs::metadata(write_path(name))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_ne!(mode & 0o200, 0, "writable again");
+            // Missing file.
+            let missing = w("nativ64-no-such-file.txt");
+            assert_eq!(SetFileAttributesW(missing.as_ptr(), 0), 0);
+            assert_eq!(last_error(), ERROR_FILE_NOT_FOUND);
+            let _ = std::fs::remove_file(write_path(name));
+        }
+    }
+
+    #[test]
+    fn set_file_time_round_trips() {
+        let _g = sandbox();
+        let name = "nativ64-file-batch-time.txt";
+        let path = w(name);
+        unsafe {
+            let h = CreateFile2(
+                path.as_ptr(),
+                0x4000_0000,
+                0,
+                CREATE_ALWAYS,
+                std::ptr::null(),
+            );
+            assert_ne!(h, INVALID_HANDLE_VALUE);
+            let ft = crate::filetime::from_parts(1_600_000_000, 12_345_600);
+            assert_eq!(SetFileTime(h, std::ptr::null(), &ft, &ft), 1);
+            let (mut at, mut wt) = (0u64, 0u64);
+            assert_eq!(GetFileTime(h, std::ptr::null_mut(), &mut at, &mut wt), 1);
+            // The host stores nanoseconds; the FILETIME has 100 ns resolution.
+            let norm = |v: u64| v / 100 * 100;
+            assert_eq!(norm(at), norm(ft));
+            assert_eq!(norm(wt), norm(ft));
+            crate::handles::close_handle(h);
+            let _ = std::fs::remove_file(write_path(name));
+        }
+    }
+
+    #[test]
+    fn copy_file2_honours_fail_if_exists() {
+        let _g = sandbox();
+        let (src, dst) = ("nativ64-file-batch-src.bin", "nativ64-file-batch-dst.bin");
+        std::fs::write(write_path(src), b"copy me").unwrap();
+        let sp = w(src);
+        let dp = w(dst);
+        unsafe {
+            assert_eq!(CopyFile2(sp.as_ptr(), dp.as_ptr(), std::ptr::null()), 0);
+            assert_eq!(std::fs::read(write_path(dst)).unwrap(), b"copy me");
+            // COPYFILE2_EXTENDED_PARAMETERS: size, then COPY_FILE_FAIL_IF_EXISTS.
+            let mut params = [0u8; 32];
+            params[0..4].copy_from_slice(&32u32.to_le_bytes());
+            params[4..8].copy_from_slice(&1u32.to_le_bytes());
+            let hr = CopyFile2(sp.as_ptr(), dp.as_ptr(), params.as_ptr());
+            assert!(hr < 0, "the destination exists");
+            assert_eq!(hr, hresult_of(ERROR_FILE_EXISTS));
+            let _ = std::fs::remove_file(write_path(src));
+            let _ = std::fs::remove_file(write_path(dst));
+        }
+    }
+
+    #[test]
+    fn hard_and_symbolic_links() {
+        let _g = sandbox();
+        let target = "nativ64-file-batch-link.txt";
+        std::fs::write(write_path(target), b"x").unwrap();
+        let tp = w(target);
+        let hard = w("nativ64-file-batch-hard.txt");
+        let sym = w("nativ64-file-batch-sym.txt");
+        unsafe {
+            assert_eq!(
+                CreateHardLinkW(hard.as_ptr(), tp.as_ptr(), std::ptr::null()),
+                1
+            );
+            let a = std::fs::metadata(write_path(target)).unwrap();
+            let b = std::fs::metadata(write_path("nativ64-file-batch-hard.txt")).unwrap();
+            assert_eq!(a.ino(), b.ino(), "same inode");
+            assert_eq!(CreateSymbolicLinkW(sym.as_ptr(), tp.as_ptr(), 0), 1);
+            let link = std::fs::read_link(write_path("nativ64-file-batch-sym.txt")).unwrap();
+            assert_eq!(link, write_path(target));
+            let _ = std::fs::remove_file(write_path("nativ64-file-batch-sym.txt"));
+            let _ = std::fs::remove_file(write_path("nativ64-file-batch-hard.txt"));
+            let _ = std::fs::remove_file(write_path(target));
         }
     }
 }
