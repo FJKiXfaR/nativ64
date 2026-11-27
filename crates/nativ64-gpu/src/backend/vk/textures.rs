@@ -142,6 +142,20 @@ pub(super) struct TexState {
     pub(super) cap: Option<u64>,
 }
 
+impl TexState {
+    /// The registry indices made resident: the residency scan's set, or every index when
+    /// `NATIV64_RESIDENT_ALL` asks for the pre-residency behaviour (diagnostics: a texture a
+    /// missing view misses goes blank, and uploading everything tells that apart from a
+    /// content that is simply not drawn).
+    pub(super) fn resident(&self) -> Vec<u32> {
+        if std::env::var("NATIV64_RESIDENT_ALL").is_ok_and(|v| !v.is_empty() && v != "0") {
+            (0..self.entries.len() as u32).collect()
+        } else {
+            self.wanted.iter().copied().collect()
+        }
+    }
+}
+
 /// The most a pass of texture uploads stages before it is submitted and the staging freed: the
 /// staging buffers are host memory the driver pins, and a scene change can upload gigabytes
 /// of textures at once.
@@ -1065,7 +1079,8 @@ impl<'g> VkBackend<'g> {
         // 2. images and uploads: of what the draws can read
         let mut uploaded = false;
         let (mut resources, mut placed, mut storage) = (Vec::new(), Vec::new(), Vec::new());
-        for &i in &self.tex.wanted {
+        let resident = self.tex.resident();
+        for &i in &resident {
             match self.tex.entries.get(i as usize) {
                 Some(Entry::Texture { res, .. }) => resources.push(*res),
                 Some(Entry::Storage { res, .. }) => {
@@ -1120,8 +1135,7 @@ impl<'g> VkBackend<'g> {
             .map(|i| i as usize)
             .filter(|&i| i < from)
             .collect();
-        let wanted: Vec<u32> = self.tex.wanted.iter().copied().collect();
-        for i in wanted {
+        for i in resident {
             let i = i as usize;
             if i < from.min(end) && !again.contains(&i) {
                 let view = self.view_of(i);
