@@ -238,6 +238,16 @@ pub fn view_count() -> usize {
     VIEWS.lock().unwrap_or_else(|e| e.into_inner()).len()
 }
 
+/// The registry index the view or sampler descriptor at `handle` holds, if it holds one.
+///
+/// # Safety
+/// `handle..handle + 8` is readable.
+pub unsafe fn registry_index_at(handle: u64) -> Option<u32> {
+    // SAFETY: the caller guarantees the slot is readable.
+    let [tag, index] = unsafe { (handle as *const [u32; 2]).read_unaligned() };
+    (tag == VIEW_TAG).then_some(index)
+}
+
 /// The recorded views from registry index `first` on.
 pub fn views_from(first: usize) -> Vec<View> {
     let v = VIEWS.lock().unwrap_or_else(|e| e.into_inner());

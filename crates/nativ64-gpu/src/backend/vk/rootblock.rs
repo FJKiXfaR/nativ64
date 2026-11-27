@@ -33,9 +33,12 @@ pub const BLOCK: usize = VIEW_TABLE + 8;
 /// each block on its own cache lines).
 pub const STRIDE: usize = 512;
 
-/// The root arguments a list set on its graphics root signature.
+/// The root arguments a list set on its graphics root signature, or (`RootArgs::compute`) on
+/// its compute one.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RootArgs {
+    /// Folds the commands of the compute root signature in (chunk 10c).
+    compute: bool,
     pub(super) constants: BTreeMap<u32, Vec<u32>>,
     pub(super) tables: BTreeMap<u32, u64>,
     pub(super) views: BTreeMap<u32, u64>,
@@ -45,28 +48,39 @@ pub struct RootArgs {
 }
 
 impl RootArgs {
+    /// The arguments of the compute root signature.
+    pub fn compute() -> Self {
+        RootArgs {
+            compute: true,
+            ..Default::default()
+        }
+    }
+
     /// Folds a state command in; false when `c` is none of ours.
     pub fn apply(&mut self, c: &Command) -> bool {
         match c {
-            Command::RootSignature { compute: false, .. } => {
+            Command::RootSignature { compute, .. } if *compute == self.compute => {
                 // a new root signature drops the arguments (the heaps stay bound)
                 let (r, s) = (self.resource_heap, self.sampler_heap);
-                *self = RootArgs::default();
+                *self = RootArgs {
+                    compute: self.compute,
+                    ..Default::default()
+                };
                 (self.resource_heap, self.sampler_heap) = (r, s);
             }
             Command::RootTable {
-                compute: false,
+                compute,
                 slot,
                 handle,
-            } => {
+            } if *compute == self.compute => {
                 self.tables.insert(*slot, *handle);
             }
             Command::RootConstants {
-                compute: false,
+                compute,
                 slot,
                 offset,
                 values,
-            } => {
+            } if *compute == self.compute => {
                 let v = self.constants.entry(*slot).or_default();
                 let end = *offset as usize + values.len();
                 if v.len() < end {
@@ -75,11 +89,11 @@ impl RootArgs {
                 v[*offset as usize..end].copy_from_slice(values);
             }
             Command::RootView {
-                compute: false,
+                compute,
                 slot,
                 address,
                 ..
-            } => {
+            } if *compute == self.compute => {
                 self.views.insert(*slot, *address);
             }
             Command::Heaps(heaps) => {

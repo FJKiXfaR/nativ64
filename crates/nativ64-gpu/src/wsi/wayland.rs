@@ -3,9 +3,17 @@
 //!
 //! Thread model: the backend sits in the global `Mutex` of `nativ64::windowing`, and every hook
 //! (`on_create`, `on_show`, `on_destroy`, `poll_events`) runs on the title thread that owns the
-//! window, so the event queue is only ever read from one thread at a time. The connection is
-//! made in `new()` (to fail early without a compositor); globals are bound and the queue is
+//! window, so the main event queue is only ever read from one thread at a time. The connection
+//! is made in `new()` (to fail early without a compositor); globals are bound and the queue is
 //! created on the first `on_create`. Nothing here blocks except that one roundtrip.
+//!
+//! The one exception is `xdg_wm_base`, which lives on its own event queue served by a small
+//! helper thread (`ping_loop`): the compositor's `ping` must be answered even while the title
+//! does not poll for a long time (loading), or the window is flagged "not responding". The
+//! helper reads the shared socket with the usual `prepare_read` / `poll` (100 ms timeout, so it
+//! sees the stop flag) and dispatches only its own queue; everything created from `xdg_wm_base`
+//! (`xdg_surface`, `xdg_toplevel`) is still put on the main queue. Events it reads for the main
+//! queue just wait there for the next `poll_events`. The thread is joined when the backend drops.
 //!
 //! One `xdg_toplevel` per HWND. We never attach a buffer ourselves: the window is mapped by the
 //! first buffer the Vulkan swapchain presents, and `on_show(false)` unmaps it by attaching a
@@ -21,6 +29,9 @@ use nativ64::windowing::{
 };
 use std::collections::HashMap;
 use std::os::fd::AsRawFd;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::thread::JoinHandle;
 use wayland_client::globals::{registry_queue_init, GlobalListContents};
 use wayland_client::protocol::{wl_compositor, wl_registry, wl_surface};
 use wayland_client::{delegate_noop, Connection, Dispatch, EventQueue, Proxy, QueueHandle};
@@ -111,6 +122,55 @@ struct Win {
     active: bool,
 }
 
+/// State of the ping queue: `xdg_wm_base.ping` needs nothing but the object itself.
+struct Ping;
+
+/// The helper thread answering `xdg_wm_base.ping`; stopped and joined on drop.
+struct PingThread {
+    stop: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl Drop for PingThread {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
+}
+
+/// Serve `queue` (the `xdg_wm_base` queue) until `stop` is set or the connection fails.
+fn ping_loop(conn: Connection, mut queue: EventQueue<Ping>, stop: Arc<AtomicBool>) {
+    let mut st = Ping;
+    while !stop.load(Ordering::Relaxed) {
+        if queue.dispatch_pending(&mut st).is_err() || flush(&conn).is_err() {
+            return;
+        }
+        let Some(guard) = queue.prepare_read() else {
+            // Events are pending in libwayland's own queue: let them be dispatched.
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            continue;
+        };
+        let mut p = libc::pollfd {
+            fd: guard.connection_fd().as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: one valid pollfd; the guard keeps the fd alive.
+        if unsafe { libc::poll(&mut p, 1, 100) } > 0 {
+            match guard.read() {
+                Err(wayland_client::backend::WaylandError::Io(e))
+                    if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(_) => return,
+                Ok(_) => {}
+            }
+        } else {
+            drop(guard);
+        }
+    }
+}
+
 struct State {
     wm_base: Option<XdgWmBase>,
     compositor: Option<wl_compositor::WlCompositor>,
@@ -127,6 +187,7 @@ struct Live {
 pub struct WaylandBackend {
     conn: Connection,
     live: Option<Live>,
+    ping: Option<PingThread>,
     /// A protocol or socket error happened: the backend stops dispatching.
     dead: bool,
 }
@@ -148,6 +209,7 @@ impl WaylandBackend {
         Ok(WaylandBackend {
             conn,
             live: None,
+            ping: None,
             dead: false,
         })
     }
@@ -170,8 +232,9 @@ impl WaylandBackend {
             }
         };
         let qh = queue.handle();
+        let ping_queue = self.conn.new_event_queue::<Ping>();
         let mut state = State {
-            wm_base: globals.bind(&qh, 1..=6, ()).ok(),
+            wm_base: globals.bind(&ping_queue.handle(), 1..=6, ()).ok(),
             compositor: globals.bind(&qh, 1..=6, ()).ok(),
             deco_mgr: globals.bind(&qh, 1..=1, ()).ok(),
             wins: HashMap::new(),
@@ -183,6 +246,22 @@ impl WaylandBackend {
             return false;
         }
         let _ = queue.roundtrip(&mut state);
+        let stop = Arc::new(AtomicBool::new(false));
+        let handle = {
+            let (conn, stop) = (self.conn.clone(), stop.clone());
+            std::thread::Builder::new()
+                .name("nativ64-wl-ping".into())
+                .spawn(move || ping_loop(conn, ping_queue, stop))
+        };
+        match handle {
+            Ok(h) => {
+                self.ping = Some(PingThread {
+                    stop,
+                    handle: Some(h),
+                })
+            }
+            Err(e) => eprintln!("nativ64-gpu: wayland: ping thread: {e}"),
+        }
         self.live = Some(Live { queue, state });
         true
     }
@@ -351,7 +430,7 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
     }
 }
 
-impl Dispatch<XdgWmBase, ()> for State {
+impl Dispatch<XdgWmBase, ()> for Ping {
     fn event(
         _: &mut Self,
         base: &XdgWmBase,
@@ -451,6 +530,23 @@ mod tests {
         assert_eq!(activate_msg(1, false, true).unwrap().wparam, WA_ACTIVE);
         let m = activate_msg(1, true, false).unwrap();
         assert_eq!((m.message, m.wparam), (WM_ACTIVATE, 0));
+    }
+
+    #[test]
+    fn ping_thread_stops_on_drop() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = stop.clone();
+        let handle = std::thread::spawn(move || {
+            while !flag.load(Ordering::Relaxed) {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        });
+        // Dropping sets the flag and joins: it returns only once the thread has exited.
+        drop(PingThread {
+            stop: stop.clone(),
+            handle: Some(handle),
+        });
+        assert!(stop.load(Ordering::Relaxed));
     }
 
     #[test]

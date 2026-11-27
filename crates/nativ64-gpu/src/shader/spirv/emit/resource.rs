@@ -34,6 +34,10 @@ fn refuse<T>(op: &str) -> R<T> {
 pub(in crate::shader::spirv) struct Analysis {
     /// The SMEM loads that read a descriptor table: `(block, instruction)` → user SGPR.
     table_loads: HashMap<(usize, usize), u16>,
+    /// Where each loaded descriptor dword comes from: the table's user SGPR and the byte
+    /// offset in the table, when the program loads it at a constant one (chunk 10c: the used
+    /// rows say whether such a slot is an SRV or a UAV).
+    origin: HashMap<Val, (u16, u32)>,
     /// Every value that holds a dword of a loaded descriptor (the loads' results, and copies
     /// and phis of them).
     loaded: HashSet<Val>,
@@ -160,6 +164,59 @@ fn table_of(f: &Func, tables: &BTreeSet<u16>, s: Src, depth: u32) -> Option<u16>
     }
 }
 
+/// The table user SGPR whose value `s` is and the constant added to it: `table_of` where
+/// every addition is of a constant.
+fn table_addend(f: &Func, tables: &BTreeSet<u16>, s: Src, depth: u32) -> Option<(u16, u32)> {
+    let Src::Val(v) = s else {
+        return None;
+    };
+    if depth > 24 {
+        return None;
+    }
+    let info = f.vals[v.0 as usize];
+    match info.def {
+        ValDef::Arg => match info.reg {
+            Reg::S(n) if tables.contains(&n) => Some((n, 0)),
+            _ => None,
+        },
+        ValDef::Phi { block, index } => {
+            let mut found: Option<(u16, u32)> = None;
+            for (_, a) in &f.blocks[block].phis[index].args {
+                if *a == s {
+                    continue;
+                }
+                let t = table_addend(f, tables, *a, depth + 1)?;
+                if found.is_some_and(|x| x != t) {
+                    return None;
+                }
+                found = Some(t);
+            }
+            found
+        }
+        ValDef::Inst { .. } => {
+            let i = def_inst(f, v)?;
+            if i.dsts.first().map(|d| d.1) != Some(v) {
+                return None;
+            }
+            let at = |a: usize| i.srcs.get(a).and_then(|s| s.first()).copied();
+            match i.instr.name() {
+                "s_mov_b32" => table_addend(f, tables, at(0)?, depth + 1),
+                "s_add_u32" | "s_add_i32" => {
+                    let (a, b) = (at(0)?, at(1)?);
+                    match (a, b) {
+                        (x, Src::Const(k)) | (Src::Const(k), x) => {
+                            let (n, c) = table_addend(f, tables, x, depth + 1)?;
+                            Some((n, c.wrapping_add(k)))
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            }
+        }
+    }
+}
+
 /// The high dword of a table address is 0: the constant, or the carry of an addition that
 /// started from 0.
 fn high_is_zero(f: &Func, s: Src, depth: u32) -> bool {
@@ -212,6 +269,7 @@ pub(in crate::shader::spirv) fn analyze(
 ) -> Result<Analysis, SpirvError> {
     let mut a = Analysis {
         table_loads: HashMap::new(),
+        origin: HashMap::new(),
         loaded: HashSet::new(),
         memory_addresses: false,
     };
@@ -232,6 +290,17 @@ pub(in crate::shader::spirv) fn analyze(
             }
             a.table_loads.insert((b, k), n);
             a.loaded.extend(i.dsts.iter().map(|d| d.1));
+            // the slot's constant offset: what the program added to the table's address,
+            // the immediate and a constant SGPR offset
+            let soff = match i.srcs.get(1).and_then(|s| s.first()) {
+                None => Some(0),
+                Some(Src::Const(k)) => Some(*k),
+                Some(_) => None,
+            };
+            if let (Some((t, add)), Some(soff)) = (table_addend(f, tables, lo, 0), soff) {
+                let at = add.wrapping_add(soff).wrapping_add(i.instr.mem.offset as u32);
+                a.origin.extend(i.dsts.iter().map(|d| (d.1, (t, at))));
+            }
         }
     }
     if a.loaded.is_empty() {
@@ -240,7 +309,7 @@ pub(in crate::shader::spirv) fn analyze(
     }
     // copies and phis of loaded dwords are loaded dwords
     loop {
-        let before = a.loaded.len();
+        let before = (a.loaded.len(), a.origin.len());
         for blk in &f.blocks {
             for p in &blk.phis {
                 if !p.args.is_empty()
@@ -249,6 +318,15 @@ pub(in crate::shader::spirv) fn analyze(
                         .all(|(_, s)| matches!(s, Src::Val(v) if a.loaded.contains(v)))
                 {
                     a.loaded.insert(p.dst);
+                    let mut from = p.args.iter().filter_map(|(_, s)| match s {
+                        Src::Val(v) if *v != p.dst => Some(a.origin.get(v).copied()),
+                        _ => None,
+                    });
+                    if let Some(Some(o)) = from.next() {
+                        if from.all(|x| x == Some(o)) {
+                            a.origin.insert(p.dst, o);
+                        }
+                    }
                 }
             }
             for i in blk.insts.iter().filter(|i| is_copy(i)) {
@@ -257,11 +335,16 @@ pub(in crate::shader::spirv) fn analyze(
                     if *reg != Reg::Scc && matches!(from, Some(Src::Val(v)) if a.loaded.contains(v))
                     {
                         a.loaded.insert(*val);
+                        if let Some(Src::Val(v)) = from {
+                            if let Some(&o) = a.origin.get(v) {
+                                a.origin.insert(*val, o);
+                            }
+                        }
                     }
                 }
             }
         }
-        if a.loaded.len() == before {
+        if (a.loaded.len(), a.origin.len()) == before {
             break;
         }
     }
@@ -302,6 +385,10 @@ pub(in crate::shader::spirv) struct Res {
     /// Sampled-image arrays by image dimension: `(variable, image type)`.
     textures: BTreeMap<u8, (u32, u32)>,
     sampler_array: Option<u32>,
+    /// Storage-image arrays by image dimension: `(variable, image type)` (set 0, binding 1).
+    images: BTreeMap<u8, (u32, u32)>,
+    /// The workgroup memory (compute) and its size in dwords.
+    lds: Option<u32>,
     /// Static samplers: set 1, binding k = `samplers[k]`.
     pub(super) samplers: Vec<SamplerDesc>,
     static_vars: Vec<u32>,
@@ -312,10 +399,14 @@ pub(in crate::shader::spirv) struct Res {
 impl Res {
     /// Whether the entry reads a texture or a sampler of the bindless set, and whether it reads
     /// memory through an address that is not user data.
-    pub(in crate::shader::spirv) fn flags(&self) -> (bool, bool) {
+    pub(in crate::shader::spirv) fn flags(&self) -> (bool, bool, bool) {
         (
-            !self.textures.is_empty() || self.sampler_array.is_some() || !self.samplers.is_empty(),
+            !self.textures.is_empty()
+                || !self.images.is_empty()
+                || self.sampler_array.is_some()
+                || !self.samplers.is_empty(),
             self.analysis.memory_addresses,
+            !self.images.is_empty(),
         )
     }
 
@@ -325,6 +416,8 @@ impl Res {
             root: None,
             textures: BTreeMap::new(),
             sampler_array: None,
+            images: BTreeMap::new(),
+            lds: None,
             samplers: Vec::new(),
             static_vars: Vec::new(),
             tmp: None,
@@ -342,6 +435,7 @@ struct Buf {
 /// `(set, binding)` of the bindless arrays (`docs/shaders.md`, Resources).
 const SET_BINDLESS: u32 = 0;
 const BIND_SAMPLED: u32 = 0;
+const BIND_STORAGE: u32 = 1;
 const BIND_SAMPLERS: u32 = 2;
 /// The set of the static samplers.
 const SET_STATIC: u32 = 1;
@@ -562,7 +656,10 @@ impl<'a> Tr<'a> {
         match c.inst.instr.enc {
             Enc::Smem => self.smem(c, b, k),
             Enc::Mubuf => self.mubuf(c),
+            Enc::Mimg if c.inst.instr.name().starts_with("image_load") => self.image_load(c),
+            Enc::Mimg if c.inst.instr.name().starts_with("image_store") => self.image_store(c),
             Enc::Mimg => self.image_sample(c),
+            Enc::Ds => self.ds(c),
             _ => Ok(None),
         }
     }
@@ -908,6 +1005,10 @@ impl<'a> Tr<'a> {
         if is_vertex && !explicit {
             return refuse("image_sample in a vertex stage");
         }
+        if matches!(self.io(), StageIo::Compute(_)) && !explicit {
+            // quad derivatives need DerivativeGroupLinearKHR (an extension and a device check)
+            return refuse("image_sample with implicit derivatives in a compute program");
+        }
         let chans: Vec<u32> = (0..4).filter(|ch| m.dmask >> ch & 1 != 0).collect();
         if chans.len() != c.inst.dsts.len() {
             return bad("an image sample whose results do not match its dmask");
@@ -978,5 +1079,294 @@ impl<'a> Tr<'a> {
             out.push(self.lane_result(c, j, bits));
         }
         Ok(Some(out))
+    }
+
+    // -----------------------------------------------------------------------------------
+    // Image loads and stores (chunk 10c)
+
+    /// The array of storage images of this dimension (set 0, binding 1): the sampled type
+    /// `f32`, no format (`StorageImageReadWithoutFormat` / `WriteWithoutFormat`).
+    fn storage_array(&mut self, dim: u8) -> (u32, u32) {
+        if let Some(&t) = self.res().images.get(&dim) {
+            return t;
+        }
+        let (d, arrayed, _) = Self::image_dim(dim).expect("a dimension that was checked");
+        for cap in [
+            Capability::RuntimeDescriptorArray,
+            Capability::StorageImageArrayNonUniformIndexing,
+            Capability::ShaderNonUniform,
+            Capability::StorageImageReadWithoutFormat,
+            Capability::StorageImageWriteWithoutFormat,
+        ] {
+            self.g.m.capability(cap);
+        }
+        if d == 0 {
+            self.g.m.capability(Capability::Image1D);
+        }
+        let tf = self.g.t_f32();
+        // sampled 2 (storage), format Unknown
+        let img = self
+            .g
+            .m
+            .global(Op::TypeImage, None, &[tf, d, 0, arrayed, 0, 2, 0]);
+        let arr = self.g.m.global(Op::TypeRuntimeArray, None, &[img]);
+        let var = self.global(StorageClass::UniformConstant, arr);
+        self.g
+            .m
+            .decorate(var, Decoration::DescriptorSet, &[SET_BINDLESS]);
+        self.g.m.decorate(var, Decoration::Binding, &[BIND_STORAGE]);
+        self.g.m.name(var, &format!("images_dim{dim}"));
+        self.res().images.insert(dim, (var, img));
+        (var, img)
+    }
+
+    /// `image_load*` / `image_store*` on a table slot: an SRV is fetched (`OpImageFetch`) and a
+    /// UAV read (`OpImageRead`) or written (`OpImageWrite`), by the registry index in the slot.
+    fn image_ls(&mut self, c: &Ctx<Gen>, store: bool) -> R<Option<Vec<Opd<Gen>>>> {
+        let i = &c.inst.instr;
+        let name = i.name();
+        let mip = name.ends_with("_mip");
+        let base = if store { "image_store" } else { "image_load" };
+        if name.strip_suffix("_mip").unwrap_or(name) != base {
+            return Ok(None);
+        }
+        let m = i.img;
+        if m.d16 || m.tfe || m.lwe {
+            return refuse(&format!("{name} with d16, tfe or lwe"));
+        }
+        let dim = match m.dim {
+            0 | 1 | 2 | 5 => m.dim,
+            d => return refuse(&format!("{name} on dimension {d}")),
+        };
+        let (_, _, ncoord) = Self::image_dim(dim).expect("a dimension that was checked");
+        if store && m.dmask != 0xf {
+            return refuse(&format!("{name} with dmask {:#x}", m.dmask));
+        }
+        let ns = c.srcs.len();
+        let need = if store { 3 } else { 2 };
+        if ns != need || c.srcs[ns - 1].len() < 8 {
+            return bad("an image load or store whose operands do not match its form");
+        }
+        let addr = &c.srcs[ns - 2];
+        let ncomp = ncoord as usize + usize::from(mip);
+        let words = if m.a16 { ncomp.div_ceil(2) } else { ncomp };
+        if addr.len() != words {
+            return refuse(&format!("{name} with an address of {} dwords", addr.len()));
+        }
+        // the slot's kind: the used-resource row at the offset the descriptor was loaded from
+        let rsrc = &c.inst.srcs[ns - 1];
+        let origin = match rsrc.first() {
+            Some(Src::Val(v)) => self.res().analysis.origin.get(v).copied(),
+            _ => None,
+        };
+        let Some((sgpr, offset)) = origin else {
+            return refuse("an image that is not loaded from a table slot at a constant offset");
+        };
+        let Some(kind) = self.io().descriptor_kind(sgpr, offset) else {
+            return refuse("an image whose table slot no used-resource row names");
+        };
+        if (store && kind != 3) || !matches!(kind, 0 | 3) {
+            return refuse(&format!("{name} on a resource of kind {kind}"));
+        }
+        if kind == 3 && mip {
+            return refuse(&format!("{name} on a UAV"));
+        }
+        // the coordinates (and the mip level)
+        let tu = self.g.t_u32();
+        let mut comps = Vec::new();
+        for k in 0..ncomp {
+            let w = self.bits_of(addr[if m.a16 { k / 2 } else { k }]);
+            comps.push(if m.a16 {
+                let sh = self.g.k(16 * (k as u32 % 2));
+                let x = self.g.op(Op::ShiftRightLogical, tu, &[w, sh]);
+                let mask = self.g.k(0xffff);
+                self.g.op(Op::BitwiseAnd, tu, &[x, mask])
+            } else {
+                w
+            });
+        }
+        let coord = if ncoord == 1 {
+            comps[0]
+        } else {
+            let tv = self.g.m.global(Op::TypeVector, None, &[tu, ncoord]);
+            self.g.op(Op::CompositeConstruct, tv, &comps[..ncoord as usize])
+        };
+        let index = self.bits_of(c.srcs[ns - 1][0]);
+        self.non_uniform(index);
+        let tf = self.g.t_f32();
+        let v4 = self.vec4(Class::Float);
+        if store {
+            let (var, img) = self.storage_array(dim);
+            let image = self.array_element(var, img, index);
+            if c.srcs[0].len() != 4 {
+                return bad("an image store whose data is not four dwords");
+            }
+            let mut chans = Vec::new();
+            for &d in &c.srcs[0] {
+                let bits = self.bits_of(d);
+                chans.push(self.g.as_f32(bits));
+            }
+            let texel = self.g.op(Op::CompositeConstruct, v4, &chans);
+            self.guarded(c.active, |t| {
+                t.g.op0(Op::ImageWrite, &[image, coord, texel]);
+                Ok(())
+            })?;
+            return Ok(Some(Vec::new()));
+        }
+        let res = if kind == 0 {
+            let (var, img) = self.texture_array(dim);
+            let image = self.array_element(var, img, index);
+            let lod = if mip {
+                comps[ncoord as usize]
+            } else {
+                self.g.k(0)
+            };
+            // ImageOperands Lod
+            self.g.op(Op::ImageFetch, v4, &[image, coord, 2, lod])
+        } else {
+            let (var, img) = self.storage_array(dim);
+            let image = self.array_element(var, img, index);
+            self.g.op(Op::ImageRead, v4, &[image, coord])
+        };
+        let chans: Vec<u32> = (0..4).filter(|ch| m.dmask >> ch & 1 != 0).collect();
+        if chans.len() != c.inst.dsts.len() {
+            return bad("an image load whose results do not match its dmask");
+        }
+        let mut out = Vec::new();
+        for (j, ch) in chans.into_iter().enumerate() {
+            let x = self.g.op(Op::CompositeExtract, tf, &[res, ch]);
+            let bits = self.g.as_bits(x);
+            out.push(self.lane_result(c, j, bits));
+        }
+        Ok(Some(out))
+    }
+
+    fn image_load(&mut self, c: &Ctx<Gen>) -> R<Option<Vec<Opd<Gen>>>> {
+        self.image_ls(c, false)
+    }
+
+    fn image_store(&mut self, c: &Ctx<Gen>) -> R<Option<Vec<Opd<Gen>>>> {
+        self.image_ls(c, true)
+    }
+
+    // -----------------------------------------------------------------------------------
+    // Workgroup memory (chunk 10c)
+
+    /// The workgroup memory: a `u32` array of the record's LDS size.
+    fn lds(&mut self) -> R<(u32, u32)> {
+        let StageIo::Compute(cs) = self.io() else {
+            return refuse("workgroup memory outside a compute program");
+        };
+        let n = cs.lds_bytes.div_ceil(4);
+        if n == 0 {
+            return refuse("an LDS access in a program with no LDS");
+        }
+        if let Some(v) = self.res().lds {
+            return Ok((v, n));
+        }
+        let tu = self.g.t_u32();
+        let len = self.g.k(n);
+        let arr = self.g.m.global(Op::TypeArray, None, &[tu, len]);
+        let var = self.global(StorageClass::Workgroup, arr);
+        self.g.m.name(var, "lds");
+        self.res().lds = Some(var);
+        Ok((var, n))
+    }
+
+    /// `ds_read*` / `ds_write*` (b32 to b128, the `2` and `2st64` pairs): byte address plus
+    /// offset, divided by 4; a dword past the LDS reads 0 and its write is dropped.
+    fn ds(&mut self, c: &Ctx<Gen>) -> R<Option<Vec<Opd<Gen>>>> {
+        let i = &c.inst.instr;
+        let name = i.name();
+        let Some(rest) = name.strip_prefix("ds_") else {
+            return Ok(None);
+        };
+        let (read, rest) = match (rest.strip_prefix("read"), rest.strip_prefix("write")) {
+            (Some(r), _) => (true, r),
+            (_, Some(r)) => (false, r),
+            _ => return Ok(None),
+        };
+        // (elements, scale of the paired offsets in bytes, dwords per element)
+        let (elems, scale, w) = match rest {
+            "_b32" => (1, 0, 1),
+            "_b64" => (1, 0, 2),
+            "_b96" => (1, 0, 3),
+            "_b128" => (1, 0, 4),
+            "2_b32" => (2, 4, 1),
+            "2_b64" => (2, 8, 2),
+            "2st64_b32" => (2, 256, 1),
+            "2st64_b64" => (2, 512, 2),
+            _ => return Ok(None),
+        };
+        if i.mem.gds {
+            return refuse(&format!("{name} on GDS"));
+        }
+        let (var, n) = self.lds()?;
+        let tu = self.g.t_u32();
+        let tb = self.g.t_bool();
+        let Some(&addr) = c.srcs.first().and_then(|s| s.first()) else {
+            return bad("a DS access without its address");
+        };
+        let addr = self.bits_of(addr);
+        let offs: Vec<u32> = if elems == 1 {
+            vec![i.mem.offset as u32 & 0xffff]
+        } else {
+            vec![
+                (i.mem.offset as u32 & 0xff) * scale,
+                u32::from(i.mem.offset1) * scale,
+            ]
+        };
+        let p = self.g.t_ptr(StorageClass::Workgroup, tu);
+        let two = self.g.k(2);
+        let nn = self.g.k(n);
+        let mut out = Vec::new();
+        for (e, off) in offs.into_iter().enumerate() {
+            let k = self.g.k(off);
+            let byte = self.g.op(Op::IAdd, tu, &[addr, k]);
+            let word = self.g.op(Op::ShiftRightLogical, tu, &[byte, two]);
+            for j in 0..w {
+                let kj = self.g.k(j as u32);
+                let idx = self.g.op(Op::IAdd, tu, &[word, kj]);
+                let inside = self.g.op(Op::ULessThan, tb, &[idx, nn]);
+                if read {
+                    let zero = self.g.k(0);
+                    let safe = self.g.select(inside, idx, zero);
+                    let ptr = self.g.op(Op::AccessChain, p, &[var, safe]);
+                    let v = self.g.load(tu, ptr);
+                    let v = self.g.select(inside, v, zero);
+                    out.push(self.lane_result(c, e * w + j, v));
+                } else {
+                    let Some(&d) = c.srcs.get(1 + e).and_then(|s| s.get(j)) else {
+                        return bad("a DS write with too few data dwords");
+                    };
+                    let d = self.bits_of(d);
+                    let ok = self.and(inside, c.active);
+                    self.guarded(Some(ok), |t| {
+                        let ptr = t.g.op(Op::AccessChain, p, &[var, idx]);
+                        t.g.store(ptr, d);
+                        Ok(())
+                    })?;
+                }
+            }
+        }
+        if read && out.len() != c.inst.dsts.len() {
+            return bad("a DS read whose results do not match its width");
+        }
+        Ok(Some(out))
+    }
+
+    /// `s_barrier`: every invocation of the group meets here, so the group's memory is
+    /// consistent. Refused outside a compute program and under a per-lane branch.
+    pub(super) fn barrier(&mut self) -> R<()> {
+        if !matches!(self.io(), StageIo::Compute(_)) {
+            return refuse("s_barrier outside a compute program");
+        }
+        if self.lane_ifs > 0 {
+            return refuse("s_barrier under a per-lane branch");
+        }
+        // Execution Workgroup, Memory Workgroup, AcquireRelease | WorkgroupMemory
+        let (wg, sem) = (self.g.k(2), self.g.k(0x108));
+        self.g.op0(Op::ControlBarrier, &[wg, wg, sem]);
+        Ok(())
     }
 }

@@ -138,6 +138,13 @@ impl Drop for HostBuf<'_> {
     }
 }
 
+/// The stages that read the push constant (the root block's address).
+pub const PUSH_STAGES: vk::ShaderStageFlags = vk::ShaderStageFlags::from_raw(
+    vk::ShaderStageFlags::VERTEX.as_raw()
+        | vk::ShaderStageFlags::FRAGMENT.as_raw()
+        | vk::ShaderStageFlags::COMPUTE.as_raw(),
+);
+
 /// Sets of immutable samplers a pool holds room for.
 const STATIC_SETS: u32 = 512;
 /// Samplers in one such set, at most.
@@ -264,7 +271,7 @@ impl<'g> Bindless<'g> {
                 ),
             )?[0];
             let push = [vk::PushConstantRange::default()
-                .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
+                .stage_flags(PUSH_STAGES)
                 .offset(0)
                 .size(8)];
             this.layout = vk_try(
@@ -351,7 +358,7 @@ impl<'g> Bindless<'g> {
                 }
             };
             let push = [vk::PushConstantRange::default()
-                .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
+                .stage_flags(PUSH_STAGES)
                 .offset(0)
                 .size(8)];
             let layout = match d.create_pipeline_layout(
@@ -573,12 +580,14 @@ impl<'g> ViewTable<'g> {
     /// Writes the records of the views registered since the last call, and retries the ones
     /// whose memory did not translate. The queue is idle.
     pub fn update(&mut self, mem: &mut GpuMemory<'_>) {
-        let total = crate::d3d12::descriptor::view_count();
-        if self.grow(total).is_err() {
+        // One snapshot: the title's threads keep registering views, so a count taken apart
+        // from the list could be smaller than the list.
+        let first = self.written;
+        let views = crate::d3d12::descriptor::views_from(first);
+        if self.grow(first + views.len()).is_err() {
             log_once("view table: cannot grow the buffer".into());
             return;
         }
-        let first = self.written;
         // views tried before and not translated, then the new ones
         let again = std::mem::take(&mut self.retry);
         for index in again {
@@ -591,7 +600,6 @@ impl<'g> ViewTable<'g> {
                 Rec::None => {}
             }
         }
-        let views = crate::d3d12::descriptor::views_from(first);
         for (k, v) in views.iter().enumerate() {
             let index = first + k;
             match record_of(v, mem) {
