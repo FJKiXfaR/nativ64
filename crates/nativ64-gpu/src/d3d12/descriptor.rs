@@ -187,7 +187,7 @@ unsafe extern "win64" fn get_start(this: *mut c_void) -> u64 {
 
 /// What the title described at a descriptor (descriptions kept as the words it passed, for the
 /// backend to build its own views from at replay).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum View {
     /// Constant buffer: GPU address and size.
     Constant(u64, u32),
@@ -214,19 +214,32 @@ const RTV_TAG: u32 = u32::from_le_bytes(*b"nRTV");
 const DSV_TAG: u32 = u32::from_le_bytes(*b"nDSV");
 
 // shortcut: entries are never freed; a view of a resource that is released stays in the table.
-static VIEWS: std::sync::Mutex<Vec<View>> = std::sync::Mutex::new(Vec::new());
+/// The view registry: the views in index order and the same views by index, so rewriting a
+/// descriptor with a view it already holds is one hash lookup (a title may write tens of
+/// thousands of descriptors per frame while it loads; the linear search this replaces was
+/// quadratic in the number of views).
+#[derive(Default)]
+struct Registry {
+    views: Vec<View>,
+    index: std::collections::HashMap<View, usize>,
+}
+
+static VIEWS: std::sync::LazyLock<std::sync::Mutex<Registry>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(Registry::default()));
 
 fn record(handle: u64, view: View) {
     if handle == 0 {
         return;
     }
-    let mut views = VIEWS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut reg = VIEWS.lock().unwrap_or_else(|e| e.into_inner());
     // Rewriting a descriptor with the same view reuses its entry.
-    let index = match views.iter().rposition(|v| *v == view) {
-        Some(i) => i,
+    let index = match reg.index.get(&view) {
+        Some(&i) => i,
         None => {
-            views.push(view);
-            views.len() - 1
+            let i = reg.views.len();
+            reg.views.push(view.clone());
+            reg.index.insert(view, i);
+            i
         }
     };
     // SAFETY: the handle is a descriptor slot of at least 16 bytes the title owns.
@@ -235,7 +248,7 @@ fn record(handle: u64, view: View) {
 
 /// How many views are recorded: registry indices are below it.
 pub fn view_count() -> usize {
-    VIEWS.lock().unwrap_or_else(|e| e.into_inner()).len()
+    VIEWS.lock().unwrap_or_else(|e| e.into_inner()).views.len()
 }
 
 /// The registry index the view or sampler descriptor at `handle` holds, if it holds one.
@@ -250,8 +263,11 @@ pub unsafe fn registry_index_at(handle: u64) -> Option<u32> {
 
 /// The recorded views from registry index `first` on.
 pub fn views_from(first: usize) -> Vec<View> {
-    let v = VIEWS.lock().unwrap_or_else(|e| e.into_inner());
-    v.get(first..).map(<[View]>::to_vec).unwrap_or_default()
+    let reg = VIEWS.lock().unwrap_or_else(|e| e.into_inner());
+    reg.views
+        .get(first..)
+        .map(<[View]>::to_vec)
+        .unwrap_or_default()
 }
 
 /// The view recorded at registry index `index`.
@@ -259,6 +275,7 @@ pub fn view_at(index: usize) -> Option<View> {
     VIEWS
         .lock()
         .unwrap_or_else(|e| e.into_inner())
+        .views
         .get(index)
         .cloned()
 }
@@ -276,6 +293,7 @@ pub fn view(handle: u64) -> Option<View> {
     VIEWS
         .lock()
         .unwrap_or_else(|e| e.into_inner())
+        .views
         .get(index as usize)
         .cloned()
 }
@@ -533,6 +551,32 @@ mod tests {
     fn create(d: HeapDesc, p: Placement, out: &mut *mut c_void) -> HRESULT {
         let e = Extended(d, p);
         unsafe { create_descriptor_heap(std::ptr::null_mut(), &e.0, &DESCRIPTOR_HEAP_IIDS[0], out) }
+    }
+
+    #[test]
+    fn rewriting_a_view_reuses_its_registry_index() {
+        unsafe {
+            // Other tests of this module record views in parallel: the registry index is stable
+            // but the global count is not.
+            let made = View::Constant(0x1234_0000, 256);
+            let mut slot = [0u32; 4];
+            record(slot.as_mut_ptr() as u64, made.clone());
+            let index = registry_index_at(slot.as_mut_ptr() as u64).unwrap() as usize;
+            // The same view in another slot: same index, no new entry.
+            let mut other = [0u32; 4];
+            record(other.as_mut_ptr() as u64, made.clone());
+            assert_eq!(
+                registry_index_at(other.as_mut_ptr() as u64),
+                Some(index as u32)
+            );
+            assert_eq!(view_at(index), Some(made.clone()));
+            assert_eq!(view(slot.as_mut_ptr() as u64), Some(made));
+            // A different view gets its own index.
+            record(other.as_mut_ptr() as u64, View::Constant(0x1234_1000, 256));
+            let second = registry_index_at(other.as_mut_ptr() as u64).unwrap() as usize;
+            assert_ne!(second, index);
+            assert_eq!(view_at(second), Some(View::Constant(0x1234_1000, 256)));
+        }
     }
 
     #[test]
