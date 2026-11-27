@@ -1001,7 +1001,16 @@ impl<'g> VkBackend<'g> {
                         desc: *desc,
                     }
                 }
-                _ => Entry::Hole,
+                other => {
+                    // A sampled view left empty: naming its resource (or its absence) is how
+                    // a missing texture behind invisible content is found.
+                    log_once(format!(
+                        "a sampled view is left empty: resource {res:#x} info {other:?} \
+                         view words {:x?}",
+                        desc
+                    ));
+                    Entry::Hole
+                }
             },
             View::Unordered(res, _, desc) => match info_of_checked(*res as *mut _) {
                 Some((rd, _)) if matches!(rd.dimension, TEXTURE1D | TEXTURE2D | TEXTURE3D) => {
@@ -1015,7 +1024,11 @@ impl<'g> VkBackend<'g> {
             View::Placed(false, rd, vd) => {
                 let desc = placed_desc(rd);
                 let address = u64::from(vd[10]) | u64::from(vd[11]) << 32;
-                if address == 0 || (desc.dimension != TEXTURE2D && desc.dimension != TEXTURE3D) {
+                if address == 0 || !matches!(desc.dimension, TEXTURE1D | TEXTURE2D | TEXTURE3D) {
+                    log_once(format!(
+                        "a placed sampled view is left empty: address {address:#x} desc {desc:?} \
+                         view words {vd:x?}"
+                    ));
                     return Entry::Hole;
                 }
                 let mut w = [0u32; 10];
@@ -1028,7 +1041,10 @@ impl<'g> VkBackend<'g> {
             View::Sampler(_) | View::ConsoleSampler(_) => {
                 Spec::of_view(v).map_or(Entry::Hole, Entry::Sampler)
             }
-            _ => Entry::Hole,
+            other => {
+                log_once(format!("a sampled view is left empty (other): {other:?}"));
+                Entry::Hole
+            }
         }
     }
 
