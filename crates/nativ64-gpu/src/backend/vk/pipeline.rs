@@ -75,6 +75,55 @@ pub struct Pipelines<'g> {
     map: HashMap<(u64, bool, Vec<u32>), Outcome>,
 }
 
+/// The pipeline serials made since the last submission (`NATIV64_LOG_SUBMIT`: a hung
+/// submission is identified by them).
+static SUBMISSION_SERIALS: std::sync::Mutex<Vec<u32>> = std::sync::Mutex::new(Vec::new());
+
+/// Records a pipeline serial for the submission being recorded and, when the switch is on,
+/// prints the list at `submission_start`.
+pub(super) fn note_submission_serial(serial: u32) {
+    if std::env::var_os("NATIV64_LOG_SUBMIT").is_none() {
+        return;
+    }
+    SUBMISSION_SERIALS
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .push(serial);
+}
+
+/// Prints (and clears) the serials of the submission just recorded.
+pub(super) fn log_submission_serials() {
+    if std::env::var_os("NATIV64_LOG_SUBMIT").is_none() {
+        return;
+    }
+    let mut s = SUBMISSION_SERIALS.lock().unwrap_or_else(|p| p.into_inner());
+    if !s.is_empty() {
+        s.sort_unstable();
+        s.dedup();
+        eprintln!(
+            "nativ64-gpu: submitting pipeline serials {}",
+            s.iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        s.clear();
+    }
+}
+
+/// Whether `NATIV64_SKIP_PIPELINE` names this serial (`a,b,c`): a GPU hang is bisected by
+/// leaving pipelines out.
+fn skip_serial(serial: u32) -> bool {
+    static SKIP: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    SKIP.get_or_init(|| {
+        std::env::var("NATIV64_SKIP_PIPELINE")
+            .ok()
+            .map(|v| v.split(',').filter_map(|s| s.trim().parse().ok()).collect())
+            .unwrap_or_default()
+    })
+    .contains(&serial)
+}
+
 impl<'g> Pipelines<'g> {
     pub fn new(gpu: &'g Gpu) -> Self {
         Pipelines {
@@ -97,7 +146,13 @@ impl<'g> Pipelines<'g> {
         formats: &[u32],
     ) -> &Outcome {
         let gpu = self.gpu;
+        note_submission_serial(pd.serial as u32);
         let key = (pd.serial, rect, formats.to_vec());
+        if skip_serial(pd.serial as u32) {
+            let why = format!("skipped (NATIV64_SKIP_PIPELINE names {})", pd.serial);
+            log_once(format!("pipeline {} is not replayed: {why}", pd.serial));
+            return self.map.entry(key).or_insert(Outcome::Failed(why));
+        }
         self.map.entry(key).or_insert_with(|| {
             // The first use of a pipeline translates and creates it; one that takes most of a
             // second is what a frame's stall is made of, so name it.

@@ -552,6 +552,7 @@ impl<'g> VkBackend<'g> {
                 self.end_rendering(d, cb);
             }
             super::profile::stop(super::profile::Phase::Replay, replay_started);
+            super::pipeline::log_submission_serials();
             // The flat/global addresses the recorded shaders translate go through the import
             // table: fill it after recording, before the submit runs the commands.
             let generation = self.draw.mem.import_generation();
