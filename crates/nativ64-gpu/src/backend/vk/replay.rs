@@ -452,6 +452,11 @@ impl<'g> VkBackend<'g> {
 
     /// Replay `lists` in order and wait for the GPU to be idle.
     pub fn execute(&mut self, lists: &[Vec<Command>]) {
+        if !self.device_lost {
+            // a pipeline cache write is due when new pipelines were made (the runner may exit
+            // through `_exit`, which skips `Drop`)
+            self.gpu.maybe_save_pipeline_cache();
+        }
         if self.device_lost {
             log_once("not replaying: the Vulkan device was lost (the title keeps running)".into());
             return;

@@ -739,7 +739,8 @@ fn build(
             .dynamic_state(&dy)
             .layout(layouts.layout)
             .push_next(&mut rendering);
-        let made = d.create_graphics_pipelines(vk::PipelineCache::null(), &[info], None);
+        let made = d.create_graphics_pipelines(gpu.pipeline_cache, &[info], None);
+        super::device::PIPELINES_MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         d.destroy_shader_module(vm, None);
         for m in [pm, gm].into_iter().flatten() {
             d.destroy_shader_module(m, None);
@@ -825,7 +826,8 @@ fn build_compute(
                     .name(c"main"),
             )
             .layout(layouts.layout);
-        let made = d.create_compute_pipelines(vk::PipelineCache::null(), &[info], None);
+        let made = d.create_compute_pipelines(gpu.pipeline_cache, &[info], None);
+        super::device::PIPELINES_MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         d.destroy_shader_module(module, None);
         let pipeline = match made {
             Ok(p) => p[0],

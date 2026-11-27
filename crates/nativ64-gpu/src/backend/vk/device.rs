@@ -43,6 +43,10 @@ pub struct Gpu {
     submit: Mutex<Option<SubmitState>>,
     /// `vkGetDeviceFaultInfoEXT` when the device has `VK_EXT_device_fault`.
     device_fault: Option<DeviceFaultFn>,
+    /// The driver's pipeline cache (loaded from disk, saved as pipelines are made).
+    pub(super) pipeline_cache: vk::PipelineCache,
+    /// When the cache was last written out.
+    cache_saved: Mutex<Option<std::time::Instant>>,
 }
 
 struct SubmitState {
@@ -183,6 +187,42 @@ fn type_rank(t: vk::PhysicalDeviceType) -> u32 {
 }
 
 impl Gpu {
+    /// Write the pipeline cache out when new pipelines were made (at most once a minute; the
+    /// runner can exit through `_exit`, which skips `Drop`).
+    pub fn maybe_save_pipeline_cache(&self) {
+        if self.pipeline_cache == vk::PipelineCache::null() {
+            return;
+        }
+        use std::sync::atomic::Ordering::Relaxed;
+        let made = PIPELINES_MADE.load(Relaxed);
+        if made == PIPELINES_SAVED.load(Relaxed) {
+            return;
+        }
+        let mut last = self.cache_saved.lock().unwrap();
+        if let Some(t) = *last {
+            if t.elapsed() < std::time::Duration::from_secs(60) {
+                return;
+            }
+        }
+        let bytes = unsafe { self.device.get_pipeline_cache_data(self.pipeline_cache) };
+        let Ok(bytes) = bytes else {
+            return;
+        };
+        let path = pipeline_cache_path();
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if std::fs::write(&path, &bytes).is_ok() {
+            PIPELINES_SAVED.store(made, Relaxed);
+            *last = Some(std::time::Instant::now());
+            log_once(format!(
+                "pipeline cache: {} pipelines, {} KiB written",
+                made,
+                bytes.len() / 1024
+            ));
+        }
+    }
+
     /// The fault a lost device reports (`VK_EXT_device_fault`), logged; the addresses it names
     /// are returned so the caller can say which of the imported ranges they fall in.
     pub fn log_device_fault(&self) -> Vec<u64> {
@@ -282,7 +322,13 @@ impl Gpu {
                     "device fault reporting: {}",
                     if device_fault.is_some() { "on" } else { "off" }
                 ));
+                // the driver's pipeline cache, kept between runs: a title that compiles a few
+                // thousand pipelines pays for it once
+                let (pipeline_cache, cache_note) = load_pipeline_cache(&device);
+                log_once(format!("pipeline cache: {cache_note}"));
                 Ok(Gpu {
+                    pipeline_cache,
+                    cache_saved: Mutex::new(None),
                     caps,
                     device_fault,
                     memory_budget,
@@ -634,6 +680,9 @@ impl Drop for Gpu {
         // SAFETY: objects borrowing the Gpu are gone (lifetimes); device before instance.
         unsafe {
             let _ = self.device.device_wait_idle();
+            save_pipeline_cache(&self.device, self.pipeline_cache);
+            self.device
+                .destroy_pipeline_cache(self.pipeline_cache, None);
             if let Some(st) = self.submit.get_mut().unwrap().take() {
                 self.device.destroy_fence(st.fence, None);
                 self.device.destroy_command_pool(st.pool, None);
@@ -641,6 +690,74 @@ impl Drop for Gpu {
             self.device.destroy_device(None);
             self.instance.destroy_instance(None);
         }
+    }
+}
+
+/// How many pipelines have been made this run.
+pub(super) static PIPELINES_MADE: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+/// The value of `PIPELINES_MADE` the cache on disk already holds.
+static PIPELINES_SAVED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Where the pipeline cache lives (`NATIV64_PIPELINE_CACHE`, or
+/// `$XDG_CACHE_HOME/nativ64/pipelines.bin`).
+fn pipeline_cache_path() -> std::path::PathBuf {
+    if let Some(p) = std::env::var_os("NATIV64_PIPELINE_CACHE") {
+        return p.into();
+    }
+    let base = std::env::var_os("XDG_CACHE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+    base.join("nativ64").join("pipelines.bin")
+}
+
+/// The driver's pipeline cache, seeded with the bytes of an earlier run when there are any.
+fn load_pipeline_cache(device: &Device) -> (vk::PipelineCache, String) {
+    let path = pipeline_cache_path();
+    let data = std::fs::read(&path);
+    let (bytes, note) = match &data {
+        Ok(d) if !d.is_empty() => (
+            Some(&d[..]),
+            format!("{} bytes from {}", d.len(), path.display()),
+        ),
+        _ => (None, format!("empty ({})", path.display())),
+    };
+    let info = vk::PipelineCacheCreateInfo::default().initial_data(bytes.unwrap_or(&[]));
+    // SAFETY: the device exists; the initial data is a cache blob the driver validated itself
+    // (an invalid one is rejected and the cache starts empty).
+    let cache = match unsafe { device.create_pipeline_cache(&info, None) } {
+        Ok(c) => c,
+        Err(e) => {
+            log_once(format!("pipeline cache: cannot create ({e:?})"));
+            vk::PipelineCache::null()
+        }
+    };
+    (cache, note)
+}
+
+/// Write the pipeline cache out (a later run reuses the compiled pipelines).
+fn save_pipeline_cache(device: &Device, cache: vk::PipelineCache) {
+    if cache == vk::PipelineCache::null() {
+        return;
+    }
+    // SAFETY: the device exists and is idle.
+    let data = unsafe { device.get_pipeline_cache_data(cache) };
+    let Ok(bytes) = data else {
+        log_once(format!("pipeline cache: cannot read ({:?})", data.err()));
+        return;
+    };
+    let path = pipeline_cache_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    match std::fs::write(&path, &bytes) {
+        Ok(()) => log_once(format!(
+            "pipeline cache: saved {} bytes to {}",
+            bytes.len(),
+            path.display()
+        )),
+        Err(e) => log_once(format!("pipeline cache: cannot save ({e})")),
     }
 }
 
