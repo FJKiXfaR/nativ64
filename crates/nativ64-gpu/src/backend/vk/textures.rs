@@ -41,8 +41,8 @@
 //!
 //! shortcuts: a depth image is uploaded (its depth plane; the stencil plane is not copied,
 //! since Vulkan copies one aspect at a time and the shaders here read depth) and viewed as its
-//! depth aspect with its own format; planar video formats, multisampled textures and 1D
-//! textures have no image; a view type that the shader's variable does not match (a cube read
+//! depth aspect with its own format; planar video formats and 1D textures have no image
+//! (multisampled images are render/depth targets only and are never sampled); a view type that the shader's variable does not match (a cube read
 //! through the 2D variable) cannot be detected here; the address of a placed view is read from
 //! words 10 and 11 of its description **[unverified]**.
 

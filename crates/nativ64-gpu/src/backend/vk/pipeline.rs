@@ -60,6 +60,8 @@ pub struct Built {
     pub topology_type: u32,
     /// The list topology of the pipeline's class (dynamic topologies must stay in it).
     pub topology: vk::PrimitiveTopology,
+    /// Samples per pixel the pipeline was made for (1, or 2/4/8/16 for MSAA targets).
+    pub samples: u32,
 }
 
 pub enum Outcome {
@@ -595,7 +597,7 @@ fn build(
             .line_width(1.0);
         let mask = [fixed.sample_mask];
         let ms = vk::PipelineMultisampleStateCreateInfo::default()
-            .rasterization_samples(vk::SampleCountFlags::TYPE_1)
+            .rasterization_samples(sample_count_flags(g.sample_count))
             .sample_mask(&mask)
             .alpha_to_coverage_enable(fixed.alpha_to_coverage);
         let ds_state = &fixed.depth;
@@ -668,6 +670,7 @@ fn build(
             color,
             depth,
             vertex_slots: input.bindings.iter().map(|b| b.binding).collect(),
+            samples: g.sample_count.max(1),
             strip_cut: fixed.strip_cut != 0,
             topology: topo,
             topology_type: g.topology_type,
@@ -753,6 +756,7 @@ fn build_compute(
             strip_cut: false,
             topology_type: 0,
             topology: vk::PrimitiveTopology::POINT_LIST,
+            samples: 1,
         })
     }
 }
@@ -762,10 +766,25 @@ fn check_fixed(f: &FixedState, g: &GraphicsState) -> Result<(), String> {
     if f.conservative {
         return Err("conservative rasterization".into());
     }
-    if g.sample_count > 1 {
+    // MSAA targets are supported: the pipeline's sample count must match its target's
+    // (`draw.rs` checks that), and a sample count Vulkan has no flag for is refused.
+    if g.sample_count > 1 && sample_count_flags(g.sample_count) == vk::SampleCountFlags::TYPE_1 {
         return Err(format!("{} samples per pixel", g.sample_count));
     }
     Ok(())
+}
+
+/// The Vulkan sample count of `n` (1 for anything unsupported).
+fn sample_count_flags(n: u32) -> vk::SampleCountFlags {
+    match n {
+        2 => vk::SampleCountFlags::TYPE_2,
+        4 => vk::SampleCountFlags::TYPE_4,
+        8 => vk::SampleCountFlags::TYPE_8,
+        16 => vk::SampleCountFlags::TYPE_16,
+        32 => vk::SampleCountFlags::TYPE_32,
+        64 => vk::SampleCountFlags::TYPE_64,
+        _ => vk::SampleCountFlags::TYPE_1,
+    }
 }
 
 /// The DXGI format of the other member of an sRGB / UNORM pair of 8-bit formats.
@@ -776,5 +795,26 @@ pub fn srgb_twin(dxgi: u32) -> Option<u32> {
         87 => Some(91),
         91 => Some(87),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sample_counts_are_the_targets_or_refused() {
+        let f = FixedState::default();
+        let with = |sample_count| GraphicsState {
+            sample_count,
+            ..GraphicsState::default()
+        };
+        assert!(check_fixed(&f, &with(4)).is_ok(), "4x MSAA is supported");
+        assert!(check_fixed(&f, &with(1)).is_ok());
+        assert!(
+            check_fixed(&f, &with(3)).is_err(),
+            "there is no 3-sample flag"
+        );
+        assert_eq!(sample_count_flags(8), vk::SampleCountFlags::TYPE_8);
     }
 }

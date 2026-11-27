@@ -899,6 +899,42 @@ pub unsafe fn backtrace_line(ctx: *mut u8, max: usize) -> String {
             None => line.push_str(&format!(" {ret:#x}")),
         }
     }
+    // The unwinder stops at the first frame without unwind data; the stack itself still holds
+    // the return addresses of the callers above it. Scan it for image addresses as a fallback.
+    let c = Ctx(ctx);
+    let (rip, rsp, rax) = unsafe {
+        (
+            c.get(CONTEXT_RIP_OFF),
+            c.get(CONTEXT_RSP_OFF),
+            c.get(CONTEXT_RAX_OFF),
+        )
+    };
+    line.push_str(&format!(
+        "\nnativ64: faulting rip {rip:#x} rsp {rsp:#x} rax {rax:#x}"
+    ));
+    if rsp != 0 {
+        let mut stack = String::from("\nnativ64: stack");
+        let mut n = 0;
+        for i in 0..512 {
+            // SAFETY: the guest stack is mapped; a fault during the scan is caught by the
+            // loader's signal handler, which would only lose this report.
+            let v = unsafe { (rsp as *const usize).add(i).read_unaligned() };
+            let Some(b) = crate::process::image_base_of(v) else {
+                continue;
+            };
+            if v == rip as usize {
+                continue;
+            }
+            stack.push_str(&format!(" image+{:#x}", v - b));
+            n += 1;
+            if n == 32 {
+                break;
+            }
+        }
+        if n > 0 {
+            line.push_str(&stack);
+        }
+    }
     line
 }
 
@@ -2326,9 +2362,11 @@ mod tests {
                     backtrace_line(std::ptr::null_mut(), 16),
                     "nativ64: backtrace"
                 );
-                // a context in no image unwinds nowhere
+                // a context in no image unwinds nowhere (the report then names its registers)
                 let mut ctx = Context([0; CONTEXT_SIZE]);
-                assert_eq!(backtrace_line(ctx.0.as_mut_ptr(), 16), "nativ64: backtrace");
+                let line = backtrace_line(ctx.0.as_mut_ptr(), 16);
+                assert!(line.starts_with("nativ64: backtrace"), "{line}");
+                assert!(!line.contains("stack image+"), "{line}");
             }
         }
 

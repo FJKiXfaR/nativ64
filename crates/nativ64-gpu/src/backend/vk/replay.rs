@@ -80,6 +80,19 @@ pub(super) struct Img {
 }
 
 /// Mip levels of a texture description (0 means the whole chain).
+/// The Vulkan sample count of `n` (1 for anything unsupported).
+pub(super) fn sample_count_flags(n: u32) -> vk::SampleCountFlags {
+    match n {
+        2 => vk::SampleCountFlags::TYPE_2,
+        4 => vk::SampleCountFlags::TYPE_4,
+        8 => vk::SampleCountFlags::TYPE_8,
+        16 => vk::SampleCountFlags::TYPE_16,
+        32 => vk::SampleCountFlags::TYPE_32,
+        64 => vk::SampleCountFlags::TYPE_64,
+        _ => vk::SampleCountFlags::TYPE_1,
+    }
+}
+
 pub(super) fn mip_count(desc: &ResourceDesc) -> u32 {
     match u32::from(desc.mip_levels) {
         0 => {
@@ -478,9 +491,22 @@ impl<'g> VkBackend<'g> {
             log_once("no image in a BC format: the device lacks textureCompressionBC".into());
             return None;
         }
-        if desc.sample_count > 1 {
+        // A multisampled image is a render target (or depth target) only: it is never sampled
+        // (Vulkan cannot sample it with an ordinary sampler) and its host memory is not
+        // uploaded; the title resolves it into a single-sample image (`ResolveSubresource`).
+        let msaa = desc.sample_count > 1;
+        let attachment =
+            desc.flags & (format::FLAG_DEPTH_STENCIL | format::FLAG_RENDER_TARGET) != 0;
+        if msaa && !attachment {
             log_once(format!(
-                "no image for a multisampled texture ({} samples)",
+                "no image for a {}-sample texture that is neither a render nor a depth target",
+                desc.sample_count
+            ));
+            return None;
+        }
+        if msaa && sample_count_flags(desc.sample_count) == vk::SampleCountFlags::TYPE_1 {
+            log_once(format!(
+                "no Vulkan sample count for {} samples",
                 desc.sample_count
             ));
             return None;
@@ -491,9 +517,14 @@ impl<'g> VkBackend<'g> {
         if w == 0 || h == 0 {
             return None;
         }
-        let mut usage = vk::ImageUsageFlags::TRANSFER_SRC
-            | vk::ImageUsageFlags::TRANSFER_DST
-            | vk::ImageUsageFlags::SAMPLED;
+        let mut usage = if msaa {
+            // The source of a resolve.
+            vk::ImageUsageFlags::TRANSFER_SRC
+        } else {
+            vk::ImageUsageFlags::TRANSFER_SRC
+                | vk::ImageUsageFlags::TRANSFER_DST
+                | vk::ImageUsageFlags::SAMPLED
+        };
         if desc.flags & format::FLAG_DEPTH_STENCIL != 0 {
             usage |= vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT;
         } else if desc.flags & format::FLAG_RENDER_TARGET != 0 {
@@ -539,7 +570,7 @@ impl<'g> VkBackend<'g> {
             })
             .mip_levels(mip_count(&desc))
             .array_layers(if volume { 1 } else { n })
-            .samples(vk::SampleCountFlags::TYPE_1)
+            .samples(sample_count_flags(desc.sample_count))
             .tiling(vk::ImageTiling::OPTIMAL)
             .usage(usage)
             .initial_layout(vk::ImageLayout::UNDEFINED);
@@ -598,11 +629,15 @@ impl<'g> VkBackend<'g> {
                 &[],
                 &b,
             );
-            let layout = match Layout::new(&desc) {
-                Ok(l) => Some(l),
-                Err(e) => {
-                    log_once(format!("no host layout for {desc:?}: {e}"));
-                    None
+            let layout = if msaa {
+                None
+            } else {
+                match Layout::new(&desc) {
+                    Ok(l) => Some(l),
+                    Err(e) => {
+                        log_once(format!("no host layout for {desc:?}: {e}"));
+                        None
+                    }
                 }
             };
             Some(TitleImage {
@@ -612,7 +647,7 @@ impl<'g> VkBackend<'g> {
                 info,
                 address,
                 layout,
-                gpu_owned: false,
+                gpu_owned: msaa,
                 uploaded: None,
                 uploads: 0,
                 seen: 0,
@@ -943,14 +978,98 @@ impl<'g> VkBackend<'g> {
                 }
                 self.stats.copies += 1;
             }
-            C::ResolveSubresource { .. }
-            | C::WriteBottom { .. }
+            C::ResolveSubresource {
+                dst,
+                dst_sub,
+                src,
+                src_sub,
+                ..
+            } => self.resolve_subresource(d, cb, *dst, *dst_sub, *src, *src_sub),
+            C::WriteBottom { .. }
             | C::WaitValue { .. }
             | C::ClearUav { .. }
             | C::BeginQuery { .. }
             | C::EndQuery { .. }
             | C::ResolveQueries { .. } => self.skip(c, "not replayed yet"),
         }
+    }
+
+    /// `ResolveSubresource`: a multisampled colour target into its single-sample twin (the
+    /// subresource index picks a mip and array layer). Depth resolve has no Vulkan copy command
+    /// (resolves are colour only), so a depth resolve is counted and skipped by name.
+    fn resolve_subresource(
+        &mut self,
+        d: &Device,
+        cb: vk::CommandBuffer,
+        dst: usize,
+        dst_sub: u32,
+        src: usize,
+        src_sub: u32,
+    ) {
+        // SAFETY: `dst` and `src` were recorded by a list method from live resources of ours.
+        let (a, b) = unsafe { (info_of(dst as *mut _), info_of(src as *mut _)) };
+        let (Some((dst_desc, _)), Some((src_desc, _))) = (a, b) else {
+            return;
+        };
+        if dst_desc.sample_count > 1 || src_desc.sample_count <= 1 {
+            // D3D12 resolves a multisampled source into a single-sample destination; anything
+            // else is not a resolve this backend records.
+            log_once(format!(
+                "resolve from {} samples into {} samples is not replayed",
+                src_desc.sample_count, dst_desc.sample_count
+            ));
+            return;
+        }
+        let (Some(src_img), Some(dst_img)) = (self.image(d, cb, src), self.image(d, cb, dst))
+        else {
+            return;
+        };
+        let yes = vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL;
+        if dst_img.info.aspect.intersects(yes) || src_img.info.aspect.intersects(yes) {
+            log_once(
+                "a depth/stencil resolve is not replayed (Vulkan resolves colour only)".into(),
+            );
+            return;
+        }
+        // The subresource index is `mip + layer * mip_levels`.
+        let region = |desc: &ResourceDesc, sub: u32| {
+            let mips = mip_count(desc).max(1);
+            (sub % mips, sub / mips)
+        };
+        let (dm, dl) = region(&dst_desc, dst_sub);
+        let (sm, sl) = region(&src_desc, src_sub);
+        let resolve = vk::ImageResolve::default()
+            .src_subresource(vk::ImageSubresourceLayers {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                mip_level: sm,
+                base_array_layer: sl,
+                layer_count: 1,
+            })
+            .dst_subresource(vk::ImageSubresourceLayers {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                mip_level: dm,
+                base_array_layer: dl,
+                layer_count: 1,
+            })
+            .extent(vk::Extent3D {
+                width: mip_size(src_desc.width as u32, sm),
+                height: mip_size(src_desc.height, sm),
+                depth: 1,
+            });
+        // SAFETY: both images are in GENERAL and alive; the queue is recording this submission.
+        unsafe {
+            d.cmd_resolve_image(
+                cb,
+                src_img.image,
+                vk::ImageLayout::GENERAL,
+                dst_img.image,
+                vk::ImageLayout::GENERAL,
+                &[resolve],
+            )
+        };
+        self.own(src);
+        self.own(dst);
+        self.stats.copies += 1;
     }
 
     fn copy_resource(
@@ -1428,6 +1547,45 @@ pub(super) mod tests {
         b.execute(&[vec![clear([0.0, 1.0, 0.0, 1.0])]]);
         let r = b.read_back(res).unwrap();
         assert!(r.bytes.chunks(4).all(|p| p == [0, 255, 0, 255]));
+    }
+
+    /// A multisampled target has an image (no host upload) and a resolve into its
+    /// single-sample twin is recorded as a copy, not skipped.
+    #[test]
+    fn a_multisampled_target_resolves_into_its_twin() {
+        let Some(g) = gpu_or_skip() else { return };
+        let mut b = VkBackend::new(&g);
+        let desc = |samples| ResourceDesc {
+            dimension: TEXTURE2D,
+            alignment: 0,
+            width: 64,
+            height: 64,
+            depth_or_array_size: 1,
+            mip_levels: 1,
+            format: 28,
+            sample_count: samples,
+            sample_quality: 0,
+            layout: 0,
+            flags: 1,
+        };
+        let msaa = resource_at(0x9000, desc(4));
+        let single = resource_at(0xa000, desc(1));
+        b.execute(&[vec![Command::ResolveSubresource {
+            dst: single,
+            dst_sub: 0,
+            src: msaa,
+            src_sub: 0,
+            format: 28,
+        }]]);
+        let src = b
+            .images
+            .get(&msaa)
+            .and_then(|t| t.as_ref())
+            .expect("msaa image");
+        assert_eq!(src.desc.sample_count, 4);
+        assert!(src.gpu_owned, "a multisampled target is never uploaded");
+        assert!(b.images.get(&single).is_some_and(|t| t.is_some()));
+        assert_eq!(b.stats.copies, 1, "the resolve counts as a copy");
     }
 
     #[test]

@@ -528,6 +528,13 @@ impl<'g> VkBackend<'g> {
                 return skip(Skip::Target("a render target has no image".into()));
             };
             self.own(v.resource);
+            let samples = self.image_desc(v.resource).map_or(1, |d| d.sample_count);
+            if samples != built.samples {
+                return skip(Skip::Target(format!(
+                    "render target {i} is {samples}-sampled, the pipeline was made for {} samples",
+                    built.samples
+                )));
+            }
             if img.info.format != built.color[i].1 {
                 let twin = super::pipeline::srgb_twin(built.color[i].0).filter(|&t| {
                     format::lookup(t, FLAG_RENDER_TARGET).map(|f| f.format) == Some(img.info.format)
@@ -557,6 +564,13 @@ impl<'g> VkBackend<'g> {
                 return skip(Skip::Target("the depth target has no image".into()));
             };
             self.own(v.resource);
+            let samples = self.image_desc(v.resource).map_or(1, |d| d.sample_count);
+            if samples != built.samples {
+                return skip(Skip::Target(format!(
+                    "the depth target is {samples}-sampled, the pipeline was made for {} samples",
+                    built.samples
+                )));
+            }
             if img.info.format != info.format {
                 return skip(Skip::Target("the depth target's format differs".into()));
             }
