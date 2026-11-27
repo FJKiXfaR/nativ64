@@ -763,7 +763,7 @@ impl<'g> VkBackend<'g> {
         if self.inspecting() {
             self.inspect_draw(c, pd, &resources, extent, rects);
         }
-        if self.skipped_by_filter() {
+        if self.skipped_by_filter() || self.skipped_by_serial(pd.serial as usize) {
             return Ok(());
         }
 

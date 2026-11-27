@@ -86,6 +86,32 @@ impl VkBackend<'_> {
         !(a..=b).contains(&n)
     }
 
+    /// `NATIV64_DRAW_ONLY_PIPELINE=<serial[,serial...]>`: in the frames that are dumped, only the
+    /// draws of those pipelines are recorded. Unlike the draw-index filter this names the
+    /// pipeline directly, so a batch can be isolated without counting draws. True when this
+    /// draw is left out.
+    pub(super) fn skipped_by_serial(&self, serial: usize) -> bool {
+        static SERIALS: std::sync::OnceLock<Option<Vec<usize>>> = std::sync::OnceLock::new();
+        let Some(serials) = SERIALS.get_or_init(|| {
+            let v = std::env::var("NATIV64_DRAW_ONLY_PIPELINE").ok()?;
+            let mut out = Vec::new();
+            for part in v.split(',') {
+                let part = part.trim();
+                if part.is_empty() {
+                    continue;
+                }
+                out.push(part.parse().ok()?);
+            }
+            Some(out)
+        }) else {
+            return false;
+        };
+        if !super::present::dump_wanted(self.frames + 1) {
+            return false;
+        }
+        !serials.contains(&serial)
+    }
+
     /// One `inspect:` line per command of the frame, cut at 300 characters.
     pub(super) fn inspect_command(&self, c: &Command) {
         let t = format!("{c:?}");
