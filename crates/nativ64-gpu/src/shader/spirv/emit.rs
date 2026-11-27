@@ -947,10 +947,7 @@ impl Tr<'_> {
                 let (t, e, merge) = (self.g.m.id(), self.g.m.id(), self.g.m.id());
                 self.g.op0(Op::SelectionMerge, &[merge, 0]);
                 self.g.term(Op::BranchConditional, &[c, t, e]);
-                let lane = matches!(
-                    self.s.branches.get(*head),
-                    Some(Some(BranchKind::Lane(_)))
-                );
+                let lane = matches!(self.s.branches.get(*head), Some(Some(BranchKind::Lane(_))));
                 self.lane_ifs += u32::from(lane);
                 for (l, arm) in [(t, taken), (e, fall)] {
                     self.g.label(l);

@@ -31,7 +31,7 @@ requests for code.
 ## Before opening a pull request
 
 ```bash
-cargo fmt --check
+scripts/fmt.sh --check   # rustfmt of the stable toolchain, as in CI
 cargo clippy -- -D warnings
 cargo test
 ```

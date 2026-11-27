@@ -1,8 +1,8 @@
 //! Optional timing of the replay (`NATIV64_PROFILE=1`): the time spent in each phase of the
 //! submissions and a few counters, printed to stderr every 60 presented frames, then reset.
 
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+use std::sync::OnceLock;
 use std::time::Instant;
 
 #[derive(Clone, Copy)]

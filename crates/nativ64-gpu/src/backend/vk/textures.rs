@@ -46,13 +46,13 @@
 
 use super::format::FormatInfo;
 use super::profile::{self, Count, Phase};
-use super::replay::{Staging, TitleImage, VkBackend, global_barrier, mip_count, stage_bytes};
+use super::replay::{global_barrier, mip_count, stage_bytes, Staging, TitleImage, VkBackend};
 use super::sampler::Spec;
-use super::{Gpu, log_once};
-use crate::d3d12::descriptor::{View, view_at, views_from};
-use crate::d3d12::resource::{ResourceDesc, info_of_checked, take_released};
+use super::{log_once, Gpu};
+use crate::d3d12::descriptor::{view_at, views_from, View};
+use crate::d3d12::resource::{info_of_checked, take_released, ResourceDesc};
 use crate::texture::detile;
-use ash::{Device, vk};
+use ash::{vk, Device};
 use nativ64::api_ms_win_core_memory as table;
 use std::collections::{HashMap, HashSet};
 
@@ -160,7 +160,10 @@ impl TexState {
 
     /// Destroys the hole image; the queue is idle.
     pub(super) fn destroy(&mut self, d: &Device) {
-        for h in [self.hole.take(), self.hole_storage.take()].into_iter().flatten() {
+        for h in [self.hole.take(), self.hole_storage.take()]
+            .into_iter()
+            .flatten()
+        {
             // SAFETY: made by `hole`; the queue is idle when the backend drops.
             unsafe {
                 d.destroy_image_view(h.view, None);
@@ -343,7 +346,10 @@ const STORAGE_KEY: u32 = 1 << 31;
 /// logged). None when the image has no storage usage or the format has no storage view.
 fn storage_view(gpu: &Gpu, t: &mut TitleImage, desc: Option<[u32; 10]>) -> Option<vk::ImageView> {
     if !t.storage {
-        log_once(format!("no unordered access to {:?}: not a storage image", t.desc));
+        log_once(format!(
+            "no unordered access to {:?}: not a storage image",
+            t.desc
+        ));
         return None;
     }
     let volume = t.desc.dimension == TEXTURE3D;
@@ -378,7 +384,10 @@ fn storage_view(gpu: &Gpu, t: &mut TitleImage, desc: Option<[u32; 10]>) -> Optio
         },
     };
     if (ty == vk::ImageViewType::TYPE_3D) != volume {
-        log_once(format!("an unordered access view of dimension {ty:?} of {:?}", t.desc));
+        log_once(format!(
+            "an unordered access view of dimension {ty:?} of {:?}",
+            t.desc
+        ));
         return None;
     }
     if t.info.aspect != vk::ImageAspectFlags::COLOR {
@@ -387,7 +396,10 @@ fn storage_view(gpu: &Gpu, t: &mut TitleImage, desc: Option<[u32; 10]>) -> Optio
     // images are MUTABLE_FORMAT: an sRGB view takes its UNORM twin (no storage in sRGB)
     let format = match dxgi {
         0 => match super::pipeline::srgb_twin(t.desc.format).filter(|_| {
-            matches!(t.info.format, vk::Format::R8G8B8A8_SRGB | vk::Format::B8G8R8A8_SRGB)
+            matches!(
+                t.info.format,
+                vk::Format::R8G8B8A8_SRGB | vk::Format::B8G8R8A8_SRGB
+            )
         }) {
             Some(twin) => super::format::lookup(twin, 0)?.format,
             None => t.info.format,
@@ -1233,18 +1245,18 @@ impl<'g> VkBackend<'g> {
 #[cfg(test)]
 mod tests {
     use super::super::draw::tests::{
-        TRIANGLE, clear, draw, floats, pipeline, pixel, state, title_memory,
+        clear, draw, floats, pipeline, pixel, state, title_memory, TRIANGLE,
     };
     use super::super::replay::tests::{resource_at, rtv, texture};
     use super::super::tests::gpu_or_skip;
     use super::*;
     use crate::d3d12::command::{Command, CopyLocation, RootView};
-    use crate::d3d12::rootsig::{Binding, RootSignature};
     use crate::d3d12::descriptor::{
         create_placed_shader_resource_view, create_sampler, create_shader_resource_view,
     };
+    use crate::d3d12::rootsig::{Binding, RootSignature};
     use crate::shader::spirv::tests::stage;
-    use crate::texture::{Layout, tile};
+    use crate::texture::{tile, Layout};
 
     #[test]
     fn the_hash_sees_every_byte() {
@@ -1727,12 +1739,18 @@ mod tests {
         let mut list = clear(handle, [0.0, 0.0, 1.0, 1.0]);
         list.extend(textured_draw(pipe, handle, t1));
         b.execute(&[list.clone()]);
-        assert!(all_pixels(&b.read_back(target).unwrap(), [200, 100, 50, 10]));
+        assert!(all_pixels(
+            &b.read_back(target).unwrap(),
+            [200, 100, 50, 10]
+        ));
         assert!(b.images.contains_key(&tex));
         release(tex);
         b.execute(&[list]);
         assert_eq!(b.stats.released, 1);
-        assert!(!b.images.contains_key(&tex), "the image went with the resource");
+        assert!(
+            !b.images.contains_key(&tex),
+            "the image went with the resource"
+        );
         assert!(!b.tex.sources.contains(&tex) && !b.tex.by_res.contains_key(&tex));
         assert!(
             all_pixels(&b.read_back(target).unwrap(), [0, 0, 0, 0]),
@@ -1797,7 +1815,11 @@ mod tests {
         b.execute(&lists(3));
         assert_eq!(b.draw.arena_bytes(), 4 * stride, "doubled");
         b.execute(&lists(9));
-        assert_eq!(b.draw.arena_bytes(), 9 * stride, "the need when larger than double");
+        assert_eq!(
+            b.draw.arena_bytes(),
+            9 * stride,
+            "the need when larger than double"
+        );
         assert_eq!(b.stats.drawn, 15);
     }
 
@@ -1818,7 +1840,10 @@ mod tests {
         srv(unread, None, t2 + 0x20);
         let target = texture(16, 8, 28, TARGET);
         b.execute(&[textured_draw(pipe, rtv(target), t1)]);
-        assert!(all_pixels(&b.read_back(target).unwrap(), [10, 200, 30, 255]));
+        assert!(all_pixels(
+            &b.read_back(target).unwrap(),
+            [10, 200, 30, 255]
+        ));
         assert!(b.images.contains_key(&read));
         assert!(!b.images.contains_key(&unread), "no draw reads it");
         // a draw that reads it makes it resident, and its descriptor is written
@@ -1842,7 +1867,10 @@ mod tests {
         assert!(all_pixels(&b.read_back(target).unwrap(), [0, 0, 255, 255]));
         // `a` is not read by the next submission: over the budget, it goes
         b.execute(&[textured_draw(pipe, rtv(target), tc)]);
-        assert!(all_pixels(&b.read_back(target).unwrap(), [255, 255, 0, 255]));
+        assert!(all_pixels(
+            &b.read_back(target).unwrap(),
+            [255, 255, 0, 255]
+        ));
         assert!(!b.images.contains_key(&a), "evicted");
         assert!(b.images.contains_key(&c), "read by this submission");
         assert!(b.stats.evictions >= 1);
@@ -1892,10 +1920,12 @@ mod tests {
         let w = wanted(vec![range(0, 2, u32::MAX)]);
         assert_eq!(w, HashSet::from([index(0), index(0x20)]));
         // an unbounded range runs to the end of the pages
-        assert!(wanted(vec![range(0, u32::MAX, 0)]).is_superset(&HashSet::from([
-            index(0),
-            index(0x20),
-            index(0x40)
-        ])));
+        assert!(
+            wanted(vec![range(0, u32::MAX, 0)]).is_superset(&HashSet::from([
+                index(0),
+                index(0x20),
+                index(0x40)
+            ]))
+        );
     }
 }

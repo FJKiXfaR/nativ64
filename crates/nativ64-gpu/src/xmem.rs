@@ -869,8 +869,14 @@ mod tests {
             std::ptr::write_bytes(base as *mut u8, 0xcd, 2 * PHYSICAL_PAGE);
             let mut again = 2usize;
             let mut more = [0usize; 2];
-            assert_eq!(XMemAllocatePhysicalPages(0, &mut again, more.as_mut_ptr()), 1);
-            assert!(more.iter().all(|&n| !slot_has_data(n)), "reused slots start empty");
+            assert_eq!(
+                XMemAllocatePhysicalPages(0, &mut again, more.as_mut_ptr()),
+                1
+            );
+            assert!(
+                more.iter().all(|&n| !slot_has_data(n)),
+                "reused slots start empty"
+            );
             XMemFreePhysicalPages(2, more.as_ptr());
             XMemFreePhysicalPages(2, pages[2..].as_ptr());
         }

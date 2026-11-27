@@ -580,7 +580,10 @@ impl Gpu {
                 vk::PipelineStageFlags::COMPUTE_SHADER,
                 vk::PipelineStageFlags::TRANSFER,
                 vk::DependencyFlags::empty(),
-                &mem_barrier(vk::AccessFlags::SHADER_WRITE, vk::AccessFlags::TRANSFER_READ),
+                &mem_barrier(
+                    vk::AccessFlags::SHADER_WRITE,
+                    vk::AccessFlags::TRANSFER_READ,
+                ),
                 &[],
                 &[],
             );

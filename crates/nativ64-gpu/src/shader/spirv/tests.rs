@@ -1953,12 +1953,12 @@ fn f16_rounding_helpers_agree_with_hardware_values() {
 // Stage entry points (chunk 8): synthetic VS and PS blobs, never game bytes
 
 pub(crate) mod stage {
+    use super::super::gpu::StageImage;
     use super::*;
     use crate::shader::container::tests::{container, dxil, sig};
     use crate::shader::container::XDAT_NATIVE;
     use crate::shader::io::{self, Link};
     use crate::shader::native::tests::{payload, xbch};
-    use super::super::gpu::StageImage;
     use crate::shader::resource::{SamplerDesc, Translated};
     use crate::shader::{parse, ParsedShader};
 
@@ -2932,7 +2932,10 @@ pub(crate) mod stage {
             "v_lshl_or_b32 v6, v3, 8, v2",
             "buffer_store_dword v6, v5, s[12:15], 0 offen",
         ]);
-        cs_blob(&lines, &CsSpec::new(4 << 1 | 1 << 7 | 1 << 8 | 1 << 11, [8, 4, 1]))
+        cs_blob(
+            &lines,
+            &CsSpec::new(4 << 1 | 1 << 7 | 1 << 8 | 1 << 11, [8, 4, 1]),
+        )
     }
 
     /// The workgroup's lanes write `100 + lane` to LDS, meet at a barrier and read the mirror
@@ -2996,13 +2999,13 @@ pub(crate) mod stage {
         let t = translate_full(&cs_ids(), None);
         let w = &t.words;
         assert_eq!(entry_model(w), 5); // GLCompute
-        // OpExecutionMode LocalSize 8 4 1
+                                       // OpExecutionMode LocalSize 8 4 1
         assert!(insts(w)
             .iter()
             .any(|(op, o)| *op == 16 && o[1] == 17 && o[2..] == [8, 4, 1]));
         assert_eq!(count(w, BUILT_IN, &[26]), 1); // WorkgroupId
         assert_eq!(count(w, BUILT_IN, &[27]), 1); // LocalInvocationId
-        // the root block comes from the push constant, as for the other stages
+                                                  // the root block comes from the push constant, as for the other stages
         assert!(insts(w)
             .iter()
             .any(|(op, o)| *op == 59 && o.get(2) == Some(&9)));
@@ -3127,11 +3130,7 @@ pub(crate) mod stage {
         let (_, op) = refused_cs(&vs);
         assert!(op.contains("outside a compute"), "{op}");
         let c = CsSpec::new(4 << 1, [64, 1, 1]);
-        let lines = [
-            "v_cmp_eq_u32 vcc, 0, v0",
-            "s_cbranch_vccz 1",
-            "s_barrier",
-        ];
+        let lines = ["v_cmp_eq_u32 vcc, 0, v0", "s_cbranch_vccz 1", "s_barrier"];
         let (_, op) = refused_cs(&cs_blob(&lines, &c));
         assert!(op.contains("per-lane branch"), "{op}");
     }
@@ -3154,7 +3153,9 @@ pub(crate) mod stage {
         let Some(g) = device() else { return };
         let _lock = super::GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let t = translate_full(&cs_ids(), None);
-        let (out, _) = g.run_stage(&t.words, [2, 2, 1], &[], &[], &[], 16 * 8).unwrap();
+        let (out, _) = g
+            .run_stage(&t.words, [2, 2, 1], &[], &[], &[], 16 * 8)
+            .unwrap();
         for y in 0..8u32 {
             for x in 0..16u32 {
                 assert_eq!(out[(y * 16 + x) as usize], x | y << 8, "({x}, {y})");

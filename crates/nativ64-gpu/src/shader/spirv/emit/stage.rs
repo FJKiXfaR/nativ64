@@ -215,7 +215,9 @@ impl<'a> Tr<'a> {
                     Opd::V(self.user_dword(root, u32::from(n)))
                 }
                 Reg::S(n) if matches!(io, StageIo::Compute(_)) => {
-                    let StageIo::Compute(c) = io else { unreachable!() };
+                    let StageIo::Compute(c) = io else {
+                        unreachable!()
+                    };
                     let Some(&(_, axis)) = c.group_ids.iter().find(|(s, _)| *s == n) else {
                         return unsupported(&format!("entry {reg}"));
                     };

@@ -14,12 +14,12 @@
 
 use super::format::{self, FormatInfo};
 use super::textures::TexState;
-use super::{Gpu, Result, VkError, log_once, vk_try};
+use super::{log_once, vk_try, Gpu, Result, VkError};
 use crate::d3d12::command::{Command, CopyLocation, Rect};
 use crate::d3d12::descriptor::{depth_stencil_view, render_target_view};
-use crate::d3d12::resource::{ResourceDesc, info_of};
+use crate::d3d12::resource::{info_of, ResourceDesc};
 use crate::texture::Layout;
-use ash::{Device, vk};
+use ash::{vk, Device};
 use std::collections::{HashMap, HashSet};
 use std::mem::Discriminant;
 
@@ -119,8 +119,14 @@ fn status_mib(key: &str) -> u64 {
     std::fs::read_to_string("/proc/self/status")
         .ok()
         .and_then(|t| {
-            t.lines()
-                .find_map(|l| l.strip_prefix(key)?.trim().trim_end_matches("kB").trim().parse::<u64>().ok())
+            t.lines().find_map(|l| {
+                l.strip_prefix(key)?
+                    .trim()
+                    .trim_end_matches("kB")
+                    .trim()
+                    .parse::<u64>()
+                    .ok()
+            })
         })
         .unwrap_or(0)
         >> 10
@@ -714,11 +720,7 @@ impl<'g> VkBackend<'g> {
         self.refresh_stats();
         let host = host_memory_note();
         let keys = self.tex.placed_keys();
-        let addresses = keys
-            .iter()
-            .map(|k| k.0)
-            .collect::<HashSet<_>>()
-            .len();
+        let addresses = keys.iter().map(|k| k.0).collect::<HashSet<_>>().len();
         let s = &self.stats;
         format!(
             "nativ64-gpu: frame {}: images {} ({} MiB), placed {} ({} MiB), arena {} KiB, \
@@ -1471,8 +1473,14 @@ pub(super) mod tests {
         use nativ64::api_ms_win_core_memory as table;
         let Some(g) = gpu_or_skip() else { return };
         let mut b = VkBackend::new(&g);
-        let a = table::alloc(0, 0x1000, table::MEM_RESERVE | table::MEM_COMMIT, 0x04, None)
-            .unwrap();
+        let a = table::alloc(
+            0,
+            0x1000,
+            table::MEM_RESERVE | table::MEM_COMMIT,
+            0x04,
+            None,
+        )
+        .unwrap();
         // SAFETY: the page was just committed read-write.
         let page = unsafe { std::slice::from_raw_parts_mut(a as *mut u8, 0x1000) };
         page[..8].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
