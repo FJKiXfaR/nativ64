@@ -597,6 +597,12 @@ impl<'g> VkBackend<'g> {
         let Some(extent) = extent else {
             return skip(Skip::Target("no target".into()));
         };
+        if images_started.elapsed().as_millis() >= 1 {
+            eprintln!(
+                "nativ64-gpu: the images of a draw took {} ms",
+                images_started.elapsed().as_millis()
+            );
+        }
 
         // Memory: the root block, the vertex and index buffers.
         let Some(view_table) = self.draw.view_table() else {
