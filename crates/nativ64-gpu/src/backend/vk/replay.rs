@@ -357,6 +357,12 @@ impl<'g> VkBackend<'g> {
             })
             .count();
         self.draw.begin(draws);
+        // A submission that takes seconds is what starves the title's frame loop (its watchdog
+        // fails after ~30 s without progress): name it with its sizes.
+        let started = std::time::Instant::now();
+        let lists_seen = lists.len();
+        let commands_seen: u64 = lists.iter().map(|l| l.len() as u64).sum();
+        let (drawn0, dispatched0) = (self.stats.drawn, self.stats.dispatched);
         self.tex.submission += 1;
         super::profile::count(super::profile::Count::Submissions, 1);
         let ts = super::profile::start();
@@ -416,6 +422,16 @@ impl<'g> VkBackend<'g> {
         }
         self.draw.end();
         free_staging(gpu, staging);
+        let elapsed = started.elapsed();
+        if elapsed.as_secs_f64() > 2.0 {
+            eprintln!(
+                "nativ64-gpu: a replay of {lists_seen} lists ({commands_seen} commands, {} draws, \
+                 {} dispatches) took {:.1} s",
+                self.stats.drawn - drawn0,
+                self.stats.dispatched - dispatched0,
+                elapsed.as_secs_f64()
+            );
+        }
         self.refresh_stats();
         super::profile::stop(super::profile::Phase::Record, tr);
     }
