@@ -155,6 +155,8 @@ pub trait Backend {
     fn active_count(&mut self) -> Self::V;
     /// The lowest active lane in the wave (`s_ff1` of the exec mask).
     fn active_first(&mut self) -> Self::V;
+    /// The ballot of a per-lane bit: its low and high dwords (`v_mbcnt` of a mask).
+    fn ballot_words(&mut self, bit: Self::B) -> (Self::V, Self::V);
 }
 
 /// A value of an operand or result: bits, or a lane mask.
@@ -241,6 +243,9 @@ impl Backend for Dry {
     fn lane_id(&mut self) {}
     fn active_count(&mut self) {}
     fn active_first(&mut self) {}
+    fn ballot_words(&mut self, _bit: Self::B) -> (Self::V, Self::V) {
+        ((), ())
+    }
 }
 
 /// Runs the table on host numbers.
@@ -468,6 +473,10 @@ impl Backend for Cpu {
     }
     fn active_first(&mut self) -> u32 {
         0
+    }
+    fn ballot_words(&mut self, bit: bool) -> (u32, u32) {
+        // one invocation per run: lane 0
+        (u32::from(bit), 0)
     }
 }
 
@@ -2017,10 +2026,25 @@ impl<K: Backend> X<'_, K> {
             "v_mbcnt_lo_u32_b32" | "v_mbcnt_hi_u32_b32" => {
                 // bits of the mask below this lane (the low or the high half), plus the
                 // second source: with an all-ones mask that is the lane's index
-                if matches!(self.src(0, 0)?, Opd::B(_)) {
-                    return Err(self.un());
-                }
-                let a = self.v(0)?;
+                let mask_src = match self.src(0, 0)? {
+                    Opd::B(bit) => Some(self.b.ballot_words(bit)),
+                    Opd::V(a) => {
+                        // the mask's dwords as numbers: its bits are the lanes
+                        let (lo, hi) = (a, self.k(0));
+                        Some((lo, hi))
+                    }
+                };
+                let a = match self.src(0, 0)? {
+                    Opd::B(_) => {
+                        let (lo, hi) = mask_src.unwrap();
+                        if self.name == "v_mbcnt_lo_u32_b32" {
+                            lo
+                        } else {
+                            hi
+                        }
+                    }
+                    Opd::V(_) => self.v(0)?,
+                };
                 let prev = self.v(1)?;
                 let lane = self.b.lane_id();
                 let (k32, k31, one, ones) = (self.k(32), self.k(31), self.k(1), self.k(u32::MAX));

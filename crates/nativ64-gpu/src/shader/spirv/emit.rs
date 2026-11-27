@@ -261,6 +261,16 @@ impl Backend for Gen {
         self.op(Op::GroupNonUniformBallotBitCount, t, &[scope, 0, ballot])
     }
 
+    fn ballot_words(&mut self, bit: u32) -> (u32, u32) {
+        let t = self.t_u32();
+        let scope = self.k(3);
+        let tv4 = self.m.global(Op::TypeVector, None, &[t, 4]);
+        let ballot = self.op(Op::GroupNonUniformBallot, tv4, &[scope, bit]);
+        let lo = self.op(Op::CompositeExtract, t, &[ballot, 0]);
+        let hi = self.op(Op::CompositeExtract, t, &[ballot, 1]);
+        (lo, hi)
+    }
+
     fn active_first(&mut self) -> u32 {
         // `s_ff1_i32_b64` of the exec mask: the lowest active lane
         self.m.capability(Capability::GroupNonUniformBallot);

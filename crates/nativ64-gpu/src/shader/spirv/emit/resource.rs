@@ -1832,11 +1832,7 @@ impl<'a> Tr<'a> {
         if dim != 1 {
             return refuse(&format!("{name} on a non-2D image"));
         }
-        if !matches!(self.io(), StageIo::Pixel(_)) {
-            // `OpImageGather` takes its LOD implicitly, which needs a pixel program's quad
-            // derivatives (a compute program has none)
-            return refuse(&format!("{name} outside a pixel program"));
-        }
+        let pixel = matches!(self.io(), StageIo::Pixel(_));
         let ns = c.srcs.len();
         if ns < 3 || c.srcs[ns - 2].len() < 8 || c.srcs[ns - 1].len() < 4 {
             return bad("a gather whose operands do not match its form");
@@ -1869,6 +1865,11 @@ impl<'a> Tr<'a> {
                 .global(Op::TypeVector, None, &[tf, cs.len() as u32]);
             self.g.op(Op::CompositeConstruct, tv, &cs)
         };
+        if !pixel {
+            // A program without quad derivatives (a compute or vertex one) cannot gather at an
+            // implicit level: the four texels of the 2x2 block at LOD 0 are fetched instead.
+            return self.gather_fetched(c, chans, &coord, m.dim);
+        }
         let v4 = self.vec4(Class::Float);
         let tf = self.g.t_f32();
         let mut out = Vec::new();
@@ -1879,6 +1880,77 @@ impl<'a> Tr<'a> {
                 let x = self.g.op(Op::CompositeExtract, tf, &[res, k]);
                 let bits = self.g.as_bits(x);
                 out.push(self.lane_result(c, j * 4 + k as usize, bits));
+            }
+        }
+        Ok(Some(out))
+    }
+
+    /// `image_gather4_lz` without quad derivatives: the four texels of the 2x2 block at LOD 0,
+    /// as `((x0, y0), (x1, y0), (x0, y1), (x1, y1))` in the gather's order.
+    fn gather_fetched(
+        &mut self,
+        c: &Ctx<Gen>,
+        chans: Vec<u32>,
+        coord: &u32,
+        dim: u8,
+    ) -> R<Option<Vec<Opd<Gen>>>> {
+        let ns = c.srcs.len();
+        let (tex, img) = self.texture_array(dim);
+        let index = self.bits_of(c.srcs[ns - 1][0]);
+        self.non_uniform(index);
+        let image = self.array_element(tex, img, index);
+        let tu = self.g.t_u32();
+        let tf = self.g.t_f32();
+        self.g.m.capability(Capability::ImageQuery);
+        let tu2 = self.g.m.global(Op::TypeVector, None, &[tu, 2]);
+        let zero = self.g.k(0);
+        let size = self.g.op(Op::ImageQuerySizeLod, tu2, &[image, zero]);
+        let sw = self.g.op(Op::CompositeExtract, tu, &[size, 0]);
+        let sh = self.g.op(Op::CompositeExtract, tu, &[size, 1]);
+        let cw = self.g.op(Op::CompositeExtract, tf, &[*coord, 0]);
+        let chf = self.g.op(Op::CompositeExtract, tf, &[*coord, 1]);
+        let half = self.g.fconst(0.5);
+        let one = self.g.fconst(1.0);
+        let scaled = |t: &mut Self, c: u32, size: u32| {
+            let s = t.g.op(Op::ConvertUToF, tf, &[size]);
+            let x = t.g.op(Op::FMul, tf, &[c, s]);
+            t.g.op(Op::FSub, tf, &[x, half])
+        };
+        let fx = scaled(self, cw, sw);
+        let fy = scaled(self, chf, sh);
+        let ix = self.g.op(Op::ConvertFToS, tu, &[fx]);
+        let iy = self.g.op(Op::ConvertFToS, tu, &[fy]);
+        let one_i = self.g.k(1);
+        let max_w = self.g.op(Op::ISub, tu, &[sw, one_i]);
+        let max_h = self.g.op(Op::ISub, tu, &[sh, one_i]);
+        let clamp = |t: &mut Self, v: u32, max: u32| {
+            let z = t.g.k(0);
+            let tb = t.g.t_bool();
+            let below = t.g.op(Op::SLessThan, tb, &[v, z]);
+            let v = t.g.select(below, z, v);
+            let above = t.g.op(Op::SGreaterThan, tb, &[v, max]);
+            t.g.select(above, max, v)
+        };
+        let tb = self.g.t_bool();
+        let _ = tb;
+        let one_again = one;
+        let _ = one_again;
+        let v4 = self.vec4(Class::Float);
+        let mut out = Vec::new();
+        for (j, ch) in chans.into_iter().enumerate() {
+            for d in 0..4u32 {
+                let dx = self.g.k(d & 1);
+                let dy = self.g.k(d >> 1);
+                let x = self.g.op(Op::IAdd, tu, &[ix, dx]);
+                let y = self.g.op(Op::IAdd, tu, &[iy, dy]);
+                let x = clamp(self, x, max_w);
+                let y = clamp(self, y, max_h);
+                let tc = self.g.op(Op::CompositeConstruct, tu2, &[x, y]);
+                // the fetch takes the level as an operand
+                let texel = self.g.op(Op::ImageFetch, v4, &[image, tc, 2, zero]);
+                let x = self.g.op(Op::CompositeExtract, tf, &[texel, ch]);
+                let bits = self.g.as_bits(x);
+                out.push(self.lane_result(c, j * 4 + d as usize, bits));
             }
         }
         Ok(Some(out))
