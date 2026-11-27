@@ -508,23 +508,20 @@ impl<'g> VkBackend<'g> {
             let viewed = unsafe { crate::d3d12::descriptor::registry_index_at(slot) };
             let what = match viewed {
                 Some(index) => {
+                    let entry = self.tex.describe_entry(index as usize);
                     let bound = if self.tex.bound_is_view(index as usize) {
                         "bound"
                     } else {
                         "NOT bound (hole)"
                     };
-                    let entry = format!(
-                        "index {index} {bound}; {}",
-                        self.tex.describe_entry(index as usize)
-                    );
                     if entry == "hole" {
-                        // the reason a hole: the registered view, to name its resource
+                        // the registered view behind the hole: its kind names the problem
                         match crate::d3d12::descriptor::view_at(index as usize) {
-                            Some(v) => format!("hole, view {v:?}"),
-                            None => "hole, no view".to_owned(),
+                            Some(v) => format!("index {index} hole, view {v:?}"),
+                            None => format!("index {index} hole, no view"),
                         }
                     } else {
-                        entry
+                        format!("index {index} {bound}; {entry}")
                     }
                 }
                 None => {
