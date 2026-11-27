@@ -485,8 +485,39 @@ fn status(r: Result<(), u32>) -> i32 {
     }
 }
 
+/// `FileTimeToLocalFileTime(in, out)`: a UTC FILETIME as the local time with the host's current
+/// timezone rules for that instant.
+unsafe fn filetime_to_local(in_ft: *const u64, out_ft: *mut u64) -> i32 {
+    if in_ft.is_null() || out_ft.is_null() {
+        set_last_error(87);
+        return 0;
+    }
+    let value = crate::filetime::to_local(unsafe { in_ft.read_unaligned() });
+    unsafe { out_ft.write_unaligned(value) };
+    1
+}
+
+/// `LocalFileTimeToFileTime(in, out)`: the inverse of `FileTimeToLocalFileTime` (a local time
+/// that a DST change skipped maps with the offset in effect before the change).
+unsafe fn local_filetime_to_filetime(in_ft: *const u64, out_ft: *mut u64) -> i32 {
+    if in_ft.is_null() || out_ft.is_null() {
+        set_last_error(87);
+        return 0;
+    }
+    let value = crate::filetime::from_local(unsafe { in_ft.read_unaligned() });
+    unsafe { out_ft.write_unaligned(value) };
+    1
+}
+
 crate::win32! {
     module "api-ms-win-core-file" => "kernel32";
+
+    Native fn FileTimeToLocalFileTime(in_ft: *const u64, out_ft: *mut u64) -> i32 {
+        unsafe { filetime_to_local(in_ft, out_ft) }
+    }
+    Native fn LocalFileTimeToFileTime(in_ft: *const u64, out_ft: *mut u64) -> i32 {
+        unsafe { local_filetime_to_filetime(in_ft, out_ft) }
+    }
 
     Native fn GetFileAttributesW(path: *const u16) -> u32 {
         match crate::handles::name_w(path) {
