@@ -526,6 +526,104 @@ pub(crate) unsafe fn emulate_cache_hint(code: *const u8, fwd: usize) -> Option<u
     (len <= fwd).then_some(len)
 }
 
+/// The base register of a cache-hint instruction: `(length, register)` for the plain `[reg]`
+/// operand the flush loops use, `None` for every other form.
+///
+/// # Safety
+/// `code` points at the faulting instruction, readable for as many bytes as it is long.
+unsafe fn cache_hint_base(code: *const u8, fwd: usize) -> Option<(usize, usize)> {
+    let len = unsafe { emulate_cache_hint(code, fwd) }?;
+    let b = |i: usize| unsafe { code.add(i).read() };
+    let mut at = usize::from(fwd > 0 && b(0) == 0x66);
+    let rex = if fwd > at && b(at) & 0xf0 == 0x40 {
+        let r = b(at);
+        at += 1;
+        r
+    } else {
+        0
+    };
+    let modrm = b(at + 2);
+    if modrm >> 6 != 0 || matches!(modrm & 7, 4 | 5) {
+        return None;
+    }
+    Some((len, usize::from(modrm & 7 | (rex & 1) << 3)))
+}
+
+/// Emulates the buffer-flushing loop compilers build around `clwb` in one trap, so a title's
+/// "write this resource back" loop does not pay a SIGILL per 64-byte line:
+///
+/// ```text
+/// top: clwb [a]              ; a = rax, r9, ... any plain base register
+///      add  a, 0x40
+///      cmp  a, b
+///      jbe  top
+/// ```
+///
+/// The hints themselves write back cache lines that are coherent here anyway, so the whole loop
+/// has no memory effect; only the arithmetic and the flags are applied, in constant time.
+/// Returns true when `code` is that loop.
+///
+/// # Safety
+/// `code` points at the faulting instruction, readable for `fwd` bytes.
+pub(crate) unsafe fn emulate_cache_hint_loop(regs: &mut Regs, code: *const u8, fwd: usize) -> bool {
+    let b = |i: usize| unsafe { code.add(i).read() };
+    let Some((len, a)) = (unsafe { cache_hint_base(code, fwd) }) else {
+        return false;
+    };
+    let add = len;
+    if fwd < add + 9 {
+        return false;
+    }
+    // add rA, 0x40: REX.W 83 /0 ib.
+    let rex_a = b(add);
+    if rex_a & 0xf8 != 0x48
+        || b(add + 1) != 0x83
+        || b(add + 2) & 0xf8 != 0xc0
+        || b(add + 3) != 0x40
+        || usize::from(b(add + 2) & 7 | (rex_a & 1) << 3) != a
+    {
+        return false;
+    }
+    // cmp rA, rB: REX.W 39 /r.
+    let cmp = add + 4;
+    let rex_c = b(cmp);
+    if rex_c & 0xf8 != 0x48 || b(cmp + 1) != 0x39 {
+        return false;
+    }
+    let modrm = b(cmp + 2);
+    if modrm >> 6 != 3 {
+        return false;
+    }
+    let rm = usize::from(modrm & 7 | (rex_c & 1) << 3);
+    let limit = usize::from((modrm >> 3) & 7 | (rex_c & 4) << 1);
+    if rm != a {
+        return false;
+    }
+    // jbe back to `code`.
+    let jbe = cmp + 3;
+    if b(jbe) != 0x76 {
+        return false;
+    }
+    let target = (code as isize + jbe as isize + 2 + b(jbe + 1) as i8 as isize) as usize;
+    if target != code as usize {
+        return false;
+    }
+    let start = regs.gpr[a];
+    let limit_value = regs.gpr[limit];
+    let end = if limit_value >= start {
+        // The loop runs once per line starting at `start` while the incremented value stays
+        // below the limit: the last pass leaves `a` just past it.
+        let passes = (limit_value - start) / 0x40 + 1;
+        start.wrapping_add(passes.wrapping_mul(0x40))
+    } else {
+        start.wrapping_add(0x40)
+    };
+    regs.gpr[a] = end;
+    regs.eflags = regs.eflags & !CMP_FLAGS | cmp_flags(end, limit_value);
+    regs.rip += (jbe + 2) as u64;
+    true
+}
+
 /// Emulates the AMD-only SSE4a `extrq` / `insertq` (register forms: `66 0f 78 /0 ib ib`,
 /// `66 0f 79`, `f2 0f 78 ib ib`, `f2 0f 79`, optional REX) on the saved XMM registers, as the
 /// vendor manual defines them; returns the instruction's length, `None` for anything else.
@@ -623,6 +721,16 @@ unsafe fn emulate_cpu_gap(uc: *mut libc::ucontext_t) -> bool {
     // `clflush` (`0f ae /7`) for a host without it. Hints only, so they are no-ops here.
     let off = rip as usize & 0xfff;
     let fwd = 0x1000 - off;
+    // A whole `clwb; add; cmp; jbe` flush loop is one trap: per-instruction skipping would cost
+    // a signal per 64-byte line, which a title's resource flush loops turn into seconds.
+    if emulate_cache_hint_loop(&mut regs, rip as *const u8, fwd) {
+        for (r, i) in regs.gpr.iter().zip(GREG) {
+            g[i as usize] = *r as i64;
+        }
+        g[libc::REG_RIP as usize] = regs.rip as i64;
+        g[libc::REG_EFL as usize] = regs.eflags as i64;
+        return true;
+    }
     if let Some(len) = emulate_cache_hint(rip as *const u8, fwd) {
         g[libc::REG_RIP as usize] = (rip + len as u64) as i64;
         return true;
@@ -899,6 +1007,92 @@ mod tests {
                 None,
                 "{bytes:x?}"
             );
+        }
+    }
+
+    #[test]
+    fn cache_hint_loop_is_skipped_in_one_trap() {
+        // clwb [rax]; add rax,0x40; cmp rax,rcx; jbe back (the title's flush loop shape).
+        let code = [
+            0x66, 0x0f, 0xae, 0x30, 0x48, 0x83, 0xc0, 0x40, 0x48, 0x39, 0xc8, 0x76, 0xf3,
+        ];
+        let mut regs = Regs {
+            rip: 0x1000,
+            ..Regs::default()
+        };
+        regs.gpr[0] = 0x1000;
+        regs.gpr[1] = 0x107f;
+        assert!(unsafe { emulate_cache_hint_loop(&mut regs, code.as_ptr(), code.len()) });
+        // Passes at 0x1000 and 0x1040; 0x1080 is past 0x107f.
+        assert_eq!(regs.gpr[0], 0x1080);
+        assert_eq!(regs.rip, 0x1000 + 13);
+        assert_eq!(regs.eflags & CMP_FLAGS, cmp_flags(0x1080, 0x107f));
+    }
+
+    #[test]
+    fn cache_hint_loop_with_a_rex_base_and_no_passes_left() {
+        // clwb [r9]; add r9,0x40; cmp r9,rcx; jbe back, with r9 already past rcx.
+        let code = [
+            0x66, 0x41, 0x0f, 0xae, 0x31, 0x49, 0x83, 0xc1, 0x40, 0x49, 0x39, 0xc9, 0x76, 0xf2,
+        ];
+        let mut regs = Regs {
+            rip: 0x2000,
+            ..Regs::default()
+        };
+        regs.gpr[9] = 0x8000;
+        regs.gpr[1] = 0x4000;
+        assert!(unsafe { emulate_cache_hint_loop(&mut regs, code.as_ptr(), code.len()) });
+        assert_eq!(regs.gpr[9], 0x8040);
+        assert_eq!(regs.rip, 0x2000 + 14);
+        assert_eq!(regs.eflags & CMP_FLAGS, cmp_flags(0x8040, 0x4000));
+        // A limit that is not the compared register, or a jump elsewhere, is not that loop.
+        let mut other = code;
+        other[10] = 0xca; // cmp r10, rcx: the compared register is not the flushed one
+        let mut r = Regs {
+            rip: 0x2000,
+            ..Regs::default()
+        };
+        assert!(!unsafe { emulate_cache_hint_loop(&mut r, other.as_ptr(), other.len()) });
+        let mut away = code;
+        away[13] = 0xf0; // jbe somewhere else
+        assert!(!unsafe { emulate_cache_hint_loop(&mut r, away.as_ptr(), away.len()) });
+    }
+
+    #[test]
+    fn cpu_without_clwb_runs_a_real_flush_loop() {
+        // cpuid leaf 7 EBX bit 24: CLWB. Present: the loop never traps and the test says nothing.
+        if std::arch::x86_64::__cpuid_count(7, 0).ebx & (1 << 24) != 0 {
+            return;
+        }
+        let _g = GUEST.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            let page = libc::mmap(
+                std::ptr::null_mut(),
+                8192,
+                libc::PROT_READ | libc::PROT_WRITE | libc::PROT_EXEC,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                -1,
+                0,
+            ) as *mut u8;
+            assert_ne!(page as isize, -1);
+            // mov rax,rdi; mov rcx,rsi; top: clwb [rax]; add rax,0x40; cmp rax,rcx; jbe top; ret
+            let code: [u8; 20] = [
+                0x48, 0x89, 0xf8, 0x48, 0x89, 0xf1, 0x66, 0x0f, 0xae, 0x30, 0x48, 0x83, 0xc0, 0x40,
+                0x48, 0x39, 0xc8, 0x76, 0xf3, 0xc3,
+            ];
+            std::ptr::copy_nonoverlapping(code.as_ptr(), page, code.len());
+            let data = page.add(4096);
+            std::ptr::write_bytes(data, 0xff, 256);
+            install(page as u64, 4096);
+            setup_thread();
+            let f: extern "C" fn(*mut u8, *mut u8) -> u64 = std::mem::transmute(page);
+            // The loop passes at +0, +64, +128, +192 and leaves rax at +256.
+            let end = f(data, data.add(192));
+            assert_eq!(end, data as u64 + 256);
+            // A write-back hint leaves the data as it was.
+            for i in 0..256 {
+                assert_eq!(*data.add(i), 0xff, "byte {i}");
+            }
         }
     }
 

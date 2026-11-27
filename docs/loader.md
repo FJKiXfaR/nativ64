@@ -87,6 +87,9 @@ saved XMM registers; the title uses them unconditionally. `monitorx` / `mwaitx` 
 `clwb` (`66 0f ae /6`), `clflushopt` (`66 0f ae /7`) and `clflush` (`0f ae /7`) are cache write-back
 hints with nothing a program can observe on coherent x86 caches, so they are skipped like no-ops
 (the title uses them before handing CPU-written memory to the GPU, which reads the same memory).
+A whole buffer-flush loop (`clwb [a]; add a,0x40; cmp a,b; jbe top`) is recognised and its
+arithmetic and flags are applied in one trap: skipping it per line would cost a signal per
+64 bytes, and the title flushes resources megabytes at a time.
 Other Zen-only instructions are reported as faults, not emulated, until a title needs them.
 
 ## Not done yet
