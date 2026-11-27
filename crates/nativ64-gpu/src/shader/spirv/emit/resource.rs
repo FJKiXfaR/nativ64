@@ -2651,6 +2651,60 @@ impl<'a> Tr<'a> {
         }
     }
 
+    /// `ds_write_b16`: the low half of the value goes to the 16-bit field the byte address
+    /// names (the dword is read, the half replaced and written back).
+    fn ds_write_b16(&mut self, c: &Ctx<Gen>) -> R<Option<Vec<Opd<Gen>>>> {
+        let i = &c.inst.instr;
+        let name = i.name();
+        if i.mem.gds {
+            return refuse(&format!("{name} on GDS"));
+        }
+        let (var, n) = self.lds()?;
+        let tu = self.g.t_u32();
+        let tb = self.g.t_bool();
+        let Some(&addr) = c.srcs.first().and_then(|s| s.first()) else {
+            return bad("a DS write without its address");
+        };
+        let Some(&data) = c.srcs.get(1).and_then(|s| s.first()) else {
+            return bad("a DS write without its data");
+        };
+        let addr = self.bits_of(addr);
+        let off = self.g.k(i.mem.offset as u32 & 0xffff);
+        let byte = self.g.op(Op::IAdd, tu, &[addr, off]);
+        let two = self.g.k(2);
+        let word = self.g.op(Op::ShiftRightLogical, tu, &[byte, two]);
+        let nn = self.g.k(n);
+        let inside = self.g.op(Op::ULessThan, tb, &[word, nn]);
+        let zero = self.g.k(0);
+        let safe = self.g.select(inside, word, zero);
+        let p = self.g.t_ptr(StorageClass::Workgroup, tu);
+        let ptr = self.g.op(Op::AccessChain, p, &[var, safe]);
+        let data = self.bits_of(data);
+        let ok = self.and(inside, c.active);
+        self.guarded(Some(ok), |t| {
+            let old = t.g.load(tu, ptr);
+            // the half: bit 1 of the byte address picks the high half
+            let one = t.g.k(1);
+            let two = t.g.k(2);
+            let bit = t.g.op(Op::BitwiseAnd, tu, &[byte, two]);
+            let sh = t.g.op(Op::ShiftLeftLogical, tu, &[bit, one]);
+            let high = t.g.op(Op::INotEqual, tb, &[sh, zero]);
+            let keep = t.g.k(0xffff);
+            let low_half = t.g.op(Op::BitwiseAnd, tu, &[data, keep]);
+            let sixteen = t.g.k(16);
+            let high_half = t.g.op(Op::ShiftLeftLogical, tu, &[low_half, sixteen]);
+            let value = t.g.select(high, high_half, low_half);
+            let mask_low = t.g.k(0x0000ffff);
+            let mask_high = t.g.k(0xffff0000);
+            let mask = t.g.select(high, mask_high, mask_low);
+            let kept = t.g.op(Op::BitwiseAnd, tu, &[old, mask]);
+            let v = t.g.op(Op::BitwiseOr, tu, &[kept, value]);
+            t.g.store(ptr, v);
+            Ok(())
+        })?;
+        Ok(Some(Vec::new()))
+    }
+
     /// `ds_swizzle_b32`: the LDS read address comes from the lane the swizzle immediate picks
     /// (`((lane & and) | or) ^ xor`, or a quad permutation), a subgroup shuffle of the address.
     fn ds_swizzle(&mut self, c: &Ctx<Gen>) -> R<Option<Vec<Opd<Gen>>>> {
@@ -2798,6 +2852,10 @@ impl<'a> Tr<'a> {
             "2_b64" => (2, 8, 2),
             "2st64_b32" => (2, 256, 1),
             "2st64_b64" => (2, 512, 2),
+            "_b16" if !read => {
+                return self.ds_write_b16(c);
+            }
+            "_b16" => return refuse(name),
             _ => return Ok(None),
         };
         if i.mem.gds {
