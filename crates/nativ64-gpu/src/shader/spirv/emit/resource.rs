@@ -990,7 +990,6 @@ impl<'a> Tr<'a> {
         let name = c.inst.instr.name();
         let m = c.inst.instr.img;
         let ns = c.srcs.len();
-        let loaded = |t: &mut Self, s: Option<&Src>| matches!(s, Some(Src::Val(v)) if t.res().analysis.loaded.contains(v));
         let rsrc = &c.inst.srcs[ns - 2];
         let loaded = |t: &mut Self, s: Option<&Src>| matches!(s, Some(Src::Val(v)) if t.res().analysis.loaded.contains(v));
         if !loaded(self, rsrc.first()) {
@@ -1056,7 +1055,7 @@ impl<'a> Tr<'a> {
         let name = i.name();
         let m = i.img;
         if name != "image_gather4_lz" {
-            return refuse(&format!("{name}"));
+            return refuse(name);
         }
         if m.a16 || m.d16 || m.tfe || m.lwe || m.unorm {
             return refuse(&format!("{name} with a16, d16, tfe, lwe or unorm"));
