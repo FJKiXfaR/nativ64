@@ -112,6 +112,28 @@ impl VkBackend<'_> {
         !serials.contains(&serial)
     }
 
+    /// `NATIV64_DRAW_ONLY_PS=<hex hash>`: in the frames that are dumped, only the draws whose
+    /// pixel shader is that hash are recorded (which text a pixel shader draws, without knowing
+    /// the run's pipeline serial). True when this draw is left out.
+    pub(super) fn skipped_by_ps(&self, pd: &crate::d3d12::pipeline::PipelineData) -> bool {
+        static HASH: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
+        let Some(hash) = *HASH.get_or_init(|| {
+            let v = std::env::var("NATIV64_DRAW_ONLY_PS").ok()?;
+            u64::from_str_radix(v.trim(), 16).ok()
+        }) else {
+            return false;
+        };
+        if !super::present::dump_wanted(self.frames + 1) {
+            return false;
+        }
+        let ps = pd
+            .stages
+            .iter()
+            .find(|s| s.name == "pixel")
+            .map(|s| crate::shader::fnv1a64(&s.bytes));
+        ps != Some(hash)
+    }
+
     /// One `inspect:` line per command of the frame, cut at 300 characters.
     pub(super) fn inspect_command(&self, c: &Command) {
         let t = format!("{c:?}");
