@@ -15,6 +15,20 @@ fn install_window_backend() {
     }
 }
 
+/// Starts the host joystick reader when `NATIV64_GAMEPAD` is set (value `1` or empty: the
+/// default `/dev/input/js0`; any other value is the device path).
+fn install_gamepad() {
+    let Ok(v) = std::env::var("NATIV64_GAMEPAD") else {
+        return;
+    };
+    let path = if v.is_empty() || v == "1" {
+        None
+    } else {
+        Some(v.as_str())
+    };
+    nativ64::gameinput::start_joystick(path);
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let check = args.iter().any(|a| a == "--check");
@@ -93,6 +107,7 @@ fn main() -> ExitCode {
     drop(data);
     if !check {
         install_window_backend();
+        install_gamepad();
         let full = std::fs::canonicalize(path)
             .map_or_else(|_| path.clone(), |p| p.to_string_lossy().into_owned());
         nativ64::process::set_main_module(img.base() as usize, &full);

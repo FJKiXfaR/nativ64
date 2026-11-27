@@ -67,7 +67,10 @@ connected; device callbacks enumerate it, readings answer `GetGamepadState`). Bu
 `NATIV64_INPUT_SCRIPT` (`<mask hex>@<seconds>[+<duration>]`, comma separated, seconds from the
 first reading query, default hold 0.3 s: `4@25,4@35` presses A twice) and from
 `gameinput::set_keyboard_buttons`, which a window backend can call (none does yet: the Wayland
-backend has no seat). Reading callbacks are stored and never fire.
+backend has no seat). Reading callbacks are stored and never fire. A real controller can drive it: when the loader is
+started with `NATIV64_GAMEPAD` set (`1` or empty for `/dev/input/js0`, else a device path), a
+background thread reads the Linux joystick's `js_event`s (an Xbox 360 pad: buttons, D-pad hat,
+sticks and triggers) into the gamepad the readings report.
 
 ## Windowing (`src/windowing.rs`)
 

@@ -20,6 +20,8 @@
 //!   (`4@25,20@30+1`: A at 25 s for 0.3 s, X at 30 s for one second). Bits: Menu 0x1, View 0x2,
 //!   A 0x4, B 0x8, X 0x10, Y 0x20, dpad up/down/left/right 0x40/0x80/0x100/0x200. Bad entries are
 //!   logged and skipped.
+//! - a Linux joystick (`NATIV64_GAMEPAD`, default `/dev/input/js0` when started by the loader), see
+//!   [`start_joystick`], so a real controller presses the virtual gamepad's buttons;
 //! - [`set_keyboard_buttons`], for a window backend that turns key events into buttons (no
 //!   backend does yet: the Wayland one has no seat).
 //!
@@ -92,6 +94,53 @@ static KEYBOARD_BUTTONS: AtomicU32 = AtomicU32::new(0);
 /// Sets the gamepad buttons held on the host keyboard (a window backend calls this on key events).
 pub fn set_keyboard_buttons(mask: u32) {
     KEYBOARD_BUTTONS.store(mask, Ordering::Relaxed);
+}
+
+/// Shoulder and stick button bits (the GDK order continues the ones above).
+pub const LB: u32 = 0x400;
+pub const RB: u32 = 0x800;
+pub const LS: u32 = 0x1000;
+pub const RS: u32 = 0x2000;
+
+/// The host joystick's current state (buttons plus stick and trigger values); rest until a
+/// joystick is read. A reading merges its buttons with the script and keyboard ones.
+#[derive(Clone, Copy)]
+pub struct Physical {
+    pub buttons: u32,
+    pub left_trigger: f32,
+    pub right_trigger: f32,
+    pub left_x: f32,
+    pub left_y: f32,
+    pub right_x: f32,
+    pub right_y: f32,
+}
+
+impl Physical {
+    const REST: Physical = Physical {
+        buttons: 0,
+        left_trigger: 0.0,
+        right_trigger: 0.0,
+        left_x: 0.0,
+        left_y: 0.0,
+        right_x: 0.0,
+        right_y: 0.0,
+    };
+}
+
+static PHYSICAL: Mutex<Physical> = Mutex::new(Physical::REST);
+
+/// The host joystick state as last read.
+pub fn physical() -> Physical {
+    *PHYSICAL.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn update_physical(f: impl FnOnce(&mut Physical)) {
+    f(&mut PHYSICAL.lock().unwrap_or_else(|e| e.into_inner()));
+}
+
+/// Forgets the host joystick state (used by the reader on device errors and by tests).
+pub fn reset_physical() {
+    update_physical(|p| *p = Physical::REST);
 }
 
 /// Scripted presses: (button mask, start seconds, duration seconds).
@@ -189,7 +238,9 @@ impl State {
 
     /// The buttons held at `seconds` after the clock started.
     fn buttons_at(&self, seconds: f64) -> u32 {
-        self.script.buttons_at(seconds) | KEYBOARD_BUTTONS.load(Ordering::Relaxed)
+        self.script.buttons_at(seconds)
+            | KEYBOARD_BUTTONS.load(Ordering::Relaxed)
+            | physical().buttons
     }
 
     /// The newest reading: polls the buttons now, making a reading if they changed.
@@ -430,11 +481,17 @@ extern "win64" fn gamepad_state(this: Reading, out: *mut PadState) -> bool {
         return false;
     }
     // SAFETY: a reading we handed out; `out` has room for the state.
+    let p = physical();
     unsafe {
         out.write(PadState {
             // SAFETY: as above.
             buttons: (*this).data.buttons,
-            ..PadState::default()
+            left_trigger: p.left_trigger,
+            right_trigger: p.right_trigger,
+            left_x: p.left_x,
+            left_y: p.left_y,
+            right_x: p.right_x,
+            right_y: p.right_y,
         })
     };
     true
@@ -795,9 +852,168 @@ win32! {
     }
 }
 
+/// Starts the Linux joystick reader: a background thread reads `struct js_event` records from
+/// the given device (the loader passes `NATIV64_GAMEPAD`, default `/dev/input/js0`) and keeps
+/// [`PHYSICAL`] current, so a real controller presses the virtual gamepad's buttons and moves its
+/// sticks. Idempotent; a device that cannot be opened is logged once.
+pub fn start_joystick(path: Option<&str>) {
+    static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let path = path.unwrap_or("/dev/input/js0").to_string();
+    std::thread::Builder::new()
+        .name("nativ64-joystick".into())
+        .spawn(move || {
+            let Ok(name) = std::ffi::CString::new(path.clone()) else {
+                return;
+            };
+            // SAFETY: `name` is a valid C string; a failure is handled below.
+            let fd = unsafe { libc::open(name.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
+            if fd < 0 {
+                eprintln!(
+                    "nativ64: gamepad {path} cannot be opened (errno {})",
+                    std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+                );
+                return;
+            }
+            eprintln!("nativ64: reading gamepad {path}");
+            let mut buf = [0u8; 8];
+            loop {
+                let mut got = 0usize;
+                while got < buf.len() {
+                    // SAFETY: the rest of `buf` is writable and the fd is open.
+                    let n = unsafe {
+                        libc::read(fd, buf.as_mut_ptr().add(got).cast(), buf.len() - got)
+                    };
+                    if n <= 0 {
+                        reset_physical();
+                        return;
+                    }
+                    got += n as usize;
+                }
+                let (kind, number, value) = js_event(&buf);
+                apply_js_event(kind, number, value);
+            }
+        })
+        .ok();
+}
+
+/// One `struct js_event`: `(type, number, value)` (the time field is not needed).
+fn js_event(b: &[u8; 8]) -> (u8, u8, i16) {
+    (b[6] & 0x7f, b[7], i16::from_le_bytes([b[4], b[5]]))
+}
+
+const JS_BUTTON: u8 = 1;
+const JS_AXIS: u8 = 2;
+
+/// Joystick button number -> gamepad button bit (the xpad mapping of an Xbox 360 pad).
+fn button_bit(number: u8) -> Option<u32> {
+    Some(match number {
+        0 => A,
+        1 => B,
+        2 => X,
+        3 => Y,
+        4 => LB,
+        5 => RB,
+        6 => VIEW,
+        7 => MENU,
+        9 => LS,
+        10 => RS,
+        _ => return None,
+    })
+}
+
+/// Applies one joystick event to [`PHYSICAL`]: buttons, the D-pad hat and the sticks/triggers.
+fn apply_js_event(kind: u8, number: u8, value: i16) {
+    match kind {
+        JS_BUTTON => {
+            let Some(bit) = button_bit(number) else {
+                return;
+            };
+            update_physical(|p| {
+                if value != 0 {
+                    p.buttons |= bit;
+                } else {
+                    p.buttons &= !bit;
+                }
+            });
+        }
+        JS_AXIS => {
+            // Axes 6 and 7 are the D-pad hat: left/right and up/down (negative is up/left).
+            if matches!(number, 6 | 7) {
+                let (neg, pos) = if number == 6 {
+                    (LEFT, RIGHT)
+                } else {
+                    (UP, DOWN)
+                };
+                update_physical(|p| {
+                    p.buttons &= !(neg | pos);
+                    if value < -16_000 {
+                        p.buttons |= neg;
+                    } else if value > 16_000 {
+                        p.buttons |= pos;
+                    }
+                });
+                return;
+            }
+            let stick = (f32::from(value) / 32_767.0).clamp(-1.0, 1.0);
+            let trigger = ((i32::from(value) + 32_767) as f32 / 65_534.0).clamp(0.0, 1.0);
+            update_physical(|p| match number {
+                0 => p.left_x = stick,
+                1 => p.left_y = -stick,
+                3 => p.right_x = stick,
+                4 => p.right_y = -stick,
+                2 => p.left_trigger = trigger,
+                5 => p.right_trigger = trigger,
+                _ => {}
+            });
+        }
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One test only: the physical state is process-wide.
+    #[test]
+    fn joystick_events_press_buttons_and_move_sticks() {
+        reset_physical();
+        // A press (button 0, value 1), the D-pad hat up (axis 7, negative), a stick and a trigger.
+        apply_js_event(JS_BUTTON, 0, 1);
+        apply_js_event(JS_AXIS, 7, -32_767);
+        apply_js_event(JS_AXIS, 0, 32_767);
+        apply_js_event(JS_AXIS, 1, 32_767);
+        apply_js_event(JS_AXIS, 2, 32_767);
+        let p = physical();
+        assert_eq!(p.buttons & A, A);
+        assert_eq!(p.buttons & UP, UP);
+        assert!((p.left_x - 1.0).abs() < 1e-6);
+        assert!((p.left_y + 1.0).abs() < 1e-6, "stick Y is positive up");
+        assert!((p.left_trigger - 1.0).abs() < 1e-3);
+        // Release and the D-pad to the right.
+        apply_js_event(JS_BUTTON, 0, 0);
+        apply_js_event(JS_AXIS, 7, 0);
+        apply_js_event(JS_AXIS, 6, 32_767);
+        let p = physical();
+        assert_eq!(p.buttons & A, 0);
+        assert_eq!(p.buttons & UP, 0);
+        assert_eq!(p.buttons & RIGHT, RIGHT);
+        // An unknown button number changes nothing.
+        let before = physical().buttons;
+        apply_js_event(JS_BUTTON, 42, 1);
+        assert_eq!(physical().buttons, before);
+        reset_physical();
+        assert_eq!(physical().buttons, 0);
+        // The event record is little-endian: time, value, type, number.
+        assert_eq!(
+            js_event(&[0, 0, 0, 0, 0xff, 0x7f, 0x81, 0]),
+            (JS_BUTTON, 0, 32_767)
+        );
+    }
+
     use crate::com::{E_NOINTERFACE, E_POINTER, IID_IUNKNOWN};
 
     fn create() -> (*mut Object, &'static Vtbl) {
