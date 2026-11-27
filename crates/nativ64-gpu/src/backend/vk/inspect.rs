@@ -49,20 +49,32 @@ impl VkBackend<'_> {
         dir().is_some() && super::present::dump_wanted(self.frames)
     }
 
-    /// `NATIV64_DRAW_ONLY=<a>-<b>` (with `NATIV64_DUMP_TARGETS`): in the frames being described,
-    /// only the draws numbered `a..=b` in the frame (counted from 0, replayed ones) are
-    /// recorded, to see what each part of a frame writes. True when this draw is left out.
+    /// `NATIV64_DRAW_ONLY=<a>-<b>`: in the frames that are dumped (`NATIV64_DUMP_FRAMES` or
+    /// `NATIV64_DUMP_TARGETS`), only the draws numbered `a..=b` in the frame (counted from 0,
+    /// replayed ones) are recorded, to see what each part of a frame writes. True when this
+    /// draw is left out.
     pub(super) fn skipped_by_filter(&self) -> bool {
         static RANGE: std::sync::OnceLock<Option<(u32, u32)>> = std::sync::OnceLock::new();
         static COUNT: std::sync::Mutex<(u64, u32)> = std::sync::Mutex::new((0, 0));
         let Some((a, b)) = *RANGE.get_or_init(|| {
             let v = std::env::var("NATIV64_DRAW_ONLY").ok()?;
             let (a, b) = v.split_once('-')?;
-            Some((a.parse().ok()?, b.parse().ok()?))
+            let range = (a.parse().ok()?, b.parse().ok()?);
+            if std::env::var_os("NATIV64_DUMP_FRAMES").is_none_or(|d| d.is_empty())
+                && dir().is_none()
+            {
+                super::log_once(
+                    "NATIV64_DRAW_ONLY has no effect without NATIV64_DUMP_FRAMES or \
+                     NATIV64_DUMP_TARGETS: nothing would be rendered to look at"
+                        .into(),
+                );
+                return None;
+            }
+            Some(range)
         }) else {
             return false;
         };
-        if !self.inspecting() {
+        if !super::present::dump_wanted(self.frames + 1) {
             return false;
         }
         let mut c = COUNT.lock().unwrap_or_else(|e| e.into_inner());

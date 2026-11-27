@@ -876,6 +876,8 @@ impl<'g> VkBackend<'g> {
 
     /// The 1x1 zero RGBA8 view every index that is not a texture holds (`storage`: the one of
     /// binding 1, a storage image of its own, since shaders may write to it).
+    /// `NATIV64_HOLE_WHITE=1` makes it opaque white (a diagnostic: whatever samples a hole
+    /// shows up white).
     fn hole(&mut self, d: &Device, cb: vk::CommandBuffer, storage: bool) -> Option<vk::ImageView> {
         if let Some(h) = if storage {
             &self.tex.hole_storage
@@ -962,11 +964,17 @@ impl<'g> VkBackend<'g> {
                 &[],
                 &to_general,
             );
+            // `NATIV64_HOLE_WHITE=1` clears the hole to opaque white instead of transparent
+            // black: a draw that samples a hole then renders as solid white, which names the
+            // content that a missing texture is behind.
+            let white =
+                std::env::var("NATIV64_HOLE_WHITE").is_ok_and(|v| !v.is_empty() && v != "0");
+            let clear = if white { [1.0; 4] } else { [0.0; 4] };
             d.cmd_clear_color_image(
                 cb,
                 image,
                 vk::ImageLayout::GENERAL,
-                &vk::ClearColorValue { float32: [0.0; 4] },
+                &vk::ClearColorValue { float32: clear },
                 &[sub],
             );
             let made = Some(Hole {
