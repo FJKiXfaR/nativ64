@@ -557,6 +557,9 @@ struct Frame {
     cont: u32,
 }
 
+/// How many words of a program's code a module embeds for its literal tables.
+const CODE_WINDOW_WORDS: usize = 8192;
+
 struct Tr<'a> {
     f: &'a Func,
     s: &'a Structured,
@@ -577,6 +580,9 @@ struct Tr<'a> {
     /// The program's native code as words, for the literal tables a program indexes with its
     /// own address.
     code: Vec<u32>,
+    /// The byte offset of the code window embedded in the module, and its size in words.
+    code_base: u32,
+    code_window_words: usize,
     /// The private array holding `code`, made by [`Tr::code_prologue`] when a load reads it.
     code_arr: Option<u32>,
 }
@@ -700,6 +706,8 @@ fn build<'a>(
             .map(|c| u32::from_le_bytes(*c))
             .collect(),
         code_arr: None,
+        code_base: 0,
+        code_window_words: 0,
     };
     let entry = t.g.m.id();
     t.g.label(entry);
@@ -811,25 +819,41 @@ impl Tr<'_> {
         if st.res.analysis.code_loads.is_empty() || self.code.is_empty() {
             return Ok(());
         }
+        // The literal tables sit around the code offsets the addresses name: a window from
+        // there is embedded (one instruction holds at most 65535 operands, and a program's
+        // code is larger).
+        let base = (st.res.analysis.code_window & !3) as usize / 4;
+        let base = base.min(self.code.len());
+        let words = (self.code.len() - base).min(CODE_WINDOW_WORDS);
+        let window = &self.code[base..base + words];
         let tu = self.g.t_u32();
-        let n = self.g.k(self.code.len() as u32);
+        let n = self.g.k(words as u32);
         let arr = self.g.m.global(Op::TypeArray, None, &[tu, n]);
-        let ids: Vec<u32> = self.code.iter().map(|&w| self.g.k(w)).collect();
+        let ids: Vec<u32> = window.iter().map(|&w| self.g.k(w)).collect();
         let init = self.g.m.global(Op::ConstantComposite, Some(arr), &ids);
         let var = self.global(StorageClass::Private, arr);
         self.g.m.name(var, "code");
         self.g.store(var, init);
         self.code_arr = Some(var);
+        self.code_base = (base * 4) as u32;
+        self.code_window_words = words;
         Ok(())
     }
 
-    /// A dword of the program's code at byte offset `off` (0 past the end).
+    /// A dword of the program's code at byte offset `off` (0 outside the embedded window).
     fn code_word(&mut self, off: u32) -> u32 {
         let tu = self.g.t_u32();
         let arr = self.code_arr.expect("the code array");
+        let base = self.code_base;
+        let tb = self.g.t_bool();
+        let base_k = self.g.k(base);
+        let below = self.g.op(Op::UGreaterThanEqual, tb, &[off, base_k]);
+        let rel = self.g.op(Op::ISub, tu, &[off, base_k]);
+        let none = self.g.k(u32::MAX);
+        let rel = self.g.select(below, rel, none);
         let two = self.g.k(2);
-        let idx = self.g.op(Op::ShiftRightLogical, tu, &[off, two]);
-        let n = self.g.k(self.code.len() as u32);
+        let idx = self.g.op(Op::ShiftRightLogical, tu, &[rel, two]);
+        let n = self.g.k(self.code_window_words as u32);
         let tb = self.g.t_bool();
         let inside = self.g.op(Op::ULessThan, tb, &[idx, n]);
         let zero = self.g.k(0);

@@ -124,6 +124,9 @@ pub(in crate::shader::spirv) struct Analysis {
     /// The SMEM loads that read the program's own code (a literal table at `s_getpc` plus a
     /// computed offset): they are served from the code words the module embeds.
     pub(super) code_loads: HashSet<(usize, usize)>,
+    /// The code bytes those loads reach (a window of the code, so a program's whole code is
+    /// not embedded): its first byte.
+    pub(super) code_window: u32,
 }
 
 /// Whether `s` is computed from user data and constants only (scalar arithmetic, copies and
@@ -355,6 +358,7 @@ pub(in crate::shader::spirv) fn analyze(
         numbers: HashSet::new(),
         memory_addresses: false,
         code_loads: HashSet::new(),
+        code_window: 0,
     };
     for (b, blk) in f.blocks.iter().enumerate() {
         for (k, i) in blk.insts.iter().enumerate() {
@@ -502,10 +506,16 @@ pub(in crate::shader::spirv) fn analyze(
     a.numbers = numbers;
     // the program's own address (`s_getpc_b64`): values computed from it point into the code
     let mut code_vals: HashSet<Val> = HashSet::new();
+    let mut code_window = u32::MAX;
     loop {
         let before = code_vals.len();
         for blk in &f.blocks {
             for i in &blk.insts {
+                for s in i.srcs.iter().flatten() {
+                    if let Src::CodeLo(o) = s {
+                        code_window = code_window.min(o & !15);
+                    }
+                }
                 let from_code = i.srcs.iter().flatten().any(|s| {
                     matches!(s, Src::CodeLo(_) | Src::CodeHi)
                         || matches!(s, Src::Val(v) if code_vals.contains(v))
@@ -534,6 +544,9 @@ pub(in crate::shader::spirv) fn analyze(
                 a.code_loads.insert((b, k));
             }
         }
+    }
+    if code_window != u32::MAX {
+        a.code_window = code_window;
     }
     a.memory_addresses = reads_memory_addresses(f, &a.loaded, &a.table_loads);
     Ok(a)
@@ -1926,6 +1939,7 @@ impl<'a> Tr<'a> {
         dim: u8,
     ) -> R<Option<Vec<Opd<Gen>>>> {
         let ns = c.srcs.len();
+        let (_, arrayed, _) = Self::image_dim(dim).expect("a dimension that was checked");
         let (tex, img) = self.texture_array(dim);
         let index = self.bits_of(c.srcs[ns - 1][0]);
         self.non_uniform(index);
@@ -1933,7 +1947,8 @@ impl<'a> Tr<'a> {
         let tu = self.g.t_u32();
         let tf = self.g.t_f32();
         self.g.m.capability(Capability::ImageQuery);
-        let tu2 = self.g.m.global(Op::TypeVector, None, &[tu, 2]);
+        let ncomp = if arrayed != 0 { 3 } else { 2 };
+        let tu2 = self.g.m.global(Op::TypeVector, None, &[tu, ncomp]);
         let zero = self.g.k(0);
         let size = self.g.op(Op::ImageQuerySizeLod, tu2, &[image, zero]);
         let sw = self.g.op(Op::CompositeExtract, tu, &[size, 0]);
@@ -1951,6 +1966,16 @@ impl<'a> Tr<'a> {
         let fy = scaled(self, chf, sh);
         let ix = self.g.op(Op::ConvertFToS, tu, &[fx]);
         let iy = self.g.op(Op::ConvertFToS, tu, &[fy]);
+        let layer = if arrayed != 0 {
+            let lf = self.g.op(Op::CompositeExtract, tf, &[*coord, 2]);
+            let l = self.g.op(Op::ConvertFToS, tu, &[lf]);
+            let count = self.g.op(Op::CompositeExtract, tu, &[size, 2]);
+            let one_i = self.g.k(1);
+            let max_l = self.g.op(Op::ISub, tu, &[count, one_i]);
+            Some((l, max_l))
+        } else {
+            None
+        };
         let one_i = self.g.k(1);
         let max_w = self.g.op(Op::ISub, tu, &[sw, one_i]);
         let max_h = self.g.op(Op::ISub, tu, &[sh, one_i]);
@@ -1976,7 +2001,13 @@ impl<'a> Tr<'a> {
                 let y = self.g.op(Op::IAdd, tu, &[iy, dy]);
                 let x = clamp(self, x, max_w);
                 let y = clamp(self, y, max_h);
-                let tc = self.g.op(Op::CompositeConstruct, tu2, &[x, y]);
+                let tc = match layer {
+                    Some((l, max_l)) => {
+                        let l = clamp(self, l, max_l);
+                        self.g.op(Op::CompositeConstruct, tu2, &[x, y, l])
+                    }
+                    None => self.g.op(Op::CompositeConstruct, tu2, &[x, y]),
+                };
                 // the fetch takes the level as an operand
                 let texel = self.g.op(Op::ImageFetch, v4, &[image, tc, 2, zero]);
                 let x = self.g.op(Op::CompositeExtract, tf, &[texel, ch]);
