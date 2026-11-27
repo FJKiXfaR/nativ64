@@ -2528,23 +2528,28 @@ impl<'a> Tr<'a> {
     // Workgroup memory (chunk 10c)
 
     /// The workgroup memory: a `u32` array of the record's LDS size.
-    fn lds(&mut self) -> R<(u32, u32)> {
-        let StageIo::Compute(cs) = self.io() else {
-            return refuse("workgroup memory outside a compute program");
+    fn lds(&mut self) -> R<(u32, u32, StorageClass)> {
+        // A console pixel or vertex program has its own LDS; Vulkan has no workgroup memory
+        // outside a compute program, so it becomes private scratch there (fine for a program
+        // that keeps its own values in it, which is what they do).
+        let (bytes, class) = match self.io() {
+            StageIo::Compute(cs) => (cs.lds_bytes, StorageClass::Workgroup),
+            StageIo::Pixel(ps) => (ps.lds_bytes, StorageClass::Private),
+            StageIo::Vertex(vs) => (vs.lds_bytes, StorageClass::Private),
         };
         // A program that uses LDS without asking for any (a lane exchange through
         // `ds_swizzle_b32`) gets a wave's worth of dwords.
-        let n = cs.lds_bytes.div_ceil(4).max(MIN_LDS);
+        let n = bytes.div_ceil(4).max(MIN_LDS);
         if let Some(v) = self.res().lds {
-            return Ok((v, n));
+            return Ok((v, n, class));
         }
         let tu = self.g.t_u32();
         let len = self.g.k(n);
         let arr = self.g.m.global(Op::TypeArray, None, &[tu, len]);
-        let var = self.global(StorageClass::Workgroup, arr);
+        let var = self.global(class, arr);
         self.g.m.name(var, "lds");
         self.res().lds = Some(var);
-        Ok((var, n))
+        Ok((var, n, class))
     }
 
     /// `ds_read*` / `ds_write*` (b32 to b128, the `2` and `2st64` pairs): byte address plus
@@ -2809,7 +2814,7 @@ impl<'a> Tr<'a> {
         if i.mem.gds {
             return refuse(&format!("{name} on GDS"));
         }
-        let (var, n) = self.lds()?;
+        let (var, n, class) = self.lds()?;
         let tu = self.g.t_u32();
         let tb = self.g.t_bool();
         let Some(&addr) = c.srcs.first().and_then(|s| s.first()) else {
@@ -2827,7 +2832,7 @@ impl<'a> Tr<'a> {
         let inside = self.g.op(Op::ULessThan, tb, &[word, nn]);
         let zero = self.g.k(0);
         let safe = self.g.select(inside, word, zero);
-        let p = self.g.t_ptr(StorageClass::Workgroup, tu);
+        let p = self.g.t_ptr(class, tu);
         let ptr = self.g.op(Op::AccessChain, p, &[var, safe]);
         let data = self.bits_of(data);
         let ok = self.and(inside, c.active);
@@ -2862,7 +2867,7 @@ impl<'a> Tr<'a> {
         if i.mem.gds {
             return refuse(&format!("{name} on GDS"));
         }
-        let (var, n) = self.lds()?;
+        let (var, n, class) = self.lds()?;
         let tu = self.g.t_u32();
         let tb = self.g.t_bool();
         let Some(&addr) = c.srcs.first().and_then(|s| s.first()) else {
@@ -2877,7 +2882,7 @@ impl<'a> Tr<'a> {
         let inside = self.g.op(Op::ULessThan, tb, &[word, nn]);
         let zero = self.g.k(0);
         let safe = self.g.select(inside, word, zero);
-        let p = self.g.t_ptr(StorageClass::Workgroup, tu);
+        let p = self.g.t_ptr(class, tu);
         let ptr = self.g.op(Op::AccessChain, p, &[var, safe]);
         let v = self.g.load(tu, ptr);
         let v = self.g.select(inside, v, zero);
@@ -2898,7 +2903,7 @@ impl<'a> Tr<'a> {
         if i.mem.gds {
             return refuse("ds_swizzle_b32 on GDS");
         }
-        let (var, n) = self.lds()?;
+        let (var, n, class) = self.lds()?;
         let tu = self.g.t_u32();
         let tb = self.g.t_bool();
         let Some(&addr) = c.srcs.first().and_then(|s| s.first()) else {
@@ -2937,7 +2942,7 @@ impl<'a> Tr<'a> {
         let inside = self.g.op(Op::ULessThan, tb, &[word, nn]);
         let zero = self.g.k(0);
         let safe = self.g.select(inside, word, zero);
-        let p = self.g.t_ptr(StorageClass::Workgroup, tu);
+        let p = self.g.t_ptr(class, tu);
         let ptr = self.g.op(Op::AccessChain, p, &[var, safe]);
         let v = self.g.load(tu, ptr);
         let v = self.g.select(inside, v, zero);
@@ -2969,7 +2974,7 @@ impl<'a> Tr<'a> {
         if i.mem.gds {
             return refuse(&format!("{name} on GDS"));
         }
-        let (var, n) = self.lds()?;
+        let (var, n, class) = self.lds()?;
         let tu = self.g.t_u32();
         let tb = self.g.t_bool();
         let Some(&addr) = c.srcs.first().and_then(|s| s.first()) else {
@@ -2984,7 +2989,7 @@ impl<'a> Tr<'a> {
         let inside = self.g.op(Op::ULessThan, tb, &[word, nn]);
         let zero = self.g.k(0);
         let safe = self.g.select(inside, word, zero);
-        let p = self.g.t_ptr(StorageClass::Workgroup, tu);
+        let p = self.g.t_ptr(class, tu);
         let ptr = self.g.op(Op::AccessChain, p, &[var, safe]);
         let scope = self.g.k(2);
         let relaxed = self.g.k(0);
@@ -3050,7 +3055,7 @@ impl<'a> Tr<'a> {
         if i.mem.gds {
             return refuse(&format!("{name} on GDS"));
         }
-        let (var, n) = self.lds()?;
+        let (var, n, class) = self.lds()?;
         let tu = self.g.t_u32();
         let tb = self.g.t_bool();
         let Some(&addr) = c.srcs.first().and_then(|s| s.first()) else {
@@ -3065,7 +3070,7 @@ impl<'a> Tr<'a> {
                 u32::from(i.mem.offset1) * scale,
             ]
         };
-        let p = self.g.t_ptr(StorageClass::Workgroup, tu);
+        let p = self.g.t_ptr(class, tu);
         let two = self.g.k(2);
         let nn = self.g.k(n);
         let mut out = Vec::new();

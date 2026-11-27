@@ -74,6 +74,8 @@ pub struct VsAttr {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VsIo {
+    /// LDS bytes the program asked for (a vertex program has its own).
+    pub lds_bytes: u32,
     /// The descriptor rows the program uses: an image find its kind here.
     pub used: Vec<UsedRow>,
     pub user: Range<u16>,
@@ -120,6 +122,8 @@ pub struct PsAttr {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PsIo {
+    /// LDS bytes the program asked for (a pixel program has its own).
+    pub lds_bytes: u32,
     /// The descriptor rows the program uses: an image finds its kind here.
     pub used: Vec<UsedRow>,
     pub user: Range<u16>,
@@ -288,6 +292,7 @@ fn vs_io(p: &ParsedShader, rec: &Record, link: Option<&Link>) -> Option<VsIo> {
         used: used_rows(rec),
         user: ir::user_range(rec),
         tables: table_sgprs(rec),
+        lds_bytes: rec.lds_bytes,
         attrs,
         params,
         clip: d.outputs.iter().any(|o| o.usage == 7),
@@ -348,6 +353,7 @@ fn ps_io(rec: &Record, targets: &[u32], link: Option<&Link>) -> Option<PsIo> {
         })
         .collect();
     Some(PsIo {
+        lds_bytes: rec.lds_bytes,
         used: used_rows(rec),
         user: ir::user_range(rec),
         tables: table_sgprs(rec),
@@ -658,6 +664,7 @@ mod tests {
             kind: 0,
         }];
         let io = StageIo::Vertex(VsIo {
+            lds_bytes: 0,
             used: rows.clone(),
             user: 0..16,
             tables: BTreeSet::new(),
@@ -668,6 +675,7 @@ mod tests {
         assert_eq!(io.descriptor_kind(9, 32), Some(0));
         assert_eq!(io.descriptor_kind(9, 36), None);
         let io = StageIo::Pixel(PsIo {
+            lds_bytes: 0,
             used: rows,
             user: 0..16,
             tables: BTreeSet::new(),
