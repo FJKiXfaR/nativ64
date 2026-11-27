@@ -444,18 +444,30 @@ unsafe extern "win64" fn copy_into(
     let Some(len) = linear_len(l, plane, subresource, row_pitch, slice_pitch) else {
         return E_INVALIDARG;
     };
-    let tiled = std::slice::from_raw_parts_mut(tiled, l.size as usize);
-    let linear = std::slice::from_raw_parts(linear, len);
+    // The title may free either range from another thread: copy instead of slicing them.
+    let Some(linear) = crate::hostmem::peek(linear as u64, len) else {
+        return E_INVALIDARG;
+    };
+    let tiled_addr = tiled as u64;
+    let Some(mut tiled) = crate::hostmem::peek(tiled_addr, l.size as usize) else {
+        return E_INVALIDARG;
+    };
     match tile(
         l,
         plane as usize,
         subresource,
         0,
-        tiled,
-        linear,
+        &mut tiled,
+        &linear,
         (row_pitch as usize, slice_pitch as usize),
     ) {
-        Ok(()) => S_OK,
+        Ok(()) => {
+            if crate::hostmem::poke(tiled_addr, &tiled) {
+                S_OK
+            } else {
+                E_INVALIDARG
+            }
+        }
         Err(e) => tile_hresult(e),
     }
 }
@@ -479,18 +491,28 @@ unsafe extern "win64" fn copy_from(
     let Some(len) = linear_len(l, plane, subresource, row_pitch, slice_pitch) else {
         return E_INVALIDARG;
     };
-    let tiled = std::slice::from_raw_parts(tiled, l.size as usize);
-    let linear = std::slice::from_raw_parts_mut(linear, len);
+    // The title may free either range from another thread: copy instead of slicing them.
+    let Some(tiled) = crate::hostmem::peek(tiled as u64, l.size as usize) else {
+        return E_INVALIDARG;
+    };
+    let linear_addr = linear as u64;
+    let mut linear = vec![0u8; len];
     match detile(
         l,
         plane as usize,
         subresource,
         0,
-        tiled,
-        linear,
+        &tiled,
+        &mut linear,
         (row_pitch as usize, slice_pitch as usize),
     ) {
-        Ok(()) => S_OK,
+        Ok(()) => {
+            if crate::hostmem::poke(linear_addr, &linear) {
+                S_OK
+            } else {
+                E_INVALIDARG
+            }
+        }
         Err(e) => tile_hresult(e),
     }
 }

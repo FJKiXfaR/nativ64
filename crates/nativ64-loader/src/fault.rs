@@ -66,74 +66,84 @@ pub fn location(rip: u64) -> String {
     out
 }
 
-/// The `/proc/self/maps` entry of a host address: the map's start, its file offset and the
-/// path (fixed buffers: a crash report runs in a signal handler and cannot allocate).
-fn host_mapping(addr: u64) -> Option<(u64, u64, [u8; 96])> {
-    let fd = unsafe { libc::open(c"/proc/self/maps".as_ptr(), libc::O_RDONLY) };
-    if fd < 0 {
-        return None;
-    }
-    let mut buf = [0u8; 8192];
-    let mut got = 0usize;
-    while got < buf.len() {
-        let n = unsafe { libc::read(fd, buf[got..].as_mut_ptr().cast(), buf.len() - got) };
-        if n <= 0 {
-            break;
-        }
-        got += n as usize;
-    }
-    unsafe { libc::close(fd) };
-    let parse = |b: &[u8]| -> Option<u64> {
-        std::str::from_utf8(b)
-            .ok()
-            .and_then(|s| u64::from_str_radix(s, 16).ok())
+/// The address the running binary's first mapping starts at minus its file offset: the load
+/// base of nativ64 itself (set at [`install`]; 0 when unknown).
+static HOST_BASE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Reads `/proc/self/maps` and returns the load base of the running binary (the mapping of
+/// `/proc/self/exe` with the file offset subtracted).
+fn find_host_base() -> u64 {
+    let exe = std::fs::read_link("/proc/self/exe").ok();
+    let Ok(maps) = std::fs::read_to_string("/proc/self/maps") else {
+        return 0;
     };
-    let mut at = 0usize;
-    while at < got {
-        let end = buf[at..got]
-            .iter()
-            .position(|&b| b == b'\n')
-            .map(|p| at + p)
-            .unwrap_or(got);
-        let line = &buf[at..end];
-        let mut fields = line.split(|&b| b == b' ');
-        if let Some(range) = fields.next() {
-            if let Some(dash) = range.iter().position(|&b| b == b'-') {
-                if let (Some(lo), Some(hi)) = (parse(&range[..dash]), parse(&range[dash + 1..])) {
-                    if addr >= lo && addr < hi {
-                        let _ = fields.next();
-                        let off = fields.next().and_then(parse).unwrap_or(0);
-                        let mut path = [0u8; 96];
-                        if let Some(slash) = line.iter().position(|&b| b == b'/') {
-                            let p = &line[slash..];
-                            let n = p.len().min(path.len() - 1);
-                            path[..n].copy_from_slice(&p[..n]);
-                        }
-                        return Some((lo, off, path));
-                    }
-                }
-            }
+    for line in maps.lines() {
+        let mut fields = line.split(' ');
+        let range = fields.next().unwrap_or("");
+        let perms = fields.next().unwrap_or("");
+        let off = fields.next().unwrap_or("0");
+        let rest: Vec<&str> = fields.collect();
+        let path = rest.join(" ");
+        let Some(link) = &exe else { continue };
+        if !path.trim().ends_with(link.to_str().unwrap_or("")) || path.trim().is_empty() {
+            continue;
         }
-        at = end + 1;
+        if !perms.starts_with('r') {
+            continue;
+        }
+        let Some((lo, _hi)) = range.split_once('-') else {
+            continue;
+        };
+        let (Ok(lo), Ok(off)) = (u64::from_str_radix(lo, 16), u64::from_str_radix(off, 16)) else {
+            continue;
+        };
+        return lo.saturating_sub(off);
     }
-    None
+    0
 }
 
-/// Prints where a host (nativ64) address lies, so the fault can be resolved with `addr2line`.
+/// Prints a host address as the offset into the nativ64 binary (for `addr2line`) and, when the
+/// host stack can be walked, the caller chain the same way.
 fn say_host_location(addr: u64) {
-    match host_mapping(addr) {
-        Some((start, off, path)) => {
-            let n = path.iter().position(|&b| b == 0).unwrap_or(path.len());
-            let file = String::from_utf8_lossy(&path[..n]).into_owned();
-            say(format_args!(
-                "\nnativ64: host address {addr:#x} in {file} (map {start:#x}, file offset \
-                 {off:#x}, at {:#x})",
-                addr - start + off
-            ));
+    let base = HOST_BASE.load(Ordering::Relaxed);
+    if base != 0 && addr >= base {
+        say(format_args!(
+            "\nnativ64: host rip nativ64+{:#x}",
+            addr - base
+        ));
+    } else {
+        say(format_args!("\nnativ64: host rip {addr:#x}"));
+    }
+}
+
+/// The caller chain of a host fault, as offsets into nativ64 (frame-pointer walk: the release
+/// build keeps frame pointers).
+unsafe fn say_host_backtrace(rbp: u64) {
+    let base = HOST_BASE.load(Ordering::Relaxed);
+    if base == 0 {
+        return;
+    }
+    let mut frame = rbp;
+    let mut printed = 0;
+    say(format_args!("nativ64: host stack:"));
+    for _ in 0..24 {
+        if frame < 0x1000 || frame % 8 != 0 {
+            break;
         }
-        None => say(format_args!(
-            "\nnativ64: host address {addr:#x} is not in a mapping"
-        )),
+        let next = std::ptr::read_volatile(frame as *const u64);
+        let ret = std::ptr::read_volatile((frame + 8) as *const u64);
+        if ret < base {
+            break;
+        }
+        say(format_args!(" +{:#x}", ret - base));
+        printed += 1;
+        if next <= frame {
+            break;
+        }
+        frame = next;
+    }
+    if printed > 0 {
+        say(format_args!("\n"));
     }
 }
 
@@ -335,6 +345,8 @@ extern "C" fn on_fault(sig: i32, info: *mut libc::siginfo_t, uc: *mut libc::c_vo
     ));
     say_location(rip);
     say_host_location(rip);
+    let rbp = unsafe { (*uc).uc_mcontext.gregs[libc::REG_RBP as usize] as u64 };
+    unsafe { say_host_backtrace(rbp) };
     say(format_args!("\n"));
     unsafe { libc::_exit(139) }
 }
@@ -361,6 +373,7 @@ pub fn install(base: u64, size: usize) {
         std::env::var_os("NATIV64_NO_SEH").is_some_and(|v| v != "0" && !v.is_empty()),
         Ordering::Relaxed,
     );
+    HOST_BASE.store(find_host_base(), Ordering::Relaxed);
     nativ64::seh::set_fatal_hook(report_unhandled);
     nativ64::seh::set_fault_hook(crate::stubs::snapshot_imports);
     for sig in [

@@ -538,8 +538,15 @@ fn upload(
         return false;
     }
     let th = profile::start();
-    // SAFETY: the range lies in committed, accessible pages of the memory table.
-    let data = unsafe { std::slice::from_raw_parts(at as *const u8, size) };
+    // The title may free the memory from another thread while this upload runs: a copy that
+    // cannot fault (a slice over it could) is what the hash and the detile read.
+    let Some(data) = crate::hostmem::peek(at as u64, size) else {
+        log_once(format!(
+            "texture memory {at:#x} (+{size:#x}) went away while it was uploaded"
+        ));
+        return false;
+    };
+    let data = data.as_slice();
     let hash = hash64(data);
     stats.hashed += size as u64;
     profile::stop(Phase::Hash, th);
