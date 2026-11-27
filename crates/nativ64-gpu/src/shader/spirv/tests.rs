@@ -1958,6 +1958,7 @@ pub(crate) mod stage {
     use crate::shader::container::XDAT_NATIVE;
     use crate::shader::io::{self, Link};
     use crate::shader::native::tests::{payload, xbch};
+    use super::super::gpu::StageImage;
     use crate::shader::resource::{SamplerDesc, Translated};
     use crate::shader::{parse, ParsedShader};
 
@@ -2829,5 +2830,387 @@ pub(crate) mod stage {
         // OpDemoteToHelperInvocation, and no OpKill
         assert!(insts(&w).iter().any(|(op, _)| *op == 5380));
         assert!(!insts(&w).iter().any(|(op, _)| *op == 252));
+    }
+
+    // ---- Compute (chunk 10c): synthetic compute blobs, never game bytes ----
+
+    const CS_AT: usize = 0x1500;
+
+    /// A compute record: `rsrc2`, the group size, the LDS size, the used rows (kind, table
+    /// dword, user SGPR) and the user SGPR the one descriptor table sits in (`None`: a root
+    /// descriptor pair at s0).
+    struct CsSpec {
+        rsrc2: u32,
+        group: [u32; 3],
+        lds: u32,
+        flags: u32,
+        used: Vec<(u8, u32, u8)>,
+        table: Option<u8>,
+    }
+
+    impl CsSpec {
+        fn new(rsrc2: u32, group: [u32; 3]) -> Self {
+            Self {
+                rsrc2,
+                group,
+                lds: 0,
+                flags: 0xa0000,
+                used: Vec::new(),
+                table: None,
+            }
+        }
+    }
+
+    fn cs_blob(lines: &[&str], c: &CsSpec) -> ParsedShader {
+        let code = prog(lines);
+        let mut p = crate::shader::native::tests::payload_all(false, false, true, false);
+        p[CODE_AT..CODE_AT + code.len()].copy_from_slice(&code);
+        p[CS_AT..CS_AT + 8].copy_from_slice(&(CODE_AT as u64).to_le_bytes());
+        p[CS_AT + 8..CS_AT + 16].copy_from_slice(&(code.len() as u64).to_le_bytes());
+        put32(&mut p, CS_AT + 0x14, c.flags);
+        put32(&mut p, CS_AT + 0x4c, c.lds);
+        let e = CS_AT + STAGE;
+        put32(&mut p, e + 0x24, c.rsrc2);
+        for (k, g) in c.group.iter().enumerate() {
+            put32(&mut p, e + 0x28 + 4 * k, *g);
+        }
+        match c.table {
+            // a table in user SGPR s (slot 1)
+            Some(s) => {
+                put32(&mut p, 0x210, 3);
+                put32(&mut p, 0x218, 1);
+                p[0x220] = s;
+                p[0x221] = 1;
+            }
+            // the root descriptor pair at s0
+            None => p[0x220] = 0,
+        }
+        put32(&mut p, CS_AT + 0x3c, c.used.len() as u32);
+        for (k, &(kind, dword, sgpr)) in c.used.iter().enumerate() {
+            let at = 0x230 + 20 * k;
+            p[at..at + 20].fill(0);
+            p[at] = kind;
+            p[at + 1] = 3;
+            put32(&mut p, at + 4, dword);
+            p[at + 16] = 8;
+            p[at + 17] = sgpr;
+            p[at + 18] = 1;
+        }
+        let entries = [
+            (0x12, vec![0; 16]),
+            (XDAT_NATIVE, xbch(&p)),
+            (0x07, vec![0; 28]),
+        ];
+        parse(&container(&[
+            (b"SFI0", vec![0; 8]),
+            (b"ISG1", sig(&[])),
+            (b"OSG1", sig(&[])),
+            (b"PSV0", vec![0; 20]),
+            (b"DXIL", dxil(5, &entries)),
+            (b"PRIV", vec![0; 12]),
+        ]))
+        .unwrap()
+    }
+
+    /// The buffer descriptor a program writes through: s[12:15] built from the root descriptor.
+    const CS_BUFFER: [&str; 4] = [
+        "s_mov_b32 s12, s0",
+        "s_or_b32 s13, s1, 0x10000",
+        "s_mov_b32 s14, -1",
+        "s_mov_b32 s15, 0x11014fac",
+    ];
+
+    /// 8x4 groups with x and y group ids in s4, s5 and two thread-id VGPRs: stores
+    /// `x | y << 8` at index `y * 16 + x` of the root buffer.
+    fn cs_ids() -> ParsedShader {
+        let mut lines: Vec<&str> = CS_BUFFER.to_vec();
+        lines.extend([
+            "v_lshl_add_u32 v2, s4, 3, v0",
+            "v_lshl_add_u32 v3, s5, 2, v1",
+            "v_lshl_add_u32 v5, v3, 4, v2",
+            "v_lshlrev_b32 v5, 2, v5",
+            "v_lshl_or_b32 v6, v3, 8, v2",
+            "buffer_store_dword v6, v5, s[12:15], 0 offen",
+        ]);
+        cs_blob(&lines, &CsSpec::new(4 << 1 | 1 << 7 | 1 << 8 | 1 << 11, [8, 4, 1]))
+    }
+
+    /// The workgroup's lanes write `100 + lane` to LDS, meet at a barrier and read the mirror
+    /// lane's: `out[lane] = 100 + 63 - lane`.
+    fn cs_lds_mirror() -> ParsedShader {
+        let mut lines: Vec<&str> = CS_BUFFER.to_vec();
+        lines.extend([
+            "v_add_nc_u32 v2, 100, v0",
+            "v_sub_nc_u32 v3, 63, v0",
+            "v_lshlrev_b32 v1, 2, v0",
+            "ds_write_b32 v1, v2",
+            "s_waitcnt lgkmcnt(0)",
+            "s_barrier",
+            "v_lshlrev_b32 v3, 2, v3",
+            "ds_read_b32 v4, v3",
+            "s_waitcnt lgkmcnt(0)",
+            "buffer_store_dword v4, v1, s[12:15], 0 offen",
+        ]);
+        let mut c = CsSpec::new(4 << 1, [64, 1, 1]);
+        c.lds = 256;
+        cs_blob(&lines, &c)
+    }
+
+    /// 4x4 threads: load texel (1, 1) of the 2D SRV at table dword 0 (an `a16` address) and
+    /// store it, as four channels, at (x, y, 0) of the 3D UAV at table dword 8. The table is
+    /// in s5.
+    fn cs_image_copy(lines_after: &[&'static str]) -> ParsedShader {
+        let mut lines = vec![
+            "s_mov_b32 s2, s5",
+            "s_mov_b32 s3, 0",
+            "s_load_dwordx8 s[16:23], s[2:3], 0x20",
+            "s_load_dwordx8 s[24:31], s[2:3], null",
+            "v_mov_b32 v5, 0x10001",
+            "s_waitcnt lgkmcnt(0)",
+            "image_load v[8:11], v5, s[24:31] dmask:0xf dim:SQ_RSRC_IMG_2D unorm a16",
+            "s_waitcnt vmcnt(0)",
+            "v_mov_b32 v6, 0",
+            "image_store v[8:11], [v0, v1, v6], s[16:23] dmask:0xf dim:SQ_RSRC_IMG_3D unorm",
+        ];
+        lines.extend(lines_after);
+        let mut c = CsSpec::new(6 << 1 | 1 << 11, [4, 4, 1]);
+        c.table = Some(5);
+        c.used = vec![(0, 0, 5), (3, 8, 5)];
+        cs_blob(&lines, &c)
+    }
+
+    fn refused_cs(p: &ParsedShader) -> (u8, String) {
+        match io::translate_stage(p, &[], None) {
+            Err(io::StageError::Spirv(SpirvError::Unsupported(u))) => (u.chunk, u.op),
+            r => panic!("{:?}", r.map(|t| t.words.len())),
+        }
+    }
+
+    const OP_IMAGE_FETCH: u32 = 95;
+    const OP_IMAGE_READ: u32 = 98;
+    const OP_IMAGE_WRITE: u32 = 99;
+    const OP_CONTROL_BARRIER: u32 = 224;
+
+    #[test]
+    fn compute_entry_has_a_local_size_and_the_group_and_thread_ids() {
+        let t = translate_full(&cs_ids(), None);
+        let w = &t.words;
+        assert_eq!(entry_model(w), 5); // GLCompute
+        // OpExecutionMode LocalSize 8 4 1
+        assert!(insts(w)
+            .iter()
+            .any(|(op, o)| *op == 16 && o[1] == 17 && o[2..] == [8, 4, 1]));
+        assert_eq!(count(w, BUILT_IN, &[26]), 1); // WorkgroupId
+        assert_eq!(count(w, BUILT_IN, &[27]), 1); // LocalInvocationId
+        // the root block comes from the push constant, as for the other stages
+        assert!(insts(w)
+            .iter()
+            .any(|(op, o)| *op == 59 && o.get(2) == Some(&9)));
+        assert!(!t.images && !t.storage_images);
+    }
+
+    #[test]
+    fn image_loads_and_stores_use_the_slot_kind() {
+        let t = translate_full(&cs_image_copy(&[]), None);
+        let w = &t.words;
+        assert!(t.images && t.storage_images);
+        assert_eq!(count_op(w, OP_IMAGE_FETCH), 1); // the SRV
+        assert_eq!(count_op(w, OP_IMAGE_WRITE), 1); // the UAV
+        assert_eq!(count_op(w, OP_IMAGE_READ), 0);
+        // the sampled array is binding 0, the storage array binding 1, both in set 0
+        assert_eq!(count(w, BINDING, &[0]), 1);
+        assert_eq!(count(w, BINDING, &[1]), 1);
+        assert_eq!(count(w, DESCRIPTOR_SET, &[0]), 2);
+        // StorageImageReadWithoutFormat and WriteWithoutFormat
+        let caps: Vec<u32> = insts(w)
+            .iter()
+            .filter(|i| i.0 == 17)
+            .map(|i| i.1[0])
+            .collect();
+        assert!(caps.contains(&55) && caps.contains(&56));
+    }
+
+    #[test]
+    fn a_uav_is_read_and_a_srv_fetched_at_a_mip() {
+        let t = translate_full(
+            &cs_image_copy(&[
+                "v_mov_b32 v7, 0",
+                "image_load v[8:11], [v0, v1, v6], s[16:23] dmask:0xf dim:SQ_RSRC_IMG_3D unorm",
+                "image_load_mip v[8:11], [v0, v1, v6, v7], s[24:31] dmask:0xf dim:SQ_RSRC_IMG_2D_ARRAY unorm",
+            ]),
+            None,
+        );
+        assert_eq!(count_op(&t.words, OP_IMAGE_READ), 1);
+        assert_eq!(count_op(&t.words, OP_IMAGE_FETCH), 2);
+    }
+
+    #[test]
+    fn unsupported_image_forms_are_refused_by_name() {
+        // a store of two channels
+        let (chunk, op) = refused_cs(&cs_image_copy(&[
+            "image_store v[8:9], [v0, v1, v6], s[16:23] dmask:0x3 dim:SQ_RSRC_IMG_3D unorm",
+        ]));
+        assert_eq!(chunk, 9);
+        assert!(op.contains("dmask"), "{op}");
+        // a store to a slot the used rows call an SRV
+        let mut lines = vec![
+            "s_mov_b32 s2, s5",
+            "s_mov_b32 s3, 0",
+            "s_load_dwordx8 s[24:31], s[2:3], null",
+            "s_waitcnt lgkmcnt(0)",
+            "v_mov_b32 v6, 0",
+            "v_mov_b32 v8, 0",
+            "v_mov_b32 v9, 0",
+            "v_mov_b32 v10, 0",
+            "v_mov_b32 v11, 0",
+            "image_store v[8:11], [v0, v1, v6], s[24:31] dmask:0xf dim:SQ_RSRC_IMG_3D unorm",
+        ];
+        let mut c = CsSpec::new(6 << 1 | 1 << 11, [4, 4, 1]);
+        c.table = Some(5);
+        c.used = vec![(0, 0, 5), (3, 8, 5)];
+        let (_, op) = refused_cs(&cs_blob(&lines, &c));
+        assert!(op.contains("image_store") && op.contains("kind 0"), "{op}");
+        // a slot no used row names
+        c.used = vec![(3, 8, 5)];
+        lines[9] = "image_load v[8:11], v[0:1], s[24:31] dmask:0xf dim:SQ_RSRC_IMG_2D unorm";
+        let (_, op) = refused_cs(&cs_blob(&lines, &c));
+        assert!(op.contains("no used-resource row"), "{op}");
+    }
+
+    #[test]
+    fn compute_entries_the_translation_does_not_provide_are_refused() {
+        let lines = ["s_mov_b32 s12, s0"];
+        let base = 4 << 1 | 1 << 11;
+        for (rsrc2, flags, what) in [
+            (base | 0x400, 0xa0000, "thread-group info"),
+            (base | 1, 0xa0000, "scratch"),
+            (base, 0xa0020, "wave32"),
+        ] {
+            let mut c = CsSpec::new(rsrc2, [8, 8, 1]);
+            c.flags = flags;
+            let (chunk, op) = refused_cs(&cs_blob(&lines, &c));
+            assert_eq!(chunk, 10);
+            assert!(op.contains(what), "{op}");
+        }
+    }
+
+    #[test]
+    fn workgroup_memory_and_the_barrier_translate() {
+        let t = translate_full(&cs_lds_mirror(), None);
+        assert_eq!(count_op(&t.words, OP_CONTROL_BARRIER), 1);
+        // a Workgroup (storage class 4) variable
+        assert!(insts(&t.words)
+            .iter()
+            .any(|(op, o)| *op == 59 && o.get(2) == Some(&4)));
+        // the paired and 64-bit forms
+        let mut c = CsSpec::new(4 << 1, [64, 1, 1]);
+        c.lds = 512;
+        let lines = [
+            "v_lshlrev_b32 v1, 2, v0",
+            "v_add_nc_u32 v2, 100, v0",
+            "v_sub_nc_u32 v3, 63, v0",
+            "ds_write2_b32 v1, v2, v3 offset0:1 offset1:2",
+            "ds_read2_b32 v[4:5], v1 offset0:1 offset1:2",
+            "ds_write_b64 v1, v[2:3] offset:8",
+            "ds_read_b64 v[4:5], v1 offset:8",
+        ];
+        translate_full(&cs_blob(&lines, &c), None);
+        // no LDS in the record: refused
+        c.lds = 0;
+        let (_, op) = refused_cs(&cs_blob(&lines, &c));
+        assert!(op.contains("no LDS"), "{op}");
+    }
+
+    #[test]
+    fn a_barrier_outside_compute_or_under_a_lane_branch_is_refused() {
+        let vs = vs_with(&["s_barrier"], |_| {});
+        let (_, op) = refused_cs(&vs);
+        assert!(op.contains("outside a compute"), "{op}");
+        let c = CsSpec::new(4 << 1, [64, 1, 1]);
+        let lines = [
+            "v_cmp_eq_u32 vcc, 0, v0",
+            "s_cbranch_vccz 1",
+            "s_barrier",
+        ];
+        let (_, op) = refused_cs(&cs_blob(&lines, &c));
+        assert!(op.contains("per-lane branch"), "{op}");
+    }
+
+    // ---- On a device (`NATIV64_SPIRV_RUN=1`) ----
+
+    fn device() -> Option<&'static Gpu> {
+        if !gpu::enabled() {
+            return None;
+        }
+        super::GPU
+            .get_or_init(|| {
+                Some(Gpu::new().unwrap_or_else(|e| panic!("NATIV64_SPIRV_RUN is set: {e}")))
+            })
+            .as_ref()
+    }
+
+    #[test]
+    fn dispatch_writes_the_group_and_thread_ids() {
+        let Some(g) = device() else { return };
+        let _lock = super::GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let t = translate_full(&cs_ids(), None);
+        let (out, _) = g.run_stage(&t.words, [2, 2, 1], &[], &[], &[], 16 * 8).unwrap();
+        for y in 0..8u32 {
+            for x in 0..16u32 {
+                assert_eq!(out[(y * 16 + x) as usize], x | y << 8, "({x}, {y})");
+            }
+        }
+    }
+
+    #[test]
+    fn dispatch_exchanges_values_through_workgroup_memory() {
+        let Some(g) = device() else { return };
+        let _lock = super::GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let t = translate_full(&cs_lds_mirror(), None);
+        let (out, _) = g.run_stage(&t.words, [1, 1, 1], &[], &[], &[], 64).unwrap();
+        for lane in 0..64u32 {
+            assert_eq!(out[lane as usize], 100 + 63 - lane, "lane {lane}");
+        }
+    }
+
+    #[test]
+    fn dispatch_loads_a_2d_texel_and_stores_it_to_a_3d_image() {
+        let Some(g) = device() else { return };
+        let _lock = super::GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let t = translate_full(&cs_image_copy(&[]), None);
+        // the table: the SRV (registry index 2) at dword 0, the UAV (index 3) at dword 8
+        let magic = u32::from_le_bytes(*b"nVEW");
+        let mut table = vec![0u32; 16];
+        table[0] = magic;
+        table[1] = 2;
+        table[8] = magic;
+        table[9] = 3;
+        let src: Vec<f32> = (0..16).map(|k| k as f32 / 16.0).collect();
+        let images = [
+            StageImage {
+                index: 2,
+                storage: false,
+                three_d: false,
+                extent: [2, 2, 1],
+                texels: src.clone(),
+            },
+            StageImage {
+                index: 3,
+                storage: true,
+                three_d: true,
+                extent: [4, 4, 2],
+                texels: vec![-1.0; 4 * 4 * 4 * 2],
+            },
+        ];
+        let (_, back) = g
+            .run_stage(&t.words, [1, 1, 1], &[], &[(5, table)], &images, 1)
+            .unwrap();
+        // texel (1, 1) of the 2x2 source is its fourth
+        let want = &src[12..16];
+        for texel in 0..16 {
+            assert_eq!(&back[1][4 * texel..4 * texel + 4], want, "texel {texel}");
+        }
+        // the second slice is untouched
+        assert!(back[1][64..].iter().all(|&v| v == -1.0));
     }
 }

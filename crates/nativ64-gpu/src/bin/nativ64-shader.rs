@@ -841,6 +841,7 @@ fn write_words(words: &[u32], out: &str, io: &shader::io::StageIo) -> ExitCode {
     let stage = match io {
         shader::io::StageIo::Vertex(_) => "Vertex",
         shader::io::StageIo::Pixel(_) => "Fragment",
+        shader::io::StageIo::Compute(_) => "GLCompute",
     };
     println!("{out}: {stage} entry, {} words", words.len());
     ExitCode::SUCCESS
@@ -974,7 +975,9 @@ fn spirv_stats(files: &[String], alu_only: bool) -> ExitCode {
             };
             e[1] += 1;
             let built = match &io {
-                Some(io) => spirv::translate_io(&func, &st, io).map(|t| t.words),
+                Some(io) => shader::io::refuse_entry(rec)
+                    .and_then(|()| spirv::translate_io(&func, &st, io))
+                    .map(|t| t.words),
                 None => spirv::translate(&func, &st).map(|p| p.words),
             };
             match built {

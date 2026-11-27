@@ -1311,6 +1311,139 @@ it says otherwise.
    * Still without a Vulkan format: DXGI 3, 13, 17, 30, 36, 42, 50, 51, 57, 62, 67, 86, 115, 118
      and a view in format 21 (depth of D32S8). No test yet for the sRGB pipeline variant.
 
+   **Chunk 10c design: compute** (Opus, 2026-11-27, from the first-screen trace and cs
+   1e32f251 of pipeline 51456) **[seen]**: from frame 565 the title dispatches cs 1e32f251
+   once per frame. It is a 3D colour-grading table: RSRC2 `0x138c` (6 user SGPRs, group id
+   x/y/z in s6/s7/s8, no group info, no scratch, 3 thread-id VGPRs), group 8x8x1, LDS 0, one
+   table at user dword 5 read as `s[2:3] = (s5, 0)`; used rows: SRV at table dword 0
+   (`image_load` 2D, `a16`, two texels), UAV at table dword 8 (`image_store` 3D, NSA address
+   `[v0, v1, v6]`, dmask 0xf, at the end), CBVs at table dwords 16 and 24 (`s_buffer_load*`).
+   Its first refusal is `s_load_dwordx4 (chunk 9)` only because a compute blob has no
+   `StageIo` and falls to the probe entry. Corpus: 2718 cs build IR, 693 structure, all 693
+   stop on resources (s_load x4 548, x8 126, other SMEM 9, DS 5). Mesh moves to **10d** (the
+   first screen has none).
+   * **Part 1, translator** (`io.rs`, `spirv/emit/{stage,resource}.rs`):
+     `StageIo::Compute(CsIo)` with `user = 0..user_sgprs()` (from s0: not `ir::user_range`,
+     whose floor of s8 is the VS/PS rule), `tables`, `group`, the SGPR of each enabled group
+     id and the thread-id VGPR count. Entry `GLCompute`, `LocalSize` = group; user SGPR i =
+     `user_data[i]` as for VS/PS; group id x/y/z = `WorkgroupId`; v0..v2 =
+     `LocalInvocationId`; the console lane = `LocalInvocationIndex % 64` (wave64; read the 7a
+     lane model in "Structuring" before wiring it). Refused by name: group info SGPR (bit
+     10), scratch (bit 0), wave32. Resources use the 9a tracing unchanged; the **kind** of a
+     `Loaded` image descriptor is the used row whose table dword × 4 equals the load offset
+     (srv / uav), none = refusal. `image_load` / `image_load_mip`: SRV → `OpImageFetch` on
+     `textures[]` of that dim (Lod 0 or the mip operand), UAV → `OpImageRead` on `images[]`;
+     `image_store` / `image_store_mip` on a UAV → `OpImageWrite` on `images[]`, dmask 0xf only
+     (other masks refused by name). `images[]` (set 0 binding 1) variables per dim, sampled
+     type f32, format `Unknown`, capabilities `StorageImageReadWithoutFormat` /
+     `WriteWithoutFormat`. `a16` on load/store: each address dword holds two u16 coordinates
+     (low half first), zero-extended; `unorm`, `glc`, `slc`, `dlc` ignored on load/store; `d16`,
+     `tfe`, `lwe` refused. NSA addresses as given. DS (`ds_read*`, `ds_write*`, `ds_write2*`,
+     `ds_read2*` b32/b64) → a `Workgroup` u32 array of the record's LDS size (address in bytes
+     + offset, / 4; out of range: write dropped, read 0); `s_barrier` →
+     `OpControlBarrier(Workgroup, Workgroup, AcquireRelease | WorkgroupMemory)`, refused by
+     name under a per-lane branch. Tests: `spirv-val` and real dispatches on lavapipe (the
+     `spirv/gpu.rs` harness): ids written to a root buffer, a 3D `image_store` read back, an
+     `a16` `image_load` of a 2D SRV, LDS through a barrier; cs 1e32f251 translates and
+     validates; corpus report before and after.
+   * **Part 2, backend** (`backend/vk/{pipeline,rootblock,replay,textures,residency}.rs`):
+     compute pipelines from the pipeline's CS (layout = set 0 + set 1 of its static samplers +
+     push constant; cached like graphics); the compute root arguments (`compute: true`) kept
+     apart and turned into the dispatch's root block from the CS's layout table; `Dispatch`
+     binds, pushes, `vkCmdDispatch`, then the global barrier (simple and correct; finer later
+     if a profile asks); skips counted by reason. **UAV views** (`View::Unordered` of a texture
+     resource) → `VkImageView` in binding 1 at the registry index: type from the UAV
+     description (2D, 2D array, 3D with its W range), one mip, format from the view if it has
+     `STORAGE_IMAGE` (an sRGB view takes its UNORM twin, images are `MUTABLE_FORMAT`), else
+     refused with a log; integer-class formats refused too (the shader's variables are f32;
+     upgrade: pick the class per pipeline from the bound views). Images whose resource flags
+     allow unordered access (D3D12 flag 0x4) get `STORAGE` usage when the format supports it.
+     Binding 1 holes: a 1x1 RGBA8 2D storage view. Residency scans dispatches as draws, both
+     bindings. A resource with a UAV view in the ranges a dispatch's CS reads becomes
+     GPU-owned (never re-uploaded). Buffers written by a CS need nothing: title memory through
+     imported host pointers. `Gpu::open` refuses a device without the two formatless storage
+     features (all three drivers here have them). Real validation: the windowed scripted run,
+     frames 565-700 dumped with targets: the 3D table written (not zero), then the intro
+     against what the user saw.
+   **As built (chunk 10c, part 1)** **[seen]** for the translation, **[unverified]** where said:
+   `io::stage_io` / `translate_stage(&cs, &[], None)` give a `GLCompute` entry (`StageIo::Compute(CsIo)`:
+   user SGPRs `0..user_sgprs()`, tables, group, group-id SGPRs, thread-id VGPR count, the used rows,
+   LDS size); `LocalSize` = group, the push constant is the root block as for VS/PS, group ids =
+   `WorkgroupId`, v0..v2 = `LocalInvocationId`. `io::refuse_entry` refuses by name the group info
+   SGPR, scratch and wave32 (126 programs of the corpus are wave32). `image_load[_mip]` /
+   `image_store[_mip]` (dims 1D, 2D, 3D, 2D array; `a16` packs two u16 per dword; NSA as given)
+   find the slot kind through `Analysis::origin` (the constant byte offset a loaded descriptor
+   came from, through copies and agreeing phis) and the used row at that offset: SRV =
+   `OpImageFetch` on `textures[]`, UAV = `OpImageRead` / `OpImageWrite` on `images[]`
+   (`images[]` is set 0 binding 1, sampled type f32, format `Unknown`, with the two formatless
+   capabilities). `Translated::storage_images` says binding 1 is used (`images` is then set too).
+   DS: `ds_read` / `ds_write` b32..b128 and the `2` / `2st64` pairs on a `Workgroup` u32 array of
+   the record's LDS size (out of range: read 0, write dropped); `s_barrier` = `OpControlBarrier`
+   (Workgroup, AcquireRelease | WorkgroupMemory). Refused by name (chunk 9 entries of the report):
+   store with a dmask other than 0xf, `_mip` on a UAV, cube / MSAA / 1D-array dims, d16 / tfe /
+   lwe, a slot no used row names or loaded at a non-constant offset, a store to an SRV,
+   `s_barrier` outside compute or under a per-lane `If`, LDS access with no LDS, GDS, and
+   **`image_sample` with implicit derivatives** (Vulkan wants `DerivativeGroupLinearKHR` in
+   compute; 7 programs failed `spirv-val` on it before the refusal; lane-linear quads, the HLSL
+   meaning, are the likely fix). Not wired: the console lane index (`LocalInvocationIndex % 64`)
+   for `v_mbcnt` and the other wave ops stay refused as chunk 7. Tests: spirv-val'd synthetic
+   blobs, and (with `NATIV64_SPIRV_RUN=1`, lavapipe) real dispatches through `Gpu::run_stage`
+   (ids, an LDS mirror through a barrier, a 2D `a16` fetch stored to a 3D image). cs 1e32f251
+   translates and `spirv-val`s (114k words). Corpus (2718 cs with IR, 693 structured):
+   translated 5 -> 228, all 228 validated (first run: 235 translated, 7 invalid, the implicit
+   derivatives above). Left: wave32 126, loaded-descriptor words as numbers 49, typed buffers
+   (`buffer_*_format*`, `tbuffer_*`) ~150, own address 38, `image_gather4` 30, DS atomics ~35.
+   **[unverified]**: lanes of one wave exchanging through LDS without `s_barrier` (the console's
+   lockstep is not reproduced; our invocations are free-running), a barrier after a lane-driven
+   loop break, f32 sampled/storage image types against integer-format views (backend picks).
+
+   * **As built (chunk 10c, part 2)**: `backend/vk/compute.rs` (new), `pipeline.rs`,
+     `rootblock.rs`, `replay.rs`, `textures.rs`, `residency.rs`, `bindless.rs`, `device.rs`.
+     * `Gpu::open` refuses a device without `shaderStorageImageReadWithoutFormat` or
+       `shaderStorageImageWriteWithoutFormat` (the refusal names the missing one); both are
+       enabled. The push constant range is VS | PS | CS.
+     * Compute pipelines: `build` falls to `build_compute` for a pipeline with no graphics
+       state: its CS through `io::translate_stage(&cs, &[], None)` (the translator's error is the
+       `Failed` reason, so until part 1 covers a program its dispatches are skipped as `pipeline`),
+       the layout of its static samplers, `vkCreateComputePipelines`; cached by serial like the
+       graphics ones. `HeapReads` now includes the UAV rows (kind 3) of the CS.
+     * Root arguments: `RootArgs::compute()` folds the `compute: true` commands (a new compute
+       root signature drops only them); `ListState.croot` beside `root`. `Dispatch` fills the
+       block from the CS's layout rows exactly as a draw does (an unset table or a root address
+       that is not GPU memory skips it), writes it in the arena (sized for draws plus
+       dispatches), binds set 0 / set 1, pushes the address, `vkCmdDispatch`, then the global
+       barrier. A group count of 0 does nothing; above 65535 (the Vulkan minimum limit) skips.
+     * Skips are counted in `ReplayStats::dispatch_skips` (`DispatchSkips`: `pipeline` = none
+       bound, graphics pipeline, translator or Vulkan refusal; `memory` = root block address;
+       `state` = no bindless set, no arena room, too many groups), `dispatched` counts the
+       recorded ones, `dispatches` still counts every `Dispatch*` seen. Mesh dispatches stay
+       counted only. Each skip is logged once as `dispatch skipped: ...`.
+     * UAV views: `View::Unordered` of a 2D or 3D texture is an `Entry::Storage`. Its view goes
+       to binding 1 at the registry index (`storage_view`: type from the description, 2D, 2D array
+       or 3D, one mip; the format of the view, an sRGB one taking its UNORM twin; refused with a
+       log when the format has no storage support or has no Vulkan mapping, which covers the
+       integer classes since `format::lookup` only maps float, unorm and snorm); binding 0 holds
+       the sampled hole there. Every other index holds a 1x1 RGBA8 storage hole of its own
+       (separate from binding 0's, shaders may write to it). Views are cached on the image with
+       the top bit of the first key word set and die with it. Images of a resource with the
+       unordered flag (0x4) get `STORAGE` usage when the format (or the UNORM twin of an sRGB one,
+       with `EXTENDED_USAGE`) supports it (`TitleImage::storage`).
+     * Residency: `residency::scan` reads a `Dispatch` like a draw from the compute signature's
+       tables, so the UAV entries of its ranges are wanted; `sync_textures` makes their images
+       (uploading the host content first) and then marks them GPU-owned, so they are never
+       uploaded again nor evicted. A submission with only dispatches syncs textures too.
+     * Deviations: a 3D UAV view is the whole mip (its range of W slices is logged, not applied);
+       integer UAV formats are refused (no f32 variable would match); a UAV on a 1D texture, a
+       placed UAV or a depth image is a hole. Counter resources are ignored.
+     * Tests (lavapipe, `NATIV64_GPU=llvmpipe`, `compute::tests`): a fixture module compiled
+       with glslc (injected through `pipeline::COMPUTE_MODULES`, test only, since the translator
+       does not cover compute yet) writes a root buffer and an 8x2 storage image through the
+       push-constant root block; the image is read back (255, 128, 0, 255), is `STORAGE` and
+       GPU-owned; an image without the flag reads the hole while the buffer is still written;
+       the skip reasons are counted; compute and graphics root arguments are separate.
+     * Not verified: the real cs 1e32f251 (needs part 1), real hardware (only llvmpipe), the
+       windowed scripted run of frames 565-700.
+
 ## Open questions
 
 - Unverified ALU semantics (no hardware data, the table follows the ISA text / LLVM): sign of

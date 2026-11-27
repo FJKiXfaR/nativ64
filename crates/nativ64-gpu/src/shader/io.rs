@@ -126,10 +126,38 @@ pub struct PsIo {
     pub targets: Vec<Class>,
 }
 
+/// A used-resource row of a compute program: a descriptor at a byte offset of the table the
+/// user SGPR `sgpr` holds, and what it is (`UsedResource::kind`: 0 SRV, 3 UAV).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CsUsed {
+    pub sgpr: u16,
+    pub offset: u32,
+    pub kind: u8,
+}
+
+/// A compute program's entry (`docs/shaders.md`, chunk 10c): the user SGPRs from s0, the
+/// thread-group ids, the thread-id VGPRs and the workgroup size.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CsIo {
+    pub user: Range<u16>,
+    pub tables: BTreeSet<u16>,
+    /// Thread-group size (`LocalSize`).
+    pub group: [u32; 3],
+    /// The SGPR of each enabled thread-group id and its axis (0 x, 1 y, 2 z).
+    pub group_ids: Vec<(u16, u8)>,
+    /// Thread-id VGPRs v0.. (1 to 3): `LocalInvocationId` x, y, z.
+    pub thread_ids: u16,
+    /// The descriptor rows the program uses: an image load or store finds its kind here.
+    pub used: Vec<CsUsed>,
+    /// LDS size in bytes.
+    pub lds_bytes: u32,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StageIo {
     Vertex(VsIo),
     Pixel(PsIo),
+    Compute(CsIo),
 }
 
 impl StageIo {
@@ -137,6 +165,7 @@ impl StageIo {
         match self {
             Self::Vertex(v) => &v.user,
             Self::Pixel(p) => &p.user,
+            Self::Compute(c) => &c.user,
         }
     }
 
@@ -144,7 +173,20 @@ impl StageIo {
         match self {
             Self::Vertex(v) => &v.tables,
             Self::Pixel(p) => &p.tables,
+            Self::Compute(c) => &c.tables,
         }
+    }
+
+    /// What the descriptor at byte `offset` of the table in user SGPR `sgpr` is (0 SRV, 3 UAV,
+    /// ...): only a compute program knows, from its used-resource rows.
+    pub fn descriptor_kind(&self, sgpr: u16, offset: u32) -> Option<u8> {
+        let Self::Compute(c) = self else {
+            return None;
+        };
+        c.used
+            .iter()
+            .find(|u| u.sgpr == sgpr && u.offset == offset)
+            .map(|u| u.kind)
     }
 }
 
@@ -308,13 +350,43 @@ fn ps_io(rec: &Record, targets: &[u32], link: Option<&Link>) -> Option<PsIo> {
     })
 }
 
-/// The stage's I/O, or `None` for a stage other than vertex and pixel. `link` is the pair's
-/// linking; without it a stage numbers its own parameters (VS `param n`, PS `attr n`).
+fn cs_io(rec: &Record) -> Option<CsIo> {
+    let StageData::Compute(d) = &rec.data else {
+        return None;
+    };
+    let group_ids = (0..3u8)
+        .filter(|&a| d.rsrc2 >> (7 + a) & 1 != 0)
+        .zip(d.system_sgprs())
+        .map(|(a, s)| (s, a))
+        .collect();
+    Some(CsIo {
+        user: 0..d.user_sgprs(),
+        tables: table_sgprs(rec),
+        group: d.group,
+        group_ids,
+        thread_ids: d.thread_id_vgprs(),
+        used: rec
+            .used
+            .iter()
+            .filter(|u| u.root_type == 3 && matches!(u.kind, 0 | 3))
+            .map(|u| CsUsed {
+                sgpr: u16::from(u.first_user_dword),
+                offset: u.table_offset.wrapping_mul(4),
+                kind: u.kind,
+            })
+            .collect(),
+        lds_bytes: rec.lds_bytes,
+    })
+}
+
+/// The stage's I/O, or `None` for a stage other than vertex, pixel and compute. `link` is the
+/// pair's linking; without it a stage numbers its own parameters (VS `param n`, PS `attr n`).
 pub fn stage_io(p: &ParsedShader, targets: &[u32], link: Option<&Link>) -> Option<StageIo> {
     let rec = p.record()?;
     match &rec.data {
         StageData::Vertex(_) => vs_io(p, rec, link).map(StageIo::Vertex),
         StageData::Pixel(_) => ps_io(rec, targets, link).map(StageIo::Pixel),
+        StageData::Compute(_) => cs_io(rec).map(StageIo::Compute),
         _ => None,
     }
 }
@@ -365,8 +437,30 @@ impl fmt::Display for StageError {
 
 impl std::error::Error for StageError {}
 
-/// Translates one vertex or pixel program to its entry point (`Vertex` / `Fragment`).
-/// `targets` are the DXGI formats of the render targets (pixel only; float where missing).
+/// The entry states of a compute program the translation does not provide, by name: the
+/// thread-group info SGPR (RSRC2 bit 10), the scratch offset (bit 0), wave32.
+pub fn refuse_entry(rec: &Record) -> Result<(), SpirvError> {
+    let StageData::Compute(d) = &rec.data else {
+        return Ok(());
+    };
+    let what = if d.rsrc2 >> 10 & 1 != 0 {
+        "a compute entry with the thread-group info SGPR"
+    } else if d.rsrc2 & 1 != 0 {
+        "a compute entry with a scratch offset"
+    } else if rec.wave32() {
+        "a wave32 compute program"
+    } else {
+        return Ok(());
+    };
+    Err(SpirvError::Unsupported(spirv::Unsupported {
+        chunk: 10,
+        op: what.to_string(),
+    }))
+}
+
+/// Translates one vertex, pixel or compute program to its entry point (`Vertex`, `Fragment`,
+/// `GLCompute`). `targets` are the DXGI formats of the render targets (pixel only; float where
+/// missing).
 pub fn translate_stage(
     p: &ParsedShader,
     targets: &[u32],
@@ -374,6 +468,7 @@ pub fn translate_stage(
 ) -> Result<Translated, StageError> {
     let rec = p.record().ok_or(StageError::NotAStage)?;
     let io = stage_io(p, targets, link).ok_or(StageError::NotAStage)?;
+    refuse_entry(rec).map_err(StageError::Spirv)?;
     let code = stage_code(p, rec);
     let regs = EntryRegs::from_stage(rec);
     let func = ir::build(&code, gfx10::ENTRY, rec.wave32(), &regs).map_err(StageError::Ir)?;

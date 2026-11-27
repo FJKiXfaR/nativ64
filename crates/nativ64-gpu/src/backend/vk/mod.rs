@@ -5,6 +5,7 @@
 //! `VkError::Load`, never a link error. Driver failures are `VkError`s, not panics.
 
 mod bindless;
+mod compute;
 mod device;
 mod draw;
 mod format;
@@ -17,6 +18,7 @@ mod pipeline;
 mod present;
 mod profile;
 mod replay;
+mod residency;
 mod rootblock;
 mod sampler;
 mod swapchain;
@@ -28,6 +30,7 @@ use std::collections::HashSet;
 use std::fmt;
 use std::sync::{Mutex, OnceLock};
 
+pub use compute::DispatchSkips;
 pub use device::Gpu;
 pub use draw::DrawSkips;
 pub use memory::{AlignedBuf, HostBuffer};

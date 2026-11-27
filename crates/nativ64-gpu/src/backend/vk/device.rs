@@ -4,12 +4,13 @@
 //! enumeration or a case-insensitive part of the device name. A device must offer Vulkan 1.3
 //! (dynamic rendering, the extended dynamic state of 1.3, demote to helper invocation),
 //! `VK_EXT_external_memory_host`, buffer device address, timeline semaphores, 64-bit integers,
-//! draw parameters and the descriptor indexing the bindless set needs (update after bind,
+//! draw parameters, formatless storage image reads and writes (compute, chunk 10c)
+//! and the descriptor indexing the bindless set needs (update after bind,
 //! partially bound, runtime arrays, non-uniform indexing of sampled and storage images); the
 //! refusal names the first missing feature (chunk 10).
 
 use super::{instance, log_once, vk_try, Result, VkError};
-use ash::{ext::external_memory_host, khr, vk, Device, Entry, Instance};
+use ash::{ext::external_memory_host, ext::memory_budget, khr, vk, Device, Entry, Instance};
 use std::sync::Mutex;
 
 pub struct Gpu {
@@ -29,6 +30,8 @@ pub struct Gpu {
     pub(super) instance: Instance,
     /// Sampler and texture features optional in Vulkan (chunk 10b).
     pub(super) caps: Caps,
+    /// `VK_EXT_memory_budget` is enabled on the device.
+    memory_budget: bool,
 }
 
 /// Optional features the images and samplers of the replay use when they are there.
@@ -70,6 +73,14 @@ impl Features {
     fn missing(&self) -> Option<&'static str> {
         let need = [
             (self.core.shader_int64, "shaderInt64"),
+            (
+                self.core.shader_storage_image_read_without_format,
+                "shaderStorageImageReadWithoutFormat",
+            ),
+            (
+                self.core.shader_storage_image_write_without_format,
+                "shaderStorageImageWriteWithoutFormat",
+            ),
             (self.core.depth_clamp, "depthClamp"),
             (self.core.independent_blend, "independentBlend"),
             (self.f11.shader_draw_parameters, "shaderDrawParameters"),
@@ -193,8 +204,14 @@ impl Gpu {
                     bc: have.core.texture_compression_bc != 0,
                     geometry: have.core.geometry_shader != 0,
                 };
+                // SAFETY: a valid device of this instance.
+                let memory_budget = unsafe { instance.enumerate_device_extension_properties(phys) }
+                    .unwrap_or_default()
+                    .iter()
+                    .any(|e| e.extension_name_as_c_str() == Ok(memory_budget::NAME));
                 Ok(Gpu {
                     caps,
+                    memory_budget,
                     device,
                     ext_host,
                     queue: Mutex::new(queue),
@@ -286,6 +303,8 @@ impl Gpu {
         let have_f = Features::query(instance, phys);
         let core = vk::PhysicalDeviceFeatures::default()
             .shader_int64(true)
+            .shader_storage_image_read_without_format(true)
+            .shader_storage_image_write_without_format(true)
             .depth_clamp(true)
             .independent_blend(true)
             .shader_clip_distance(have_f.core.shader_clip_distance != 0)
@@ -327,6 +346,12 @@ impl Gpu {
             .any(|e| e.extension_name_as_c_str() == Ok(ext_shader_stencil_export_name()))
         {
             exts.push(ext_shader_stencil_export_name().as_ptr());
+        }
+        if have
+            .iter()
+            .any(|e| e.extension_name_as_c_str() == Ok(memory_budget::NAME))
+        {
+            exts.push(memory_budget::NAME.as_ptr());
         }
         let info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&qi)
@@ -408,6 +433,48 @@ impl Gpu {
             d.destroy_command_pool(pool, None);
             r
         }
+    }
+
+    /// How many bytes of images the device should keep alive: 80% of the device-local heap
+    /// budget `VK_EXT_memory_budget` reports when the device has it, else 60% of the largest
+    /// device-local heap.
+    pub(super) fn image_budget(&self) -> u64 {
+        let p = &self.mem_props;
+        let heaps = &p.memory_heaps[..p.memory_heap_count as usize];
+        let local = |h: &vk::MemoryHeap| h.flags.contains(vk::MemoryHeapFlags::DEVICE_LOCAL);
+        let Some((at, largest)) = heaps
+            .iter()
+            .enumerate()
+            .filter(|(_, h)| local(h))
+            .max_by_key(|(_, h)| h.size)
+        else {
+            return u64::MAX;
+        };
+        if self.memory_budget {
+            let mut b = vk::PhysicalDeviceMemoryBudgetPropertiesEXT::default();
+            let mut p2 = vk::PhysicalDeviceMemoryProperties2::default().push_next(&mut b);
+            // SAFETY: a valid physical device of this instance, the extension is enabled.
+            unsafe {
+                self.instance
+                    .get_physical_device_memory_properties2(self.phys, &mut p2)
+            };
+            let budget = b.heap_budget[at];
+            if budget > 0 {
+                return budget / 5 * 4;
+            }
+        }
+        largest.size / 5 * 3
+    }
+
+    /// Whether images of `format` can be storage images (optimal tiling).
+    pub(super) fn storage_format(&self, format: vk::Format) -> bool {
+        // SAFETY: a query on a physical device of this instance.
+        let p = unsafe {
+            self.instance
+                .get_physical_device_format_properties(self.phys, format)
+        };
+        p.optimal_tiling_features
+            .contains(vk::FormatFeatureFlags::STORAGE_IMAGE)
     }
 
     /// First memory type allowed by `bits` with all of `flags`.

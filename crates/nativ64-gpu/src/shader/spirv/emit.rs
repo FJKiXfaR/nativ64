@@ -457,6 +457,9 @@ struct Tr<'a> {
     frames: Vec<Frame>,
     /// The stage entry (`translate_io`); `None` for the probe.
     stage: Option<stage::Stage<'a>>,
+    /// The `If` arms being emitted whose branch is a per-lane test (a barrier must not be in
+    /// one).
+    lane_ifs: u32,
 }
 
 /// Translates a structured program to the probe module.
@@ -477,6 +480,7 @@ pub fn translate_io(f: &Func, s: &Structured, io: &StageIo) -> Result<Translated
         words,
         samplers,
         images: flags.0,
+        storage_images: flags.2,
         memory_addresses: flags.1,
     })
 }
@@ -486,7 +490,7 @@ type Built = (
     Vec<Reg>,
     Vec<(Reg, bool)>,
     Vec<SamplerDesc>,
-    (bool, bool),
+    (bool, bool, bool),
 );
 
 fn build<'a>(f: &'a Func, s: &'a Structured, io: Option<&'a StageIo>) -> Result<Built, SpirvError> {
@@ -559,6 +563,7 @@ fn build<'a>(f: &'a Func, s: &'a Structured, io: Option<&'a StageIo>) -> Result<
         conds: HashMap::new(),
         frames: Vec::new(),
         stage,
+        lane_ifs: 0,
     };
     let entry = t.g.m.id();
     t.g.label(entry);
@@ -584,7 +589,7 @@ fn build<'a>(f: &'a Func, s: &'a Structured, io: Option<&'a StageIo>) -> Result<
     words.extend(inst(Op::FunctionEnd, &[]));
     t.g.m.add_function(&words);
     let mut samplers = Vec::new();
-    let mut flags = (false, false);
+    let mut flags = (false, false, false);
     match t.stage.take() {
         Some(st) => {
             iface.extend(st.interface());
@@ -942,6 +947,11 @@ impl Tr<'_> {
                 let (t, e, merge) = (self.g.m.id(), self.g.m.id(), self.g.m.id());
                 self.g.op0(Op::SelectionMerge, &[merge, 0]);
                 self.g.term(Op::BranchConditional, &[c, t, e]);
+                let lane = matches!(
+                    self.s.branches.get(*head),
+                    Some(Some(BranchKind::Lane(_)))
+                );
+                self.lane_ifs += u32::from(lane);
                 for (l, arm) in [(t, taken), (e, fall)] {
                     self.g.label(l);
                     self.nodes(arm)?;
@@ -949,6 +959,7 @@ impl Tr<'_> {
                         self.g.branch(merge);
                     }
                 }
+                self.lane_ifs -= u32::from(lane);
                 self.g.label(merge);
                 Ok(())
             }
