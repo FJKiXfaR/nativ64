@@ -100,6 +100,8 @@ struct Hole {
     image: vk::Image,
     memory: vk::DeviceMemory,
     view: vk::ImageView,
+    /// `NATIV64_HOLE_INDEX` palette views, one per index byte (empty otherwise).
+    views: Vec<vk::ImageView>,
 }
 
 /// What `sync_textures` keeps between submissions.
@@ -182,7 +184,12 @@ impl TexState {
         {
             // SAFETY: made by `hole`; the queue is idle when the backend drops.
             unsafe {
-                d.destroy_image_view(h.view, None);
+                for v in &h.views {
+                    d.destroy_image_view(*v, None);
+                }
+                if h.views.is_empty() {
+                    d.destroy_image_view(h.view, None);
+                }
                 d.destroy_image(h.image, None);
                 d.free_memory(h.memory, None);
             }
@@ -887,6 +894,12 @@ impl<'g> VkBackend<'g> {
             return Some(h.view);
         }
         let g = self.gpu;
+        // `NATIV64_HOLE_INDEX=low|high`: the stand-in is a palette of 256 one-texel layers
+        // whose alpha is the index byte, so whatever samples a missing texture renders with a
+        // brightness that names the descriptor index it reads.
+        let index_mode = std::env::var("NATIV64_HOLE_INDEX").ok();
+        let palette = index_mode.as_deref() == Some("low") || index_mode.as_deref() == Some("high");
+        let layers = if palette { 256 } else { 1 };
         let ci = vk::ImageCreateInfo::default()
             .image_type(vk::ImageType::TYPE_2D)
             .format(vk::Format::R8G8B8A8_UNORM)
@@ -896,7 +909,7 @@ impl<'g> VkBackend<'g> {
                 depth: 1,
             })
             .mip_levels(1)
-            .array_layers(1)
+            .array_layers(layers)
             .samples(vk::SampleCountFlags::TYPE_1)
             .tiling(vk::ImageTiling::OPTIMAL)
             .usage(if storage {
@@ -977,10 +990,34 @@ impl<'g> VkBackend<'g> {
                 &vk::ClearColorValue { float32: clear },
                 &[sub],
             );
+            let mut views = Vec::new();
+            if palette {
+                for k in 0..256u32 {
+                    let layer = vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: k,
+                        layer_count: 1,
+                    };
+                    match d.create_image_view(
+                        &vk::ImageViewCreateInfo::default()
+                            .image(image)
+                            .view_type(vk::ImageViewType::TYPE_2D)
+                            .format(vk::Format::R8G8B8A8_UNORM)
+                            .subresource_range(layer),
+                        None,
+                    ) {
+                        Ok(v) => views.push(v),
+                        Err(_) => break,
+                    }
+                }
+            }
             let made = Some(Hole {
                 image,
                 memory,
                 view,
+                views,
             });
             if storage {
                 self.tex.hole_storage = made;
@@ -989,6 +1026,21 @@ impl<'g> VkBackend<'g> {
             }
             Some(view)
         }
+    }
+
+    /// The palette view that names `i` (`NATIV64_HOLE_INDEX`), if that diagnostic is on.
+    fn hole_indexed(&self, i: usize) -> Option<vk::ImageView> {
+        let h = self.tex.hole.as_ref()?;
+        if h.views.is_empty() {
+            return None;
+        }
+        let mode = std::env::var("NATIV64_HOLE_INDEX").ok()?;
+        let k = match mode.as_str() {
+            "low" => i & 0xff,
+            "high" => (i >> 8) & 0xff,
+            _ => return None,
+        };
+        h.views.get(k).copied()
     }
 
     /// The entry a registry view comes to.
@@ -1231,7 +1283,7 @@ impl<'g> VkBackend<'g> {
         for i in again.into_iter().chain(from..end) {
             let view = self.view_of(i);
             self.tex.bound[i] = view.unwrap_or_default();
-            if let Some(v) = view.or(hole) {
+            if let Some(v) = view.or_else(|| self.hole_indexed(i)).or(hole) {
                 images.push((i, v));
             }
             let sview = self.storage_view_of(i);
