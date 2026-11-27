@@ -124,6 +124,9 @@ pub(super) struct TexState {
     bound: Vec<vk::ImageView>,
     /// The same for binding 1 (storage images).
     bound1: Vec<vk::ImageView>,
+    /// Indices whose view was a hole because its resource was not known yet: classified again
+    /// when the resource appears (a view can be registered before the resource is).
+    pending: Vec<u32>,
     /// The resources and placed images with a view.
     sources: Vec<usize>,
     source_set: HashSet<usize>,
@@ -1352,11 +1355,53 @@ impl<'g> VkBackend<'g> {
                 }
                 _ => {}
             }
+            if matches!(entry, Entry::Hole)
+                && matches!(v, View::Shader(..) | View::Placed(false, ..))
+                && self.tex.pending.len() < 4096
+            {
+                self.tex.pending.push((self.tex.entries.len()) as u32);
+            }
             self.tex.entries.push(entry);
             self.tex.bound.push(vk::ImageView::null());
             self.tex.bound1.push(vk::ImageView::null());
         }
         self.tex.scanned += new.len();
+        // 1b. views whose resource was not known when they were registered: classify again
+        if !self.tex.pending.is_empty() {
+            let mut budget = 512usize;
+            let mut still = Vec::new();
+            let pending = std::mem::take(&mut self.tex.pending);
+            for &i in &pending {
+                if budget == 0 {
+                    still.push(i);
+                    continue;
+                }
+                budget -= 1;
+                let Some(v) = crate::d3d12::descriptor::view_at(i as usize) else {
+                    continue;
+                };
+                let entry = self.classify_at(&v, i as usize);
+                if matches!(entry, Entry::Hole) {
+                    still.push(i);
+                    continue;
+                }
+                match &entry {
+                    Entry::Texture { res, .. } | Entry::Storage { res, .. } => {
+                        if self.tex.source_set.insert(*res) {
+                            self.tex.sources.push(*res);
+                        }
+                        self.tex.by_res.entry(*res).or_default().push(i);
+                    }
+                    Entry::Placed { key, .. } => {
+                        self.tex.by_placed.entry(*key).or_default().push(i);
+                    }
+                    _ => {}
+                }
+                self.tex.entries[i as usize] = entry;
+                self.tex.rewrite.insert(i);
+            }
+            self.tex.pending = still;
+        }
         // 2. images and uploads: of what the draws can read
         let mut uploaded = false;
         let (mut resources, mut placed, mut storage) = (Vec::new(), Vec::new(), Vec::new());
