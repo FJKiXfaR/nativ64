@@ -429,6 +429,15 @@ impl Gpu {
         {
             exts.push(memory_budget::NAME.as_ptr());
         }
+        // float min/max atomics on buffers (VK_EXT_shader_atomic_float2)
+        let atomic_float2 = have
+            .iter()
+            .any(|e| e.extension_name_as_c_str() == Ok(vk::EXT_SHADER_ATOMIC_FLOAT2_NAME));
+        if atomic_float2 {
+            exts.push(vk::EXT_SHADER_ATOMIC_FLOAT2_NAME.as_ptr());
+        }
+        let mut atomic_float_features = vk::PhysicalDeviceShaderAtomicFloat2FeaturesEXT::default()
+            .shader_buffer_float32_atomic_min_max(true);
         // a lost device then says what faulted (VK_EXT_device_fault)
         let faults = have
             .iter()
@@ -446,6 +455,9 @@ impl Gpu {
             .push_next(&mut f13);
         if faults {
             info = info.push_next(&mut fault_features);
+        }
+        if atomic_float2 {
+            info = info.push_next(&mut atomic_float_features);
         }
         // SAFETY: `info` and its pointees outlive the call.
         let device = vk_try("vkCreateDevice", unsafe {

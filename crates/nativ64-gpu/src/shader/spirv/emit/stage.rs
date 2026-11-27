@@ -457,7 +457,30 @@ impl<'a> Tr<'a> {
         if name.starts_with("v_permlane16") || name.starts_with("v_permlanex16") {
             return self.permlane(c).map(Some);
         }
+        if name.starts_with("ds_bpermute") {
+            return self.ds_bpermute(c).map(Some);
+        }
         self.resource_exec(c, b, k)
+    }
+
+    /// `ds_bpermute_b32`: the LDS scratch is implicit - each lane's data lands at its own
+    /// dword, and the lane reads the one the byte address names (a subgroup shuffle).
+    fn ds_bpermute(&mut self, c: &Ctx<Gen>) -> R<Vec<Opd<Gen>>> {
+        let (Some(addr), Some(data)) = (
+            c.srcs.first().and_then(|s| s.first()).copied(),
+            c.srcs.get(1).and_then(|s| s.first()).copied(),
+        ) else {
+            return bad("a ds_bpermute without its operands");
+        };
+        let tu = self.g.t_u32();
+        let addr = self.plain(addr)?;
+        let data = self.plain(data)?;
+        let two = self.g.k(2);
+        let lane = self.g.op(Op::ShiftRightLogical, tu, &[addr, two]);
+        // the console wave's lanes, wraparound included
+        let mask = self.g.k(63);
+        let lane = self.g.op(Op::BitwiseAnd, tu, &[lane, mask]);
+        Ok(vec![Opd::V(self.g.shuffle(data, lane))])
     }
 
     /// `v_permlane16_b32` / `v_permlanex16_b32`: each lane takes its value from the lane the

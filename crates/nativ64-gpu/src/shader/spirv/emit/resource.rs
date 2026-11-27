@@ -1219,8 +1219,10 @@ impl<'a> Tr<'a> {
                         let old = self.guarded_load(a, ok)?;
                         let tu = self.g.t_u32();
                         let tb = self.g.t_bool();
+                        // the address is 64-bit: the byte offset within the dword is its low half
+                        let a_lo = self.g.op(Op::UConvert, tu, &[a]);
                         let mask_k = self.g.k(at_mask);
-                        let at = self.g.op(Op::BitwiseAnd, tu, &[a, mask_k]);
+                        let at = self.g.op(Op::BitwiseAnd, tu, &[a_lo, mask_k]);
                         let three = self.g.k(3);
                         let sh = self.g.op(Op::ShiftLeftLogical, tu, &[at, three]);
                         let field = self.g.k((1u32 << bits) - 1);
@@ -2543,7 +2545,14 @@ impl<'a> Tr<'a> {
         if i.mem.seg == 1 {
             return refuse(&format!("{name} on scratch"));
         }
+        // a float min or max needs SPV_EXT_shader_atomic_float2_min_max
+        let float = matches!(op, "fmin" | "fmax");
+        if float {
+            self.g.m.capability(Capability::AtomicFloat32MinMaxEXT);
+        }
         let (spirv_op, _operand) = match op {
+            "fmin" => (Op::AtomicFMinEXT, true),
+            "fmax" => (Op::AtomicFMaxEXT, true),
             "add" => (Op::AtomicIAdd, true),
             "sub" => (Op::AtomicISub, true),
             "smin" => (Op::AtomicSMin, true),
@@ -2575,6 +2584,7 @@ impl<'a> Tr<'a> {
         let mut out = Vec::new();
         if let Some(&v) = c.srcs.get(1).and_then(|s| s.first()) {
             let v = self.bits_of(v);
+            let v = if float { self.g.as_f32(v) } else { v };
             // a compare-and-swap takes two values
             if op == "cmp_swap" {
                 return refuse(name);
@@ -2583,6 +2593,7 @@ impl<'a> Tr<'a> {
                 let _ = cmp;
             }
             let old = self.bda_atomic(spirv_op, dev, Some(v));
+            let old = if float { self.g.as_bits(old) } else { old };
             let zero = self.g.k(0);
             let old = self.g.select(ok, old, zero);
             if !c.inst.dsts.is_empty() {

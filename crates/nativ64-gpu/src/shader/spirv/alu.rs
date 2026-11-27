@@ -196,10 +196,7 @@ pub struct Ctx<'a, K: Backend> {
 pub fn non_alu_chunk(i: &Instr) -> Option<u8> {
     let n = i.name();
     // a DPP instruction is translated before the table runs: its source is a shuffle
-    if n.starts_with("v_readfirstlane")
-        || n.starts_with("ds_permute")
-        || n.starts_with("ds_bpermute")
-    {
+    if n.starts_with("v_readfirstlane") || n.starts_with("ds_permute") {
         return Some(7);
     }
     if matches!(
@@ -2403,6 +2400,28 @@ impl<K: Backend> X<'_, K> {
                     }
                 };
                 self.fout(r)
+            }
+            "v_mad_u64_u32" => {
+                // (u64) a * b + c, two dwords; SCC is the carry out of the high half
+                let a = self.v(0)?;
+                let b = self.v(1)?;
+                let lo = self.ib(IBin::Mul, a, b);
+                let hi = self.ib(IBin::UMulHi, a, b);
+                let clo = self.vk(2, 0)?;
+                let chi = self.vk(2, 1)?;
+                let (lo, hi) = (lo, hi);
+                let rlo = self.ib(IBin::Add, lo, clo);
+                let mut carry = self.ic(ICmp::ULt, rlo, lo);
+                let t = self.ib(IBin::Add, hi, chi);
+                let cv = self.bv(carry);
+                let rhi = self.ib(IBin::Add, t, cv);
+                let c2 = self.ic(ICmp::ULt, rhi, hi);
+                carry = self.b.bor(carry, c2);
+                let s = self.bv(carry);
+                Ok(Res {
+                    data: vec![Opd::V(rlo), Opd::V(rhi)],
+                    scc: Some(s),
+                })
             }
             "v_min3_f32" => f3!(self, |a, b, c| {
                 let t = self.fminmax(a, b, false);
