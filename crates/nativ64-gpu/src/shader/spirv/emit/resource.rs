@@ -777,12 +777,6 @@ impl<'a> Tr<'a> {
             return bad("a buffer instruction whose operands do not match its width");
         }
         let buf = self.buffer_of(&c.inst.srcs[ns - 2], &c.srcs[ns - 2])?;
-        if std::env::var_os("NATIV64_ORIGINS").is_some() {
-            eprintln!(
-                "origin: {name} idxen {} offen {} offset {}",
-                m.idxen, m.offen, m.offset
-            );
-        }
         let t64 = self.t64();
         // offset = soffset + inst_offset + voffset (offen) + index * stride (idxen)
         let soff = self.bits_of(c.srcs[ns - 1][0]);
@@ -801,13 +795,7 @@ impl<'a> Tr<'a> {
             let ix = self.bits_of(ix);
             let (ix, st) = (self.zext(ix), self.zext(buf.stride));
             let scaled = self.g.op(Op::IMul, t64, &[ix, st]);
-            // A descriptor with stride 0 is a raw buffer: the index is a byte offset, not an
-            // element index (RDNA2 buffer addressing).
-            let tb = self.g.t_bool();
-            let zero = self.g.k(0);
-            let raw = self.g.op(Op::IEqual, tb, &[buf.stride, zero]);
-            let step = self.g.op(Op::Select, t64, &[raw, ix, scaled]);
-            off = self.add64(off, step);
+            off = self.add64(off, scaled);
         }
         if m.offen {
             let Some(&vo) = at.as_mut().and_then(|a| a.next()) else {
