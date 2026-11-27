@@ -717,6 +717,19 @@ impl<'a> Tr<'a> {
         self.g.op0(Op::Store, &[ptr, v, 2, 4]);
     }
 
+    /// An atomic on the dword at a device address: its value before the operation.
+    fn bda_atomic(&mut self, op: Op, addr: u32, v: Option<u32>) -> u32 {
+        let tu = self.g.t_u32();
+        let p = self.g.t_ptr(StorageClass::PhysicalStorageBuffer, tu);
+        let ptr = self.g.op(Op::ConvertUToPtr, p, &[addr]);
+        // Device scope, relaxed
+        let (scope, relaxed) = (self.g.k(1), self.g.k(0));
+        match v {
+            Some(v) => self.g.op(op, tu, &[ptr, scope, relaxed, v]),
+            None => self.g.op(op, tu, &[ptr, scope, relaxed]),
+        }
+    }
+
     /// `table_base[n]` (member 1 of the root block).
     fn table_base(&mut self, n: u16) -> u32 {
         let t = self.t64();
@@ -2072,6 +2085,11 @@ impl<'a> Tr<'a> {
         if name.starts_with("image_gather4") {
             return self.image_gather(c);
         }
+        // image atomics would need the storage images declared with an integer sampled type
+        // (they are float throughout): refused
+        if name.starts_with("image_atomic_") {
+            return refuse(name);
+        }
         let (explicit, zero_lod, dref) = match name {
             "image_sample" => (false, false, false),
             "image_sample_l" => (true, false, false),
@@ -2227,6 +2245,79 @@ impl<'a> Tr<'a> {
 
     /// `image_load*` / `image_store*` on a table slot: an SRV is fetched (`OpImageFetch`) and a
     /// UAV read (`OpImageRead`) or written (`OpImageWrite`), by the registry index in the slot.
+    /// `image_atomic_*`: an integer atomic on the texel of a storage image at the address.
+    fn image_atomic(&mut self, c: &Ctx<Gen>, op: &str) -> R<Option<Vec<Opd<Gen>>>> {
+        let i = &c.inst.instr;
+        let name = i.name();
+        let m = i.img;
+        if m.d16 || m.tfe || m.lwe {
+            return refuse(&format!("{name} with d16, tfe or lwe"));
+        }
+        let dim = match m.dim {
+            0 | 1 | 2 | 5 => m.dim,
+            d => return refuse(&format!("{name} on dimension {d}")),
+        };
+        let (_, _, ncoord) = Self::image_dim(dim).expect("a dimension that was checked");
+        let ns = c.srcs.len();
+        if ns != 3 || c.srcs[ns - 1].len() < 8 {
+            return bad("an image atomic whose operands do not match its form");
+        }
+        let (spirv_op, operand) = match op {
+            "add" => (Op::AtomicIAdd, true),
+            "sub" => (Op::AtomicISub, true),
+            "smin" => (Op::AtomicSMin, true),
+            "umin" => (Op::AtomicUMin, true),
+            "smax" => (Op::AtomicSMax, true),
+            "umax" => (Op::AtomicUMax, true),
+            "and" => (Op::AtomicAnd, true),
+            "or" => (Op::AtomicOr, true),
+            "xor" => (Op::AtomicXor, true),
+            "swap" => (Op::AtomicExchange, true),
+            "inc" => (Op::AtomicIIncrement, false),
+            "dec" => (Op::AtomicIDecrement, false),
+            _ => return refuse(name),
+        };
+        let addr = &c.srcs[ns - 2];
+        let tu = self.g.t_u32();
+        let mut comps = Vec::new();
+        for k in 0..ncoord as usize {
+            let Some(&a) = addr.get(k) else {
+                return refuse(&format!("{name} with an address of {} dwords", addr.len()));
+            };
+            comps.push(self.bits_of(a));
+        }
+        let coord = if ncoord == 1 {
+            comps[0]
+        } else {
+            let tv = self.g.m.global(Op::TypeVector, None, &[tu, ncoord]);
+            self.g.op(Op::CompositeConstruct, tv, &comps)
+        };
+        let index = self.bits_of(c.srcs[ns - 1][0]);
+        self.non_uniform(index);
+        let (var, img) = self.storage_array(dim);
+        // `OpImageTexelPointer` names the image through its descriptor pointer
+        let pst = self.g.t_ptr(StorageClass::UniformConstant, img);
+        let image = self.g.op(Op::AccessChain, pst, &[var, index]);
+        let p = self.g.t_ptr(StorageClass::Image, tu);
+        let zero = self.g.k(0);
+        let ptr = self.g.op(Op::ImageTexelPointer, p, &[image, coord, zero]);
+        // Device scope, relaxed
+        let (scope, relaxed) = (self.g.k(1), self.g.k(0));
+        let old = if operand {
+            let Some(&v) = c.srcs[1].first() else {
+                return bad("an image atomic without its value");
+            };
+            let v = self.bits_of(v);
+            self.g.op(spirv_op, tu, &[ptr, scope, relaxed, v])
+        } else {
+            self.g.op(spirv_op, tu, &[ptr, scope, relaxed])
+        };
+        if c.inst.dsts.is_empty() {
+            return Ok(Some(Vec::new()));
+        }
+        Ok(Some(vec![self.lane_result(c, 0, old)]))
+    }
+
     fn image_ls(&mut self, c: &Ctx<Gen>, store: bool) -> R<Option<Vec<Opd<Gen>>>> {
         let i = &c.inst.instr;
         let name = i.name();
@@ -2468,20 +2559,83 @@ impl<'a> Tr<'a> {
         (addr, end, ok)
     }
 
-    /// The low `bits` of a dword, zero- or sign-extended to the dword.
+    /// The low `bits` of a dword, zero- or sign-extended to the dword (masking and arithmetic
+    /// shifts, so no 16- or 8-bit integer type is needed).
     fn narrow(&mut self, v: u32, bits: u32, signed: bool) -> u32 {
         let tu = self.g.t_u32();
-        let t = if bits == 8 {
-            self.g.m.global(Op::TypeInt, None, &[8, 0])
+        if signed {
+            let sh = self.g.k(32 - bits);
+            let up = self.g.op(Op::ShiftLeftLogical, tu, &[v, sh]);
+            self.g.op(Op::ShiftRightArithmetic, tu, &[up, sh])
         } else {
-            self.g.m.global(Op::TypeInt, None, &[16, 0])
+            let mask = self.g.k((1u32 << bits) - 1);
+            self.g.op(Op::BitwiseAnd, tu, &[v, mask])
+        }
+    }
+
+    /// A flat/global atomic: the address is a title address translated through the import
+    /// table, the operation an integer atomic.
+    fn flat_atomic(&mut self, c: &Ctx<Gen>, op: &str) -> R<Option<Vec<Opd<Gen>>>> {
+        let i = &c.inst.instr;
+        let name = i.name();
+        if i.mem.seg == 1 {
+            return refuse(&format!("{name} on scratch"));
+        }
+        let (spirv_op, operand) = match op {
+            "add" => (Op::AtomicIAdd, true),
+            "sub" => (Op::AtomicISub, true),
+            "smin" => (Op::AtomicSMin, true),
+            "umin" => (Op::AtomicUMin, true),
+            "smax" => (Op::AtomicSMax, true),
+            "umax" => (Op::AtomicUMax, true),
+            "and" => (Op::AtomicAnd, true),
+            "or" => (Op::AtomicOr, true),
+            "xor" => (Op::AtomicXor, true),
+            "inc" => (Op::AtomicIIncrement, false),
+            "dec" => (Op::AtomicIDecrement, false),
+            "swap" | "wrxchg" => (Op::AtomicExchange, true),
+            _ => return refuse(name),
         };
-        let narrow = self.g.op(Op::UConvert, t, &[v]);
-        self.g.op(
-            if signed { Op::SConvert } else { Op::UConvert },
-            tu,
-            &[narrow],
-        )
+        if c.srcs.is_empty() || c.srcs[0].len() < 2 {
+            return bad("a flat atomic without its address");
+        }
+        let t64 = self.t64();
+        let (lo, hi) = (self.bits_of(c.srcs[0][0]), self.bits_of(c.srcs[0][1]));
+        let (lo, hi) = (self.zext(lo), self.zext(hi));
+        let thirty_two = self.g.k(32);
+        let hi = self.g.op(Op::ShiftLeftLogical, t64, &[hi, thirty_two]);
+        let addr = self.g.op(Op::BitwiseOr, t64, &[lo, hi]);
+        let off = self.k64(u64::from(i.mem.offset as u32));
+        let addr = self.add64(addr, off);
+        let (dev, _end, ok) = self.va_to_device(addr);
+        let tb = self.g.t_bool();
+        let ok = self.and(ok, c.active);
+        let mut out = Vec::new();
+        if let Some(&v) = c.srcs.get(1).and_then(|s| s.first()) {
+            let v = self.bits_of(v);
+            // a compare-and-swap takes two values
+            if op == "cmp_swap" {
+                return refuse(name);
+            }
+            if let Some(&cmp) = c.srcs.get(2).and_then(|s| s.first()) {
+                let _ = cmp;
+            }
+            let old = self.bda_atomic(spirv_op, dev, Some(v));
+            let zero = self.g.k(0);
+            let old = self.g.select(ok, old, zero);
+            if !c.inst.dsts.is_empty() {
+                out.push(self.lane_result(c, 0, old));
+            }
+        } else {
+            let old = self.bda_atomic(spirv_op, dev, None);
+            let zero = self.g.k(0);
+            let old = self.g.select(ok, old, zero);
+            if !c.inst.dsts.is_empty() {
+                out.push(self.lane_result(c, 0, old));
+            }
+        }
+        let _ = tb;
+        Ok(Some(out))
     }
 
     /// `global_load_dword*` / `global_store_dword*` / the `flat_` forms: the address is a
@@ -2498,6 +2652,10 @@ impl<'a> Tr<'a> {
         };
         if i.mem.seg == 1 {
             return refuse(&format!("{name} on scratch"));
+        }
+        // a flat/global atomic: the old value is the result when the instruction has one
+        if let Some(atomic) = rest.strip_prefix("atomic_") {
+            return self.flat_atomic(c, atomic);
         }
         let (load, n) = match rest {
             "load_dword" => (true, 1u32),

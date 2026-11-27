@@ -2544,6 +2544,64 @@ impl<K: Backend> X<'_, K> {
                 let r1 = self.b.fbin(op, a1, b1);
                 Ok(Res::v(self.b.pack_half2(r0, r1)))
             }
+            "v_min3_f16" | "v_max3_f16" | "v_med3_f16" => {
+                let a = self.v(0)?;
+                let b = self.v(1)?;
+                let c = self.v(2)?;
+                let (a, b, c) = (
+                    self.b.unpack_half(a),
+                    self.b.unpack_half(b),
+                    self.b.unpack_half(c),
+                );
+                let op = if name == "v_med3_f16" {
+                    FBin::Add
+                } else if name == "v_min3_f16" {
+                    FBin::Min
+                } else {
+                    FBin::Max
+                };
+                // median: min(max(a, b), max(min(a, b), c))
+                let r = if name == "v_med3_f16" {
+                    let lo = self.b.fbin(FBin::Min, a, b);
+                    let hi = self.b.fbin(FBin::Max, a, b);
+                    let t = self.b.fbin(FBin::Min, lo, c);
+                    self.b.fbin(FBin::Max, hi, t)
+                } else {
+                    let t = self.b.fbin(op, a, b);
+                    self.b.fbin(op, t, c)
+                };
+                Ok(Res::v(self.b.pack_half(r)))
+            }
+            "v_rcp_f16" | "v_sqrt_f16" | "v_rsq_f16" | "v_exp_f16" | "v_log_f16"
+            | "v_floor_f16" | "v_ceil_f16" | "v_trunc_f16" | "v_rndne_f16" => {
+                let a = self.v(0)?;
+                let a = self.b.unpack_half(a);
+                let op = match name {
+                    "v_rcp_f16" => FUn::Rcp,
+                    "v_sqrt_f16" => FUn::Sqrt,
+                    "v_rsq_f16" => FUn::Rsq,
+                    "v_exp_f16" => FUn::Exp2,
+                    "v_log_f16" => FUn::Log2,
+                    "v_floor_f16" => FUn::Floor,
+                    "v_ceil_f16" => FUn::Ceil,
+                    "v_trunc_f16" => FUn::Trunc,
+                    _ => FUn::RoundEven,
+                };
+                let r = self.b.fun(op, a);
+                Ok(Res::v(self.b.pack_half(r)))
+            }
+            "v_fma_f16" | "v_mad_f16" => {
+                let a = self.v(0)?;
+                let b = self.v(1)?;
+                let c = self.v(2)?;
+                let (a, b, c) = (
+                    self.b.unpack_half(a),
+                    self.b.unpack_half(b),
+                    self.b.unpack_half(c),
+                );
+                let r = self.b.fma(a, b, c);
+                Ok(Res::v(self.b.pack_half(r)))
+            }
             "v_pk_fma_f16" | "v_pk_mad_f16" => {
                 let (a, b, cc) = (self.v(0)?, self.v(1)?, self.v(2)?);
                 let (a0, a1) = self.b.unpack_half2(a);

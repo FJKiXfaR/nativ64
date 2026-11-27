@@ -503,12 +503,14 @@ impl Backend for Gen {
         let f = self.t_f32();
         let x = self.op(Op::CompositeExtract, f, &[v, 0]);
         let y = self.op(Op::CompositeExtract, f, &[v, 1]);
-        (x, y)
+        (self.as_bits(x), self.as_bits(y))
     }
 
     fn pack_half2(&mut self, a: u32, b: u32) -> u32 {
+        // the values are f32 bits
+        let (fa, fb) = (self.as_f32(a), self.as_f32(b));
         let v2 = self.t_v2();
-        let v = self.op(Op::CompositeConstruct, v2, &[a, b]);
+        let v = self.op(Op::CompositeConstruct, v2, &[fa, fb]);
         let u = self.t_u32();
         self.ext(u, GL::PackHalf2x16, &[v])
     }
