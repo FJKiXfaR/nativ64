@@ -200,6 +200,14 @@ impl Gen {
 }
 
 impl Backend for Gen {
+    fn broadcast_first(&mut self, a: u32) -> u32 {
+        // `v_readfirstlane_b32`: the value of the lowest active lane of the wave
+        self.m.capability(Capability::GroupNonUniformBallot);
+        let scope = self.k(3);
+        let t = self.t_u32();
+        self.op(Op::GroupNonUniformBroadcastFirst, t, &[scope, a])
+    }
+
     type V = u32;
     type B = u32;
 

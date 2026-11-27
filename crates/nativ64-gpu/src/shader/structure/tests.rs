@@ -211,10 +211,8 @@ fn cross_lane_use_names_the_instruction() {
         .iter()
         .map(|c| (c.at, c.name.as_str()))
         .collect();
-    assert_eq!(
-        names,
-        vec![(4, "s_bcnt1_i32_b64"), (8, "v_readfirstlane_b32")]
-    );
+    // a non-uniform `v_readfirstlane` is a subgroup broadcast, not a cross-lane refusal
+    assert_eq!(names, vec![(4, "s_bcnt1_i32_b64")]);
     match structure(&f) {
         Err(StructError::CrossLane(c)) => {
             assert_eq!((c.at, c.name.as_str()), (4, "s_bcnt1_i32_b64"))

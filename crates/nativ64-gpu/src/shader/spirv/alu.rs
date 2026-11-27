@@ -147,6 +147,8 @@ pub trait Backend {
     fn band(&mut self, a: Self::B, b: Self::B) -> Self::B;
     fn bor(&mut self, a: Self::B, b: Self::B) -> Self::B;
     fn bxor(&mut self, a: Self::B, b: Self::B) -> Self::B;
+    /// The value of the group's lowest active invocation (`v_readfirstlane`).
+    fn broadcast_first(&mut self, a: Self::V) -> Self::V;
 }
 
 /// A value of an operand or result: bits, or a lane mask.
@@ -233,6 +235,7 @@ impl Backend for Dry {
     fn band(&mut self, _: (), _: ()) {}
     fn bor(&mut self, _: (), _: ()) {}
     fn bxor(&mut self, _: (), _: ()) {}
+    fn broadcast_first(&mut self, _: ()) {}
 }
 
 /// Runs the table on host numbers.
@@ -445,6 +448,10 @@ impl Backend for Cpu {
     }
     fn bxor(&mut self, a: bool, b: bool) -> bool {
         a ^ b
+    }
+    fn broadcast_first(&mut self, a: u32) -> u32 {
+        // one invocation per run: it is its own first active lane
+        a
     }
 }
 
@@ -1949,7 +1956,11 @@ impl<K: Backend> X<'_, K> {
         let name = self.name;
         match name {
             // -- moves and bit operations
-            "v_mov_b32" | "v_readfirstlane_b32" => Ok(Res::v(self.v(0)?)),
+            "v_mov_b32" => Ok(Res::v(self.v(0)?)),
+            "v_readfirstlane_b32" => {
+                let v = self.v(0)?;
+                Ok(Res::v(self.b.broadcast_first(v)))
+            }
             "v_not_b32" => {
                 let a = self.v(0)?;
                 Ok(Res::v(self.b.iun(IUn::Not, a)))

@@ -324,8 +324,11 @@ pub fn type_masks(f: &Func) -> Masks {
     for blk in &f.blocks {
         for inst in &blk.insts {
             if let Some(name) = cross_lane_use(&m, inst) {
-                // `v_readfirstlane` of a value every lane holds is a copy.
-                if uniform_readfirstlane(f, &m, inst) {
+                // `v_readfirstlane` of a value every lane holds is a copy; of any other value
+                // it is a subgroup broadcast (`OpGroupNonUniformBroadcastFirst`).
+                if uniform_readfirstlane(f, &m, inst)
+                    || inst.instr.name().starts_with("v_readfirstlane")
+                {
                     continue;
                 }
                 m.cross_lane.push(CrossLane {
