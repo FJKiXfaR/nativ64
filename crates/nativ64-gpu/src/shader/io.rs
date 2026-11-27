@@ -74,6 +74,8 @@ pub struct VsAttr {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VsIo {
+    /// The descriptor rows the program uses: an image find its kind here.
+    pub used: Vec<UsedRow>,
     pub user: Range<u16>,
     /// The user SGPRs the layout marks as tables or heaps (root types 3, 5, 6).
     pub tables: BTreeSet<u16>,
@@ -118,6 +120,8 @@ pub struct PsAttr {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PsIo {
+    /// The descriptor rows the program uses: an image finds its kind here.
+    pub used: Vec<UsedRow>,
     pub user: Range<u16>,
     pub tables: BTreeSet<u16>,
     pub vgprs: BTreeMap<u16, PsVgpr>,
@@ -126,10 +130,10 @@ pub struct PsIo {
     pub targets: Vec<Class>,
 }
 
-/// A used-resource row of a compute program: a descriptor at a byte offset of the table the
-/// user SGPR `sgpr` holds, and what it is (`UsedResource::kind`: 0 SRV, 3 UAV).
+/// A used-resource row of a program: a descriptor at a byte offset of the table the user SGPR
+/// `sgpr` holds, and what it is (`UsedResource::kind`: 0 SRV, 3 UAV).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CsUsed {
+pub struct UsedRow {
     pub sgpr: u16,
     pub offset: u32,
     pub kind: u8,
@@ -148,7 +152,7 @@ pub struct CsIo {
     /// Thread-id VGPRs v0.. (1 to 3): `LocalInvocationId` x, y, z.
     pub thread_ids: u16,
     /// The descriptor rows the program uses: an image load or store finds its kind here.
-    pub used: Vec<CsUsed>,
+    pub used: Vec<UsedRow>,
     /// LDS size in bytes.
     pub lds_bytes: u32,
 }
@@ -178,13 +182,14 @@ impl StageIo {
     }
 
     /// What the descriptor at byte `offset` of the table in user SGPR `sgpr` is (0 SRV, 3 UAV,
-    /// ...): only a compute program knows, from its used-resource rows.
+    /// ...), from the program's used-resource rows.
     pub fn descriptor_kind(&self, sgpr: u16, offset: u32) -> Option<u8> {
-        let Self::Compute(c) = self else {
-            return None;
+        let used = match self {
+            Self::Vertex(v) => &v.used,
+            Self::Pixel(p) => &p.used,
+            Self::Compute(c) => &c.used,
         };
-        c.used
-            .iter()
+        used.iter()
             .find(|u| u.sgpr == sgpr && u.offset == offset)
             .map(|u| u.kind)
     }
@@ -280,6 +285,7 @@ fn vs_io(p: &ParsedShader, rec: &Record, link: Option<&Link>) -> Option<VsIo> {
             .collect(),
     };
     Some(VsIo {
+        used: used_rows(rec),
         user: ir::user_range(rec),
         tables: table_sgprs(rec),
         attrs,
@@ -342,12 +348,26 @@ fn ps_io(rec: &Record, targets: &[u32], link: Option<&Link>) -> Option<PsIo> {
         })
         .collect();
     Some(PsIo {
+        used: used_rows(rec),
         user: ir::user_range(rec),
         tables: table_sgprs(rec),
         vgprs,
         attrs,
         targets: targets.iter().map(|&f| dxgi_class(f)).collect(),
     })
+}
+
+/// The descriptor rows of `rec` that name a table slot (SRV or UAV).
+fn used_rows(rec: &Record) -> Vec<UsedRow> {
+    rec.used
+        .iter()
+        .filter(|u| u.root_type == 3 && matches!(u.kind, 0 | 3))
+        .map(|u| UsedRow {
+            sgpr: u16::from(u.first_user_dword),
+            offset: u.table_offset.wrapping_mul(4),
+            kind: u.kind,
+        })
+        .collect()
 }
 
 fn cs_io(rec: &Record) -> Option<CsIo> {
@@ -365,16 +385,7 @@ fn cs_io(rec: &Record) -> Option<CsIo> {
         group: d.group,
         group_ids,
         thread_ids: d.thread_id_vgprs(),
-        used: rec
-            .used
-            .iter()
-            .filter(|u| u.root_type == 3 && matches!(u.kind, 0 | 3))
-            .map(|u| CsUsed {
-                sgpr: u16::from(u.first_user_dword),
-                offset: u.table_offset.wrapping_mul(4),
-                kind: u.kind,
-            })
-            .collect(),
+        used: used_rows(rec),
         lds_bytes: rec.lds_bytes,
     })
 }
@@ -576,5 +587,96 @@ fn renumber_static_samplers(words: &mut [u32], map: &[u32]) {
                 words[at + 3] = k;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shader::native::{UsedResource, VsData};
+
+    fn used(kind: u8, table_offset: u32, first_user_dword: u8) -> UsedResource {
+        UsedResource {
+            kind,
+            root_type: 3,
+            table_offset,
+            lower_bound: 0,
+            stride: 16,
+            descriptor_dwords: 4,
+            first_user_dword,
+            root_slot: 0,
+        }
+    }
+
+    fn record(used: Vec<UsedResource>) -> Record {
+        Record {
+            at: 0,
+            code_offset: 0,
+            code_size: 0,
+            flags: 0,
+            lds_bytes: 0,
+            vgprs: 0,
+            sgprs: 0,
+            layout: vec![],
+            used,
+            data: StageData::Vertex(VsData {
+                inputs: vec![],
+                outputs: vec![],
+            }),
+        }
+    }
+
+    #[test]
+    fn used_rows_name_the_table_slots() {
+        // The table offset is in dwords in the record and in bytes here; CBVs and samplers are
+        // not rows an image lookup can use.
+        let rows = used_rows(&record(vec![
+            used(0, 8, 9),
+            used(2, 16, 1),
+            used(3, 20, 17),
+        ]));
+        assert_eq!(
+            rows,
+            vec![
+                UsedRow {
+                    sgpr: 9,
+                    offset: 32,
+                    kind: 0
+                },
+                UsedRow {
+                    sgpr: 17,
+                    offset: 80,
+                    kind: 3
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn every_stage_answers_a_descriptor_kind() {
+        let rows = vec![UsedRow {
+            sgpr: 9,
+            offset: 32,
+            kind: 0,
+        }];
+        let io = StageIo::Vertex(VsIo {
+            used: rows.clone(),
+            user: 0..16,
+            tables: BTreeSet::new(),
+            attrs: vec![],
+            params: BTreeMap::new(),
+            clip: false,
+        });
+        assert_eq!(io.descriptor_kind(9, 32), Some(0));
+        assert_eq!(io.descriptor_kind(9, 36), None);
+        let io = StageIo::Pixel(PsIo {
+            used: rows,
+            user: 0..16,
+            tables: BTreeSet::new(),
+            vgprs: BTreeMap::new(),
+            attrs: BTreeMap::new(),
+            targets: vec![],
+        });
+        assert_eq!(io.descriptor_kind(9, 32), Some(0));
     }
 }
