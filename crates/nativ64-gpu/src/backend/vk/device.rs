@@ -66,6 +66,11 @@ pub(super) struct Caps {
     pub bc: bool,
     /// `geometryShader`: the rectangle lists need it (chunk 10b).
     pub geometry: bool,
+    /// `VK_EXT_mesh_shader`: the console's mesh shaders could run as mesh shaders here.
+    pub mesh_shader: bool,
+    /// `VK_KHR_ray_query` with `VK_KHR_acceleration_structure`: the console's BVH tracing
+    /// could become ray queries.
+    pub ray_query: bool,
 }
 
 /// The features of a device we look at, as the 1.0 struct and the 1.1 to 1.3 ones.
@@ -306,13 +311,27 @@ impl Gpu {
                         instance.get_physical_device_properties(phys).limits,
                     )
                 };
+                let exts = unsafe { instance.enumerate_device_extension_properties(phys) }
+                    .unwrap_or_default();
+                let has = |name: &std::ffi::CStr| {
+                    exts.iter().any(|e| e.extension_name_as_c_str() == Ok(name))
+                };
                 let caps = Caps {
                     max_anisotropy: (have.core.sampler_anisotropy != 0)
                         .then_some(limits.max_sampler_anisotropy),
                     mirror_clamp: have.f12.sampler_mirror_clamp_to_edge != 0,
                     bc: have.core.texture_compression_bc != 0,
                     geometry: have.core.geometry_shader != 0,
+                    mesh_shader: has(vk::EXT_MESH_SHADER_NAME),
+                    ray_query: has(vk::KHR_RAY_QUERY_NAME)
+                        && has(vk::KHR_ACCELERATION_STRUCTURE_NAME),
                 };
+                log_once(format!(
+                    "device: mesh shaders {}, ray query {}, geometry {}",
+                    onoff(caps.mesh_shader),
+                    onoff(caps.ray_query),
+                    onoff(caps.geometry)
+                ));
                 // SAFETY: a valid device of this instance.
                 let memory_budget = unsafe { instance.enumerate_device_extension_properties(phys) }
                     .unwrap_or_default()
@@ -698,6 +717,15 @@ pub(super) static PIPELINES_MADE: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 /// The value of `PIPELINES_MADE` the cache on disk already holds.
 static PIPELINES_SAVED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// `on` / `off` for a capability line.
+fn onoff(v: bool) -> &'static str {
+    if v {
+        "on"
+    } else {
+        "off"
+    }
+}
 
 /// Where the pipeline cache lives (`NATIV64_PIPELINE_CACHE`, or
 /// `$XDG_CACHE_HOME/nativ64/pipelines.bin`).
