@@ -2441,6 +2441,22 @@ impl<'a> Tr<'a> {
         (addr, end, ok)
     }
 
+    /// The low `bits` of a dword, zero- or sign-extended to the dword.
+    fn narrow(&mut self, v: u32, bits: u32, signed: bool) -> u32 {
+        let tu = self.g.t_u32();
+        let t = if bits == 8 {
+            self.g.m.global(Op::TypeInt, None, &[8, 0])
+        } else {
+            self.g.m.global(Op::TypeInt, None, &[16, 0])
+        };
+        let narrow = self.g.op(Op::UConvert, t, &[v]);
+        self.g.op(
+            if signed { Op::SConvert } else { Op::UConvert },
+            tu,
+            &[narrow],
+        )
+    }
+
     /// `global_load_dword*` / `global_store_dword*` / the `flat_` forms: the address is a
     /// title address, translated through the import table to a device address.
     fn flat(&mut self, c: &Ctx<Gen>) -> R<Option<Vec<Opd<Gen>>>> {
@@ -2465,7 +2481,16 @@ impl<'a> Tr<'a> {
             "store_dwordx2" => (false, 2),
             "store_dwordx3" => (false, 3),
             "store_dwordx4" => (false, 4),
+            // a byte or a word of the addressed memory, extended to the dword
+            "load_ubyte" | "load_sbyte" | "load_ushort" | "load_sshort" => (true, 1),
             _ => return refuse(name),
+        };
+        let narrow = match rest {
+            "load_ubyte" => Some((8, false)),
+            "load_sbyte" => Some((8, true)),
+            "load_ushort" => Some((16, false)),
+            "load_sshort" => Some((16, true)),
+            _ => None,
         };
         if c.srcs.is_empty() || c.srcs[0].len() < 2 {
             return bad("a flat access without its address");
@@ -2491,6 +2516,10 @@ impl<'a> Tr<'a> {
             let ok = self.and(ok, c.active);
             if load {
                 let v = self.guarded_load(a, ok)?;
+                let v = match narrow {
+                    Some((bits, signed)) => self.narrow(v, bits, signed),
+                    None => v,
+                };
                 out.push(self.lane_result(c, k as usize, v));
             } else {
                 let Some(&d) = c.srcs.get(data).and_then(|s| s.get(k as usize)) else {
