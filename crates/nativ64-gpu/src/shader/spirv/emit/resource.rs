@@ -1453,6 +1453,18 @@ impl<'a> Tr<'a> {
                 c.inst.srcs[ns - 2].first(),
                 Some(Src::Val(v)) if self.res().analysis.loaded.contains(v)
             ) {
+                if std::env::var_os("NATIV64_FMT_DEBUG").is_some() {
+                    eprintln!(
+                        "fmt debug: {} srcs {:?} loaded {} numbers {}",
+                        i.name(),
+                        c.inst.srcs[ns - 2]
+                            .iter()
+                            .map(|s| format!("{s:?}"))
+                            .collect::<Vec<_>>(),
+                        self.res().analysis.loaded.len(),
+                        self.res().analysis.numbers.len()
+                    );
+                }
                 return refuse(&format!("{} of a descriptor that is not loaded", i.name()));
             }
             let index = self.bits_of(c.srcs[ns - 2][0]);
@@ -2019,9 +2031,16 @@ impl<'a> Tr<'a> {
         let i = &c.inst.instr;
         let name = i.name();
         let m = i.img;
-        if name != "image_gather4_lz" {
-            return refuse(name);
-        }
+        // the `_o` forms carry a constant texel offset in the address's last dword
+        let (base, offset) = match name.strip_suffix("_o") {
+            Some(b) => (b, true),
+            None => (name, false),
+        };
+        let explicit = match base {
+            "image_gather4_lz" => false,
+            "image_gather4_l" => true,
+            _ => return refuse(name),
+        };
         if m.a16 || m.d16 || m.tfe || m.lwe || m.unorm {
             return refuse(&format!("{name} with a16, d16, tfe, lwe or unorm"));
         }
@@ -2037,9 +2056,30 @@ impl<'a> Tr<'a> {
             return bad("a gather whose operands do not match its form");
         }
         let addr = &c.srcs[ns - 3];
-        if addr.len() != ncoord as usize {
+        if addr.len() != ncoord as usize + usize::from(explicit) + usize::from(offset) {
             return refuse(&format!("{name} with an address of {} dwords", addr.len()));
         }
+        // the explicit form's level is the next address dword
+        let mut at = ncoord as usize;
+        let lod = explicit.then(|| {
+            let bits = self.bits_of(addr[at]);
+            at += 1;
+            self.g.as_f32(bits)
+        });
+        // a 2D constant offset packs its two signed 16-bit values in one dword
+        let off = offset.then(|| {
+            let bits = self.bits_of(addr[at]);
+            let tu = self.g.t_u32();
+            let sign = |t: &mut Self, bits: u32, sh: u32| {
+                let s = t.g.k(sh);
+                let v = t.g.op(Op::ShiftRightLogical, tu, &[bits, s]);
+                let m = t.g.k(0xffff);
+                t.g.op(Op::BitwiseAnd, tu, &[v, m])
+            };
+            let x = sign(self, bits, 0);
+            let y = sign(self, bits, 16);
+            [self.sign_extend(x, 16), self.sign_extend(y, 16)]
+        });
         let chans: Vec<u32> = (0..4).filter(|ch| m.dmask >> ch & 1 != 0).collect();
         if chans.is_empty() {
             return bad("a gather without a channel");
@@ -2066,15 +2106,30 @@ impl<'a> Tr<'a> {
         };
         if !pixel {
             // A program without quad derivatives (a compute or vertex one) cannot gather at an
-            // implicit level: the four texels of the 2x2 block at LOD 0 are fetched instead.
-            return self.gather_fetched(c, chans, &coord, m.dim);
+            // implicit level: the four texels of the 2x2 block at the level are fetched instead.
+            return self.gather_fetched(c, chans, &coord, m.dim, lod, off);
         }
         let v4 = self.vec4(Class::Float);
         let tf = self.g.t_f32();
+        let tu = self.g.t_u32();
         let mut out = Vec::new();
         for (j, ch) in chans.into_iter().enumerate() {
             let ch = self.g.k(ch);
-            let res = self.g.op(Op::ImageGather, v4, &[si, coord, ch]);
+            let res = match (lod, off) {
+                // ImageOperands Lod (2) then the level, ConstOffset (8) then the ivec2
+                (Some(l), Some([ox, oy])) => {
+                    let i2 = self.g.m.global(Op::TypeVector, None, &[tu, 2]);
+                    let o = self.g.op(Op::CompositeConstruct, i2, &[ox, oy]);
+                    self.g.op(Op::ImageGather, v4, &[si, coord, ch, 10, l, o])
+                }
+                (Some(l), None) => self.g.op(Op::ImageGather, v4, &[si, coord, ch, 2, l]),
+                (None, Some([ox, oy])) => {
+                    let i2 = self.g.m.global(Op::TypeVector, None, &[tu, 2]);
+                    let o = self.g.op(Op::CompositeConstruct, i2, &[ox, oy]);
+                    self.g.op(Op::ImageGather, v4, &[si, coord, ch, 8, o])
+                }
+                (None, None) => self.g.op(Op::ImageGather, v4, &[si, coord, ch]),
+            };
             for k in 0..4 {
                 let x = self.g.op(Op::CompositeExtract, tf, &[res, k]);
                 let bits = self.g.as_bits(x);
@@ -2092,6 +2147,8 @@ impl<'a> Tr<'a> {
         chans: Vec<u32>,
         coord: &u32,
         dim: u8,
+        lod: Option<u32>,
+        off: Option<[u32; 2]>,
     ) -> R<Option<Vec<Opd<Gen>>>> {
         let ns = c.srcs.len();
         let (_, arrayed, _) = Self::image_dim(dim).expect("a dimension that was checked");
@@ -2105,7 +2162,8 @@ impl<'a> Tr<'a> {
         let ncomp = if arrayed != 0 { 3 } else { 2 };
         let tu2 = self.g.m.global(Op::TypeVector, None, &[tu, ncomp]);
         let zero = self.g.k(0);
-        let size = self.g.op(Op::ImageQuerySizeLod, tu2, &[image, zero]);
+        let lod = lod.unwrap_or(zero);
+        let size = self.g.op(Op::ImageQuerySizeLod, tu2, &[image, lod]);
         let sw = self.g.op(Op::CompositeExtract, tu, &[size, 0]);
         let sh = self.g.op(Op::CompositeExtract, tu, &[size, 1]);
         let cw = self.g.op(Op::CompositeExtract, tf, &[*coord, 0]);
@@ -2119,8 +2177,12 @@ impl<'a> Tr<'a> {
         };
         let fx = scaled(self, cw, sw);
         let fy = scaled(self, chf, sh);
-        let ix = self.g.op(Op::ConvertFToS, tu, &[fx]);
-        let iy = self.g.op(Op::ConvertFToS, tu, &[fy]);
+        let mut ix = self.g.op(Op::ConvertFToS, tu, &[fx]);
+        let mut iy = self.g.op(Op::ConvertFToS, tu, &[fy]);
+        if let Some([ox, oy]) = off {
+            ix = self.g.op(Op::IAdd, tu, &[ix, ox]);
+            iy = self.g.op(Op::IAdd, tu, &[iy, oy]);
+        }
         let layer = if arrayed != 0 {
             let lf = self.g.op(Op::CompositeExtract, tf, &[*coord, 2]);
             let l = self.g.op(Op::ConvertFToS, tu, &[lf]);
@@ -2164,7 +2226,7 @@ impl<'a> Tr<'a> {
                     None => self.g.op(Op::CompositeConstruct, tu2, &[x, y]),
                 };
                 // the fetch takes the level as an operand
-                let texel = self.g.op(Op::ImageFetch, v4, &[image, tc, 2, zero]);
+                let texel = self.g.op(Op::ImageFetch, v4, &[image, tc, 2, lod]);
                 let x = self.g.op(Op::CompositeExtract, tf, &[texel, ch]);
                 let bits = self.g.as_bits(x);
                 out.push(self.lane_result(c, j * 4 + d as usize, bits));

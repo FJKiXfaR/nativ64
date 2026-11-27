@@ -2053,11 +2053,21 @@ impl<K: Backend> X<'_, K> {
         match name {
             // -- moves and bit operations
             "v_mov_b32" => Ok(Res::v(self.v(0)?)),
-            // the two values trade registers
+            // the two registers trade values: the destination takes the source, the source's
+            // register takes the old destination
             "v_swap_b32" => {
-                let (a, b) = (self.v(0)?, self.v(1)?);
+                let a = self.v(0)?;
+                let reg = self
+                    .c
+                    .inst
+                    .dsts
+                    .get(1)
+                    .map(|d| d.0)
+                    .ok_or_else(|| self.un())?;
+                let old = self.imp(reg).ok_or_else(|| self.un())?;
+                let b = self.as_v(old);
                 Ok(Res {
-                    data: vec![Opd::V(b), Opd::V(a)],
+                    data: vec![Opd::V(a), Opd::V(b)],
                     scc: None,
                 })
             }

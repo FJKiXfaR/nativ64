@@ -746,6 +746,18 @@ fn lower(i: &Instr) -> Result<Option<Lowered>, IrError> {
             }
         }
     }
+    // `v_swap_b32` writes both registers: the destination takes the source, and the source's
+    // register takes the old destination
+    if name == "v_swap_b32" {
+        if let Some(Operand::Reg { code, .. }) = i.operands.get(1) {
+            if let Ok(reg) = operand_dword(*code, 0, false, i.at) {
+                if let Rd::Reg(r) = reg {
+                    lo.dsts.push(r);
+                    lo.olds.push(r);
+                }
+            }
+        }
+    }
     match i.enc {
         Enc::Smem => {
             if i.info.slots.iter().any(|s| matches!(s, Slot::SBase(_))) && i.mem.soffset != 125 {
