@@ -1531,13 +1531,29 @@ impl<'g> VkBackend<'g> {
     /// Mip 0, layer 0 of the colour image made for `resource`, read back to the CPU. None when
     /// the resource has no colour image yet.
     pub fn read_back(&mut self, resource: usize) -> Option<Readback> {
-        let t = self.images.get(&resource)?.as_ref()?;
+        let Some(t) = self.images.get(&resource).and_then(|t| t.as_ref()) else {
+            log_once(format!(
+                "read_back: resource {resource:#x} has no image ({} images)",
+                self.images.len()
+            ));
+            return None;
+        };
         if t.info.aspect != vk::ImageAspectFlags::COLOR {
+            log_once(format!(
+                "read_back: resource {resource:#x} has aspect {:?}",
+                t.info.aspect
+            ));
             return None;
         }
         let g = self.gpu;
         let (w, h, bytes) = (t.desc.width as u32, t.desc.height, t.info.bytes);
         let size = u64::from(w) * u64::from(h) * u64::from(bytes);
+        if w == 0 || h == 0 || bytes == 0 || size > (1 << 31) {
+            log_once(format!(
+                "read_back: resource {resource:#x} is {w}x{h} x {bytes} bytes ({size} total)"
+            ));
+            return None;
+        }
         let image = t.image;
         let d = &g.device;
         // SAFETY: the buffer and its memory are destroyed before returning; the copy has
