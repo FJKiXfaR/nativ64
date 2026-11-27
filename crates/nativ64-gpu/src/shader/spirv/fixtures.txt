@@ -412,3 +412,4 @@ bf00064c	v_sub_nc_u32 v3, 63, v0
 0102007e	v_mov_b32 v0, s1
 0202007e	v_mov_b32 v0, s2
 0f0800f800000000	exp mrt0, v0, v0, v0, v0 done
+080380f102046000	image_get_lod v[4:5], v[2:3], s[0:7], s[12:15] dmask:0x3 dim:SQ_RSRC_IMG_2D

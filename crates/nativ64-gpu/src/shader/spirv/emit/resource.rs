@@ -984,7 +984,7 @@ impl<'a> Tr<'a> {
         let (explicit, zero_lod) = match name {
             "image_sample" => (false, false),
             "image_sample_l" => (true, false),
-            "image_sample_lz" => (true, true),
+            "image_sample_lz" | "image_get_lod" => (true, true),
             _ => return Ok(None),
         };
         let m = i.img;
@@ -1060,6 +1060,23 @@ impl<'a> Tr<'a> {
                 .global(Op::TypeVector, None, &[tf, cs.len() as u32]);
             self.g.op(Op::CompositeConstruct, tv, &cs)
         };
+        if name == "image_get_lod" {
+            // `OpImageQueryLod`: x is the mipmap array index, y the primary LOD. The console
+            // instruction returns two dwords; the first is the LOD (y) and the second the
+            // index (x) **[unverified]**.
+            self.g.m.capability(Capability::ImageQuery);
+            let f2 = self.g.t_v2();
+            let tf = self.g.t_f32();
+            let q = self.g.op(Op::ImageQueryLod, f2, &[si, coord]);
+            let mut out = Vec::new();
+            for (j, ch) in chans.into_iter().enumerate() {
+                let comp = if ch == 0 { 1 } else { 0 };
+                let x = self.g.op(Op::CompositeExtract, tf, &[q, comp]);
+                let bits = self.g.as_bits(x);
+                out.push(self.lane_result(c, j, bits));
+            }
+            return Ok(Some(out));
+        }
         let v4 = self.vec4(Class::Float);
         let res = if !explicit {
             self.g.op(Op::ImageSampleImplicitLod, v4, &[si, coord])

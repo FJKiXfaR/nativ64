@@ -2502,6 +2502,7 @@ pub(crate) mod stage {
     }
 
     const OP_SAMPLED_IMAGE: u32 = 86;
+    const OP_IMAGE_QUERY_LOD: u32 = 105;
     const OP_SAMPLE_IMPLICIT: u32 = 87;
     const OP_SAMPLE_EXPLICIT: u32 = 88;
     const OP_STORE: u32 = 62;
@@ -2658,6 +2659,13 @@ pub(crate) mod stage {
             [SamplerDesc::from_words([0x400, 0xc0_0000, 0x18f0_0000, 0])]
         );
         assert_eq!(t.samplers[0].max_anisotropy(), 4);
+    }
+
+    #[test]
+    fn image_get_lod_queries_the_level() {
+        let sample = "image_get_lod v[4:5], v[2:3], s[0:7], s[12:15] dmask:0x3 dim:SQ_RSRC_IMG_2D";
+        let w = translate(&ps_tables(&ps_after(&TEX_CONST_SAMPLER, &[sample])), None);
+        assert_eq!(count_op(&w, OP_IMAGE_QUERY_LOD), 1);
     }
 
     #[test]

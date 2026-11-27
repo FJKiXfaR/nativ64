@@ -849,9 +849,16 @@ it says otherwise.
      Cube: the hardware address `(s, t, face)` is turned back into a direction (`2 * (x - 1.5)`
      per face plane, the usual face order and signs) **[unverified]**: the `1.5` and the face
      numbering are from the ISA text, not from a captured cube sample.
+   * `image_get_lod` is translated as `OpImageQueryLod` (the capability `ImageQuery` added
+     when used): the first result dword is the LOD (`y`) and the second the mip array index
+     (`x`) **[unverified]** (no captured pair to check the order).
    * Still `Unsupported { chunk: 9 }` by name: MTBUF, `buffer_load_format*`, `buffer_atomic*`,
      tfe / lds on MUBUF, `global_*` / `flat_*`, DS, `image_load/store/resinfo/atomic`,
-     `s_store`, `s_dcache*`. A loaded S# is read from `slot + 4` like a view (**[unverified]**:
+     `image_gather4*`, `s_store`, `s_dcache*`. A gather cannot take a Lod operand in SPIR-V
+     (`Lod` is only valid on the explicit-LOD sample opcodes and `OpImageFetch`), so
+     `image_gather4_lz` needs the manual form: query the size at LOD 0, floor the coordinate
+     into a texel, fetch the four neighbours and apply the sampler's address mode by hand; the
+     texel order of the console instruction is still **[unverified]**. A loaded S# is read from `slot + 4` like a view (**[unverified]**:
      no type-6 sampler table has been seen in a blob).
    * Guesses **[unverified]**: the S# field layout (words 0-3, as `SQ_IMG_SAMP_WORD0..3`;
      checked against another decoder in the reference mirror for filters, address modes,
