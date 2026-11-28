@@ -6,7 +6,6 @@
 //! Exits 0 when the pipeline was made, 2 when Vulkan refused it, and the process dies with
 //! the driver's crash when the compiler does (run one file per process).
 use ash::vk;
-use std::ffi::CStr;
 
 fn read(path: &str) -> Vec<u32> {
     let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
