@@ -3027,6 +3027,74 @@ impl<'a> Tr<'a> {
         }
     }
 
+    /// `ds_cmpst_b32` / `ds_cmpst_rtn_b32`: compare the dword with the first data word, store
+    /// the second when equal, and (for `_rtn`) return the dword the compare saw.
+    fn ds_cmpst(&mut self, c: &Ctx<Gen>, rest: &str) -> R<Option<Vec<Opd<Gen>>>> {
+        let i = &c.inst.instr;
+        let name = i.name();
+        let rtn = rest.contains("_rtn");
+        if !rest.replace("_rtn", "").ends_with("b32") {
+            return refuse(name);
+        }
+        if i.mem.gds {
+            return refuse(&format!("{name} on GDS"));
+        }
+        let (var, n, class) = self.lds()?;
+        let tu = self.g.t_u32();
+        let tb = self.g.t_bool();
+        let Some(&addr) = c.srcs.first().and_then(|s| s.first()) else {
+            return bad("a DS compare-and-swap without its address");
+        };
+        let Some(&cmp) = c.srcs.get(1).and_then(|s| s.first()) else {
+            return bad("a DS compare-and-swap without the compared value");
+        };
+        let Some(&val) = c.srcs.get(2).and_then(|s| s.first()) else {
+            return bad("a DS compare-and-swap without the stored value");
+        };
+        let addr = self.bits_of(addr);
+        let off = self.g.k(i.mem.offset as u32 & 0xffff);
+        let byte = self.g.op(Op::IAdd, tu, &[addr, off]);
+        let two = self.g.k(2);
+        let word = self.g.op(Op::ShiftRightLogical, tu, &[byte, two]);
+        let nn = self.g.k(n);
+        let inside = self.g.op(Op::ULessThan, tb, &[word, nn]);
+        let zero = self.g.k(0);
+        let safe = self.g.select(inside, word, zero);
+        let p = self.g.t_ptr(class, tu);
+        let ptr = self.g.op(Op::AccessChain, p, &[var, safe]);
+        let cmp = self.bits_of(cmp);
+        let val = self.bits_of(val);
+        let ok = self.and(inside, c.active);
+        let scope = self.g.k(2);
+        let relaxed = self.g.k(0);
+        // the compare-exchange's old value has to be read after its selection, so it goes
+        // through a function variable
+        let pf = self.g.t_ptr(StorageClass::Function, tu);
+        let seen_var = self.g.m.id();
+        self.g.locals.extend(inst(
+            Op::Variable,
+            &[pf, seen_var, StorageClass::Function as u32],
+        ));
+        let zero = self.g.k(0);
+        self.g.store(seen_var, zero);
+        self.guarded(Some(ok), |t| {
+            let seen = t.g.op(
+                Op::AtomicCompareExchange,
+                tu,
+                &[ptr, scope, relaxed, relaxed, val, cmp],
+            );
+            t.g.store(seen_var, seen);
+            Ok(())
+        })?;
+        let old = self.g.load(tu, seen_var);
+        if !rtn {
+            return Ok(Some(Vec::new()));
+        }
+        let zero = self.g.k(0);
+        let old = self.g.select(inside, old, zero);
+        Ok(Some(vec![self.lane_result(c, 0, old)]))
+    }
+
     /// `ds_write_b16`: the low half of the value goes to the 16-bit field the byte address
     /// names (the dword is read, the half replaced and written back).
     fn ds_write_b16(&mut self, c: &Ctx<Gen>) -> R<Option<Vec<Opd<Gen>>>> {
@@ -3056,6 +3124,13 @@ impl<'a> Tr<'a> {
         let p = self.g.t_ptr(class, tu);
         let ptr = self.g.op(Op::AccessChain, p, &[var, safe]);
         let data = self.bits_of(data);
+        // `_d16_hi` writes the high half of the data where `_b16` writes the low one
+        let data = if name.ends_with("_d16_hi") {
+            let sixteen = self.g.k(16);
+            self.g.op(Op::ShiftRightLogical, tu, &[data, sixteen])
+        } else {
+            data
+        };
         let ok = self.and(inside, c.active);
         self.guarded(Some(ok), |t| {
             let old = t.g.load(tu, ptr);
@@ -3240,6 +3315,10 @@ impl<'a> Tr<'a> {
         if rest == "swizzle_b32" {
             return self.ds_swizzle(c);
         }
+        // before the atomic prefix list: it matches "cmpst_" too
+        if rest.starts_with("cmpst") {
+            return self.ds_cmpst(c, rest);
+        }
         if [
             "add_", "sub_", "min_", "max_", "and_", "or_", "xor_", "inc_", "dec_", "cmpst_",
             "wrxchg",
@@ -3264,7 +3343,7 @@ impl<'a> Tr<'a> {
             "2_b64" => (2, 8, 2),
             "2st64_b32" => (2, 256, 1),
             "2st64_b64" => (2, 512, 2),
-            "_b16" if !read => {
+            _ if !read && rest.starts_with("_b16") => {
                 return self.ds_write_b16(c);
             }
             "_u16" if read => {
