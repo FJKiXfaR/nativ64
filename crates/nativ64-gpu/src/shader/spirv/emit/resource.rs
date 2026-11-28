@@ -1470,7 +1470,8 @@ impl<'a> Tr<'a> {
         ) {
             let index = self.bits_of(c.srcs[resources][0]);
             Some((self.record_dword(index, 4), false))
-        } else if c.srcs[resources].len() >= 4 {
+        } else if c.srcs[resources].len() >= 4 && std::env::var_os("NATIV64_NO_BUILT_FMT").is_none()
+        {
             let w3 = self.bits_of(c.srcs[resources][3]);
             let tu = self.g.t_u32();
             let (k12, mask) = (self.g.k(12), self.g.k(0x7f));
@@ -2982,6 +2983,9 @@ impl<'a> Tr<'a> {
     /// a box node's four child node ids, a leaf hit's `(t, det, i, j)`, or the miss pattern;
     /// the shader drives the traversal itself.
     fn bvh(&mut self, c: &Ctx<Gen>) -> R<Option<Vec<Opd<Gen>>>> {
+        if std::env::var_os("NATIV64_NO_BVH").is_some() {
+            return refuse("image_bvh_intersect_ray (disabled by NATIV64_NO_BVH)");
+        }
         let i = &c.inst.instr;
         let wide = i.name().starts_with("image_bvh64");
         let nv = if wide { 2 } else { 1 };

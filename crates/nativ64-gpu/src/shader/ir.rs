@@ -2033,8 +2033,16 @@ impl Builder<'_> {
                     IrErrorKind::Unsupported("v_movreld_b32 operands".into()),
                 )
             })?;
-            let index = self.read(st, Reg::M0, at, false)?;
-            let Some(value) = srcs.first().and_then(|s| s.first()).copied() else {
+            let old = std::env::var_os("NATIV64_OLD_MOVREL").is_some();
+            let index = if old {
+                srcs.first()
+                    .and_then(|s| s.first())
+                    .copied()
+                    .unwrap_or(Src::Undef)
+            } else {
+                self.read(st, Reg::M0, at, false)?
+            };
+            let Some(value) = srcs.get(usize::from(old)).and_then(|s| s.first()).copied() else {
                 return Err(bad(
                     at,
                     IrErrorKind::Unsupported("v_movreld_b32 operands".into()),

@@ -189,7 +189,8 @@ pub fn cross_lane_by_nature(i: &Instr) -> bool {
     // emitter's shuffle is exact; a wave64 one spans two and is refused
     n.starts_with("v_readfirstlane")
         || n.starts_with("ds_permute")
-        || (n.starts_with("ds_bpermute") && !i.wave32)
+        || (n.starts_with("ds_bpermute")
+            && (!i.wave32 || std::env::var_os("NATIV64_NO_DS_BPERMUTE").is_some()))
 }
 
 /// The typing of the wave-sized values.

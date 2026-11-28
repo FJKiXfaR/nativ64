@@ -796,6 +796,19 @@ fn build(
             .dynamic_state(&dy)
             .layout(layouts.layout)
             .push_next(&mut rendering);
+        if let Some(dir) = std::env::var_os("NATIV64_DUMP_SPIRV") {
+            let dir = std::path::PathBuf::from(dir);
+            let _ = std::fs::create_dir_all(&dir);
+            for (tag, w) in [
+                ("vert", &tv.words),
+                ("frag", tp.as_ref().map(|t| &t.words).unwrap_or(&tv.words)),
+            ] {
+                let at = dir.join(format!("graphics-{:06}-{tag}.spv", pd.serial));
+                let bytes: Vec<u8> = w.iter().flat_map(|x| x.to_le_bytes()).collect();
+                let _ = std::fs::write(&at, &bytes);
+            }
+            eprintln!("nativ64-gpu: compiling graphics {} (dumped)", pd.serial);
+        }
         let made = d.create_graphics_pipelines(gpu.pipeline_cache, &[info], None);
         super::device::PIPELINES_MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         d.destroy_shader_module(vm, None);
@@ -869,12 +882,28 @@ fn build_compute(
     };
     let layouts = bindless.layouts(&static_samplers, samplers)?;
     validate(&words, "compute")?;
+    static BUILT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = BUILT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let d = &gpu.device;
     // SAFETY: the module is destroyed before returning; the pipeline is owned by the `Built`.
     unsafe {
         let module = d
             .create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&words), None)
             .map_err(|e| format!("vkCreateShaderModule: {e}"))?;
+        // `NATIV64_DUMP_SPIRV=<dir>`: write each module just before the driver compiles it, and
+        // name it, so a driver crash in the compiler points at its shader
+        if let Some(dir) = std::env::var_os("NATIV64_DUMP_SPIRV") {
+            let dir = std::path::PathBuf::from(dir);
+            let _ = std::fs::create_dir_all(&dir);
+            let at = dir.join(format!("compute-{n:06}.spv"));
+            let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+            if std::fs::write(&at, &bytes).is_ok() {
+                eprintln!(
+                    "nativ64-gpu: compiling compute-{n:06} (dumped to {})",
+                    at.display()
+                );
+            }
+        }
         let info = vk::ComputePipelineCreateInfo::default()
             .stage(
                 vk::PipelineShaderStageCreateInfo::default()
