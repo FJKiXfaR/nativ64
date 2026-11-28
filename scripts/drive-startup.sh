@@ -16,7 +16,9 @@
 #    the spacing that ticked both rows in the confirm run: up, up, A (Privacy), left (the focus
 #    returns to the row column; a down while the document pane has it scrolls the document
 #    instead), down, A (Terms), down, A (Confirm). A second attempt at 320 seconds is there for a
-#    slow start.
+#    slow start;
+#  - from 380 seconds, A every 20 seconds carries the onboarding and finish-setup screens (after
+#    the terms Confirm the title loads the settings flow with a spinner, then asks its questions).
 # The frames land every 1500 presents in <out-dir> (or /tmp/nativ64-startup); the run ends by
 # timeout, which is the expected end.
 set -eu
@@ -55,6 +57,11 @@ for at in "2:0x4:2" "6:ry=-1:12" "22:0x4:2" "28:0x80:1" "31:0x80:1" "34:0x4:2" \
 done
 for t in 190 320; do
     script="$script,0x40@${t}+1,0x40@$((t + 4))+1,0x4@$((t + 8))+2,0x100@$((t + 12))+1,0x80@$((t + 17))+1,0x4@$((t + 21))+2,0x80@$((t + 28))+1,0x4@$((t + 32))+2"
+done
+t=380
+while [ "$t" -le "$seconds" ]; do
+    script="$script,0x4@${t}+2"
+    t=$((t + 20))
 done
 
 mkdir -p "$out"
