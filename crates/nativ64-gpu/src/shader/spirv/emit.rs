@@ -1469,9 +1469,10 @@ impl Tr<'_> {
                 }
                 self.lane_ifs -= u32::from(lane);
                 self.g.label(merge);
-                if self.pending_barrier {
-                    // a barrier that was under this per-lane branch: the merge is where the
-                    // whole group is together again
+                if self.pending_barrier && self.lane_ifs == 0 {
+                    // a barrier that was under a per-lane branch: this merge is where the whole
+                    // group is together again (a nested per-lane branch keeps it pending until
+                    // its outer merge, so the barrier never runs diverged)
                     self.pending_barrier = false;
                     self.workgroup_barrier();
                 }
