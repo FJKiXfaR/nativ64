@@ -1775,10 +1775,11 @@ impl Builder<'_> {
         if self.regs.has(reg) {
             return Ok(self.arg(reg));
         }
-        if strict && matches!(reg, Reg::V(_)) {
-            if std::env::var_os("NATIV64_STRICT_VGPR").is_none() {
-                return Ok(Src::Undef);
-            }
+        // a VGPR read before any write anywhere on the path: the console's wave would hold
+        // something (or the path's EXEC is empty); zero stands in, unless a debugger asks for
+        // the old error
+        if strict && matches!(reg, Reg::V(_)) && std::env::var_os("NATIV64_STRICT_VGPR").is_none() {
+            return Ok(Src::Undef);
         }
         if strict {
             if std::env::var_os("NATIV64_UNDEF_DEBUG").is_some() {

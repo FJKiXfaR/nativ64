@@ -233,11 +233,17 @@ fn wave32_masks_are_one_dword() {
 
 #[test]
 fn undefined_read_is_an_error_unless_an_entry_register() {
-    // v_mov_b32 v0, v9 ; s_endpgm: v9 is not an entry register
-    let e = build(&code(&[0x7e000309, 0xbf810000]), 0, false, &regs()).unwrap_err();
-    assert_eq!(e.kind, IrErrorKind::UndefinedRead(Reg::V(9)));
-    assert_eq!(e.at, 0);
-    assert!(e.to_string().contains("v9"), "{e}");
+    // v_mov_b32 v0, v9 ; s_endpgm: v9 is not an entry register, so it reads as zero (the
+    // hardware would read whatever the wave holds; the console compiler leaves reads that no
+    // path can see the value of)
+    let f = ir(&[0x7e000309, 0xbf810000]);
+    assert!(f.blocks[0].insts[0]
+        .srcs
+        .iter()
+        .flatten()
+        .any(|s| *s == Src::Undef));
+    // a debugger can keep the hard error: NATIV64_STRICT_VGPR=1 (checked in the test process
+    // only, so not set here)
     // s_mov_b32 s0, s3 : s3 is below the entry SGPRs
     let e = build(&code(&[0xbe800303, 0xbf810000]), 0, false, &regs()).unwrap_err();
     assert_eq!(e.kind, IrErrorKind::UndefinedRead(Reg::S(3)));
