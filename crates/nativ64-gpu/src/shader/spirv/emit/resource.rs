@@ -122,6 +122,10 @@ pub(in crate::shader::spirv) struct Analysis {
     /// Every value that holds a dword of a loaded descriptor (the loads' results, and copies
     /// and phis of them).
     loaded: HashSet<Val>,
+    /// `loaded` plus the dwords staged through the VGPR file (`v_writelane_b32` and back): a
+    /// typed-buffer load's format is one of those, but the phi rule must not treat them as
+    /// table words.
+    format_ok: HashSet<Val>,
     /// A raw scalar load or a built buffer has a base that does not trace to user data: an
     /// address the program read from memory or computed from it, which the backend cannot
     /// translate (`Translated::memory_addresses`).
@@ -343,11 +347,7 @@ fn is_copy(i: &Inst) -> bool {
     // program that picks a descriptor by lane, say), so the result is that loaded dword
     matches!(
         i.instr.name(),
-        "s_mov_b32"
-            | "s_mov_b64"
-            | "v_readlane_b32"
-            | "v_readfirstlane_b32"
-            | "v_writelane_b32"
+        "s_mov_b32" | "s_mov_b64" | "v_readlane_b32" | "v_readfirstlane_b32"
     )
 }
 
@@ -369,6 +369,7 @@ pub(in crate::shader::spirv) fn analyze(
         table_loads: HashMap::new(),
         origin: HashMap::new(),
         loaded: HashSet::new(),
+        format_ok: HashSet::new(),
         numbers: HashSet::new(),
         memory_addresses: false,
         code_loads: HashSet::new(),
@@ -448,6 +449,34 @@ pub(in crate::shader::spirv) fn analyze(
             }
         }
         if (a.loaded.len(), a.origin.len()) == before {
+            break;
+        }
+    }
+    // the format word of a typed-buffer load can be staged through lanes: follow the register
+    // file for the format check only (the descriptor and phi rules stay on `loaded`)
+    a.format_ok = a.loaded.clone();
+    loop {
+        let before = a.format_ok.len();
+        for blk in &f.blocks {
+            for i in blk.insts.iter().filter(|i| {
+                matches!(
+                    i.instr.name(),
+                    "s_mov_b32"
+                        | "s_mov_b64"
+                        | "v_readlane_b32"
+                        | "v_readfirstlane_b32"
+                        | "v_writelane_b32"
+                )
+            }) {
+                for (j, (_, val)) in i.dsts.iter().enumerate() {
+                    let from = i.srcs.first().and_then(|s| s.get(j));
+                    if matches!(from, Some(Src::Val(v)) if a.format_ok.contains(v)) {
+                        a.format_ok.insert(*val);
+                    }
+                }
+            }
+        }
+        if a.format_ok.len() == before {
             break;
         }
     }
@@ -542,7 +571,11 @@ pub(in crate::shader::spirv) fn analyze(
                 continue;
             }
             let sources = |f: &dyn Fn(&Src) -> bool| p.args.iter().any(|(_, s)| f(s));
-            if sources(&is_loaded) && !p.args.iter().all(|(_, s)| numeric(s) || !is_loaded(s)) {
+            // only a word loaded from a descriptor table at a constant offset makes the phi a
+            // descriptor half: a dword copied through the register file (the readlane staging)
+            // is a plain value, as it was before those copies were followed
+            let table_word = |s: &Src| matches!(s, Src::Val(v) if a.origin.contains_key(v));
+            if sources(&table_word) && !p.args.iter().all(|(_, s)| numeric(s) || !table_word(s)) {
                 return refuse("a loaded descriptor's words mixed into a phi");
             }
         }
@@ -1460,7 +1493,7 @@ impl<'a> Tr<'a> {
         let runtime_fmt = if runtime {
             if !matches!(
                 c.inst.srcs[ns - 2].first(),
-                Some(Src::Val(v)) if self.res().analysis.loaded.contains(v)
+                Some(Src::Val(v)) if self.res().analysis.format_ok.contains(v)
             ) {
                 if std::env::var_os("NATIV64_FMT_DEBUG").is_some() {
                     if let Some(Src::Val(v)) = c.inst.srcs[ns - 2].first() {
@@ -1478,14 +1511,12 @@ impl<'a> Tr<'a> {
                                                 .map(|s| format!("{s:?}"))
                                                 .collect::<Vec<_>>()
                                         );
-                                        next = inst
-                                            .srcs
-                                            .first()
-                                            .and_then(|s| s.first())
-                                            .and_then(|s| match s {
+                                        next = inst.srcs.first().and_then(|s| s.first()).and_then(
+                                            |s| match s {
                                                 Src::Val(x) => Some(*x),
                                                 _ => None,
-                                            });
+                                            },
+                                        );
                                     }
                                 }
                             }
