@@ -222,7 +222,30 @@ pub fn fill(
         }
     }
     b[VIEW_TABLE..VIEW_TABLE + 8].copy_from_slice(&view_table.to_le_bytes());
+    // `NATIV64_DESCRIPTOR_CHECK=1`: a root constant that is a title address is a pointer the
+    // title passes as data (a shader would dereference it as a device address, and fault)
+    if descriptor_check() {
+        for n in 0..USER_DWORDS - 1 {
+            let lo = u32::from_le_bytes(b[4 * n..4 * n + 4].try_into().unwrap());
+            let hi = u32::from_le_bytes(b[4 * n + 4..4 * n + 8].try_into().unwrap());
+            let a = u64::from(lo) | u64::from(hi) << 32;
+            if a != 0 && crate::hostmem::peek(a, 4).is_some() {
+                super::log_once(format!(
+                    "root block: user dword {n} holds the title address {a:#x} (a pointer the \
+                     title passes as a constant; a shader would dereference a device address)"
+                ));
+            }
+        }
+    }
     Ok(b)
+}
+
+/// Whether `NATIV64_DESCRIPTOR_CHECK` is on (reports title addresses found in root constants).
+fn descriptor_check() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        std::env::var("NATIV64_DESCRIPTOR_CHECK").is_ok_and(|v| v != "0" && !v.is_empty())
+    })
 }
 
 #[cfg(test)]
