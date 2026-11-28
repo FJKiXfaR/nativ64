@@ -67,6 +67,8 @@ CI runs the same checks.
 ## Other rules
 
 - English for code, comments, commits and issues.
+- AI tools are welcome (this project uses them too): just mention the tool in the pull
+  request and how you tested the result.
 - Bug reports: attach logs only after removing anything that comes from the game (paths
   inside its package, strings, resource names). When in doubt, describe it instead.
 

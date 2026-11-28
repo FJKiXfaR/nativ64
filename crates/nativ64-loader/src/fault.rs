@@ -16,7 +16,7 @@ const ALT_STACK: usize = 64 * 1024;
 static NO_SEH: AtomicBool = AtomicBool::new(false);
 
 struct Buf {
-    b: [u8; 512],
+    b: [u8; 1024],
     n: usize,
 }
 
@@ -31,7 +31,7 @@ impl std::fmt::Write for Buf {
 
 fn say(args: std::fmt::Arguments) {
     use std::fmt::Write;
-    let mut b = Buf { b: [0; 512], n: 0 };
+    let mut b = Buf { b: [0; 1024], n: 0 };
     let _ = b.write_fmt(args);
     unsafe { libc::write(2, b.b.as_ptr().cast(), b.n) };
 }
@@ -432,6 +432,9 @@ pub fn install(base: u64, size: usize) {
     HOST_BASE.store(find_host_base(), Ordering::Relaxed);
     nativ64::seh::set_fatal_hook(report_unhandled);
     nativ64::seh::set_fault_hook(crate::stubs::snapshot_imports);
+    start_sampler();
+    start_peek();
+    start_trace_trigger();
     for sig in [
         libc::SIGSEGV,
         libc::SIGILL,
@@ -464,8 +467,207 @@ pub fn register_dll(name: &str, base: u64, size: usize) {
     DLL_COUNT.store(i + 1, Ordering::Release);
 }
 
+const MAX_THREADS: usize = 256;
+static THREAD_TIDS: [AtomicU64; MAX_THREADS] = [const { AtomicU64::new(0) }; MAX_THREADS];
+static THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+/// `SIGUSR2` handler of `NATIV64_SAMPLE_THREADS`: one line with the thread's tid, its rip
+/// (`image+0xOFF` / `dll+0xOFF` when in guest code, else a host address) and up to 8 return
+/// addresses into guest code found in the first 4 pages of its stack.
+extern "C" fn on_sample(_: i32, _: *mut libc::siginfo_t, uc: *mut libc::c_void) {
+    let uc = uc as *mut libc::ucontext_t;
+    let (rip, rsp) = unsafe {
+        (
+            (*uc).uc_mcontext.gregs[libc::REG_RIP as usize] as u64,
+            (*uc).uc_mcontext.gregs[libc::REG_RSP as usize] as u64,
+        )
+    };
+    let tid = unsafe { libc::syscall(libc::SYS_gettid) };
+    say(format_args!(
+        "nativ64: sample tid {tid} rip {rip:#x}{}",
+        if in_guest_code(rip) { "" } else { " (host)" }
+    ));
+    say_location(rip);
+    let mut addr = rsp & !7;
+    let mut found = 0;
+    let mut buf = [0u64; 512];
+    // Four pages at most, each read with `process_vm_readv` so an unreadable page (a guard) just
+    // ends the scan.
+    'pages: for _ in 0..4 {
+        let len = 4096 - (addr & 0xfff) as usize;
+        let local = libc::iovec {
+            iov_base: buf.as_mut_ptr().cast(),
+            iov_len: len,
+        };
+        let remote = libc::iovec {
+            iov_base: addr as *mut libc::c_void,
+            iov_len: len,
+        };
+        let n = unsafe { libc::process_vm_readv(libc::getpid(), &local, 1, &remote, 1, 0) };
+        if n != len as isize {
+            break;
+        }
+        for v in &buf[..len / 8] {
+            if in_guest_code(*v) {
+                say(format_args!(" <- {v:#x}"));
+                say_location(*v);
+                found += 1;
+                if found == 8 {
+                    break 'pages;
+                }
+            }
+        }
+        addr += len as u64;
+    }
+    say(format_args!("\n"));
+}
+
+/// `NATIV64_SAMPLE_THREADS=<secs>`: a host thread signals every registered guest thread each
+/// `secs` seconds and each prints where it is (see [`on_sample`]). Off when unset.
+/// `NATIV64_SAMPLE_THREADS_AT=<secs>[,<secs>...]` instead samples once at each of these times
+/// (seconds after start), to look at the threads without disturbing them all run long.
+fn start_sampler() {
+    let at: Vec<u64> = std::env::var("NATIV64_SAMPLE_THREADS_AT")
+        .map(|v| v.split(',').filter_map(|t| t.trim().parse().ok()).collect())
+        .unwrap_or_default();
+    let every = std::env::var("NATIV64_SAMPLE_THREADS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|&s| s > 0);
+    if at.is_empty() && every.is_none() {
+        return;
+    }
+    unsafe {
+        handle(
+            libc::SIGUSR2,
+            on_sample as extern "C" fn(i32, *mut libc::siginfo_t, *mut libc::c_void) as usize,
+            libc::SA_SIGINFO | libc::SA_ONSTACK | libc::SA_RESTART,
+        )
+    };
+    let t0 = std::time::Instant::now();
+    let mut next = at.into_iter();
+    let _ = std::thread::Builder::new()
+        .name("nativ64-sample".into())
+        .spawn(move || loop {
+            let wait = match every {
+                Some(secs) => std::time::Duration::from_secs(secs),
+                None => match next.next() {
+                    Some(t) => std::time::Duration::from_secs(t).saturating_sub(t0.elapsed()),
+                    None => return,
+                },
+            };
+            std::thread::sleep(wait);
+            say(format_args!("nativ64: samples\n"));
+            let pid = unsafe { libc::getpid() };
+            for slot in &THREAD_TIDS[..THREAD_COUNT.load(Ordering::Acquire).min(MAX_THREADS)] {
+                let tid = slot.load(Ordering::Relaxed);
+                unsafe { libc::syscall(libc::SYS_tgkill, pid, tid as i64, libc::SIGUSR2) };
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        });
+}
+
+/// Reads `len` bytes of this process at `addr`, `None` when unmapped.
+fn read_guest(addr: u64, buf: &mut [u8]) -> Option<()> {
+    let local = libc::iovec {
+        iov_base: buf.as_mut_ptr().cast(),
+        iov_len: buf.len(),
+    };
+    let remote = libc::iovec {
+        iov_base: addr as *mut libc::c_void,
+        iov_len: buf.len(),
+    };
+    let n = unsafe { libc::process_vm_readv(libc::getpid(), &local, 1, &remote, 1, 0) };
+    (n == buf.len() as isize).then_some(())
+}
+
+/// Parses one `NATIV64_PEEK` item: `ADDR` or `ADDR>OFF` (hex, read the qword at ADDR, add OFF,
+/// then read there), giving `(addr, off)`.
+fn parse_peek(item: &str) -> Option<(u64, Option<u64>)> {
+    let hex = |t: &str| u64::from_str_radix(t.trim().trim_start_matches("0x"), 16).ok();
+    match item.split_once('>') {
+        Some((a, o)) => Some((hex(a)?, Some(hex(o)?))),
+        None => Some((hex(item)?, None)),
+    }
+}
+
+/// `NATIV64_PEEK=addr[,addr>off...]` (hex guest addresses): a host thread reads 8 bytes at each
+/// address every 100 ms and prints a line, with the elapsed seconds, whenever one changes
+/// (`addr>off` follows the qword stored at `addr` first). Off when unset.
+fn start_peek() {
+    let Ok(spec) = std::env::var("NATIV64_PEEK") else {
+        return;
+    };
+    let items: Vec<(String, (u64, Option<u64>))> = spec
+        .split(',')
+        .filter_map(|i| Some((i.to_string(), parse_peek(i)?)))
+        .collect();
+    let _ = std::thread::Builder::new()
+        .name("nativ64-peek".into())
+        .spawn(move || {
+            let t0 = std::time::Instant::now();
+            let mut last: Vec<Option<u64>> = vec![None; items.len()];
+            loop {
+                for (k, (name, (addr, off))) in items.iter().enumerate() {
+                    let mut b = [0u8; 8];
+                    let mut at = Some(*addr);
+                    if let Some(off) = off {
+                        at = read_guest(*addr, &mut b).map(|()| u64::from_le_bytes(b) + off);
+                    }
+                    let v = at.and_then(|a| read_guest(a, &mut b).map(|()| u64::from_le_bytes(b)));
+                    if v != last[k] {
+                        last[k] = v;
+                        say(format_args!(
+                            "nativ64: peek {name} = {v:x?} at {:.1}s\n",
+                            t0.elapsed().as_secs_f32()
+                        ));
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        });
+}
+
+/// `NATIV64_TRACE_TRIGGER=addr` (hex guest address, with `--trace-imports`): the trace lines are
+/// kept in a ring of the last 6000 until the byte at `addr` goes from non-zero to zero (polled
+/// every 2 ms); the ring is then printed and tracing goes on live. Catches what led to a flag flip.
+fn start_trace_trigger() {
+    let Some(addr) = std::env::var("NATIV64_TRACE_TRIGGER")
+        .ok()
+        .and_then(|v| u64::from_str_radix(v.trim().trim_start_matches("0x"), 16).ok())
+    else {
+        return;
+    };
+    crate::stubs::trace_ring_start();
+    let _ = std::thread::Builder::new()
+        .name("nativ64-trigger".into())
+        .spawn(move || {
+            let mut was_set = false;
+            loop {
+                let mut b = [0u8; 1];
+                match read_guest(addr, &mut b) {
+                    Some(()) if b[0] != 0 => was_set = true,
+                    Some(()) if was_set => {
+                        say(format_args!("nativ64: trace trigger fired\n"));
+                        crate::stubs::trace_ring_flush();
+                        return;
+                    }
+                    _ => {}
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+        });
+}
+
 /// Gives the calling thread an alternate signal stack (leaked: it lives as long as the thread).
 pub fn setup_thread() {
+    let i = THREAD_COUNT.fetch_add(1, Ordering::AcqRel);
+    if i < MAX_THREADS {
+        THREAD_TIDS[i].store(
+            unsafe { libc::syscall(libc::SYS_gettid) } as u64,
+            Ordering::Relaxed,
+        );
+    }
     let mem = unsafe {
         libc::mmap(
             std::ptr::null_mut(),

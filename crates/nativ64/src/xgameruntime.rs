@@ -203,10 +203,29 @@ static SYSTEM_VTBL: SystemVtbl = SystemVtbl {
 };
 static SYSTEM_IIDS: [Guid; 1] = [IID_SYSTEM];
 
+/// The feature probe's provider id, which is also its interface id.
+pub const API_FEATURE: Guid = Guid::new(
+    0x8836_fe87,
+    0xedb9,
+    0x4fe3,
+    [0x8d, 0xad, 0x05, 0xf0, 0xd2, 0xcd, 0x5b, 0x40],
+);
+static FEATURE_IIDS: [Guid; 1] = [API_FEATURE];
+
+/// `IsFeatureAvailable(feature)`: the console runtime has every feature of its list except two
+/// (the numbering is the public header's; 1 and 14 and anything past 21 are absent).
+extern "win64" fn is_feature_available(_this: *mut c_void, feature: u32) -> bool {
+    matches!(feature, 0 | 2..=13 | 15..=21)
+}
+
+static FEATURE_VTBL: Table<4> = table!(4; is_feature_available);
+
 /// The answer to a request for an API: the system, user and task queue APIs exist.
 fn query_api(api: &Guid, iid: &Guid) -> Option<*mut c_void> {
     if *api == API_SYSTEM && *iid == IID_SYSTEM {
         Some(SystemObj::create(&SYSTEM_VTBL, &SYSTEM_IIDS, ()) as *mut c_void)
+    } else if *api == API_FEATURE && *iid == API_FEATURE {
+        Some(new_object(&FEATURE_VTBL, &FEATURE_IIDS))
     } else {
         crate::xuser::query(api, iid).or_else(|| crate::xasync::query(api, iid))
     }
@@ -334,6 +353,19 @@ mod tests {
         let h = Guid::new(9, 9, 9, [9; 8]);
         assert!(first_request(g, h));
         assert!(!first_request(g, h));
+    }
+
+    #[test]
+    fn feature_probe_lists_the_console_features() {
+        unsafe {
+            let mut obj = std::ptr::null_mut();
+            assert_eq!(QueryApiImpl(&API_FEATURE, &API_FEATURE, &mut obj), S_OK);
+            let probe: extern "win64" fn(*mut c_void, u32) -> bool = method(obj, 3);
+            for f in 0..=22 {
+                assert_eq!(probe(obj, f), f != 1 && f != 14 && f != 22, "feature {f}");
+            }
+            assert!(!probe(obj, u32::MAX));
+        }
     }
 
     #[test]

@@ -297,6 +297,21 @@ pub fn create_thread(
         set_last_error(8);
         return None;
     };
+    if std::env::var_os("NATIV64_SAMPLE_THREADS").is_some()
+        || std::env::var_os("NATIV64_SAMPLE_THREADS_AT").is_some()
+    {
+        // SAFETY: debug only; a guest thread parameter is a readable pointer in practice, and
+        // this reads two words of it, checking it is not null first.
+        let words = if param.is_null() {
+            [0, 0]
+        } else {
+            unsafe { [*(param as *const usize), *(param as *const usize).add(1)] }
+        };
+        eprintln!(
+            "nativ64: thread {id} start {:#x} param {:#x} [{:#x}, {:#x}]",
+            start as usize, param as usize, words[0], words[1]
+        );
+    }
     let h = kernel().insert(obj);
     set_last_error(0);
     Some((h, id))
