@@ -241,6 +241,28 @@ impl<'a> Tr<'a> {
                     let id = self.load_builtin(BuiltIn::WorkgroupId, v3);
                     Opd::V(self.g.op(Op::CompositeExtract, tu, &[id, u32::from(axis)]))
                 }
+                Reg::S(n) if matches!(io, StageIo::Mesh(_)) => {
+                    // the NGG primitive shader's entry state: the lane masks (s0:s1 the saved
+                    // EXEC, s2:s3 the lanes outside this wave's allocation, s4:s5 a selection)
+                    // and the allocation counts s6 (vertices) and s7 (primitives) that the
+                    // shader asks `MSG_GS_ALLOC_REQ` for
+                    let StageIo::Mesh(m) = io else { unreachable!() };
+                    let lanes = u32::from(m.group_lanes).clamp(1, 64);
+                    let mask = if lanes >= 64 {
+                        u64::MAX
+                    } else {
+                        (1u64 << lanes) - 1
+                    };
+                    let v = match n {
+                        0 | 4 => mask as u32,
+                        1 | 5 => (mask >> 32) as u32,
+                        2 | 3 => 0,
+                        6 => u32::from(m.max_vertices),
+                        7 => u32::from(m.max_primitives),
+                        _ => return unsupported(&format!("entry {reg}")),
+                    };
+                    Opd::V(self.g.k(v))
+                }
                 Reg::S(n) => {
                     // below the user SGPRs: the VS fetch routine's address (s4, s5); above:
                     // the PS primitive mask and ordered-section id, only read for m0
