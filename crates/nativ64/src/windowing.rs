@@ -36,6 +36,8 @@ pub const WM_DESTROY: u32 = 0x0002;
 pub const WM_MOVE: u32 = 0x0003;
 pub const WM_SIZE: u32 = 0x0005;
 pub const WM_ACTIVATE: u32 = 0x0006;
+pub const WM_SETFOCUS: u32 = 0x0007;
+pub const WM_ACTIVATEAPP: u32 = 0x001C;
 pub const WM_CLOSE: u32 = 0x0010;
 pub const WM_QUIT: u32 = 0x0012;
 pub const WM_SHOWWINDOW: u32 = 0x0018;
@@ -546,7 +548,13 @@ pub fn show_window(hwnd: usize, cmd: i32) -> bool {
     }
     let activates = !matches!(cmd, SW_SHOWNOACTIVATE | SW_SHOWMINNOACTIVE | SW_SHOWNA);
     if !prev && top_level && activates {
+        // Windows sends the app-level activation first, then the window's, then the focus; a
+        // title that watches WM_ACTIVATEAPP for its intro videos or menu input needs all three.
+        // SAFETY: the thread id query takes no pointers.
+        let thread = unsafe { crate::api_ms_win_core_processthreads::GetCurrentThreadId() };
+        send_message(hwnd, WM_ACTIVATEAPP, 1, thread as isize);
         send_message(hwnd, WM_ACTIVATE, WA_ACTIVE, 0);
+        send_message(hwnd, WM_SETFOCUS, 0, 0);
     }
     prev
 }
@@ -780,7 +788,17 @@ pub(crate) mod tests {
             "hidden window"
         );
         assert!(!show_window(h, 5));
-        assert_eq!(take_log(), [WM_SHOWWINDOW, WM_SIZE, WM_ACTIVATE]);
+        // the activation triplet: app, window, focus
+        assert_eq!(
+            take_log(),
+            [
+                WM_SHOWWINDOW,
+                WM_SIZE,
+                WM_ACTIVATEAPP,
+                WM_ACTIVATE,
+                WM_SETFOCUS
+            ]
+        );
         assert!(show_window(h, 5), "previous visibility");
         assert!(take_log().is_empty());
         assert!(show_window(h, SW_HIDE));
@@ -806,7 +824,9 @@ pub(crate) mod tests {
                 WM_MOVE,
                 WM_SHOWWINDOW,
                 WM_SIZE,
-                WM_ACTIVATE
+                WM_ACTIVATEAPP,
+                WM_ACTIVATE,
+                WM_SETFOCUS
             ]
         );
         assert!(show_window(h, 5));
