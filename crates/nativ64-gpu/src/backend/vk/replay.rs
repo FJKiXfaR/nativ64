@@ -607,6 +607,19 @@ impl<'g> VkBackend<'g> {
             if lost {
                 self.device_lost = true;
                 let named = gpu.log_device_fault();
+                let drawn = super::draw::last_drawn();
+                if !drawn.is_empty() {
+                    let list = drawn
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    eprintln!(
+                        "nativ64-gpu: the last {} recorded draws' pipelines: {list} \
+                         (NATIV64_SKIP_PIPELINE=... isolates one)",
+                        drawn.len()
+                    );
+                }
                 let ranges = self.draw.mem.import_ranges();
                 for pair in named.chunks(2) {
                     let (addr, precision) = (pair[0], pair.get(1).copied().unwrap_or(0));

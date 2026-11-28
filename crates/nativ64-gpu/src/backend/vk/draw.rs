@@ -362,6 +362,48 @@ impl Drop for DrawState<'_> {
     }
 }
 
+/// `NATIV64_SKIP_PIPELINE=<serial[,serial...]>`: leave out the draws of those pipelines in
+/// every frame (a GPU fault from one draw is first placed by its pipeline).
+fn skipped_by_pipeline(serial: usize) -> bool {
+    static SERIALS: std::sync::OnceLock<Option<Vec<usize>>> = std::sync::OnceLock::new();
+    let Some(serials) = SERIALS.get_or_init(|| {
+        let v = std::env::var("NATIV64_SKIP_PIPELINE").ok()?;
+        let mut out = Vec::new();
+        for part in v.split(',') {
+            let part = part.trim();
+            if !part.is_empty() {
+                out.push(part.parse().ok()?);
+            }
+        }
+        (!out.is_empty()).then_some(out)
+    }) else {
+        return false;
+    };
+    serials.contains(&serial)
+}
+
+/// The pipeline serials of the last few recorded draws (for a device loss's report).
+static LAST_DRAWN: std::sync::Mutex<std::collections::VecDeque<usize>> =
+    std::sync::Mutex::new(std::collections::VecDeque::new());
+
+fn note_drawn(serial: usize) {
+    let mut last = LAST_DRAWN.lock().unwrap_or_else(|e| e.into_inner());
+    if last.len() == 24 {
+        last.pop_front();
+    }
+    last.push_back(serial);
+}
+
+/// The pipeline serials of the last recorded draws, newest last.
+pub(crate) fn last_drawn() -> Vec<usize> {
+    LAST_DRAWN
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .copied()
+        .collect()
+}
+
 /// The pipeline object at `ptr`, if it is one.
 ///
 /// # Safety
@@ -1160,9 +1202,11 @@ impl<'g> VkBackend<'g> {
             || self.skipped_by_serial(pd.serial as usize)
             || self.skipped_by_ps(pd)
             || self.skipped_by_skip_ps(pd)
+            || skipped_by_pipeline(pd.serial as usize)
         {
             return Ok(());
         }
+        note_drawn(pd.serial as usize);
 
         // Rendering.
         let want = Open {
