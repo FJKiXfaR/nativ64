@@ -911,7 +911,7 @@ impl<'a> Tr<'a> {
                     Ok(())
                 })
             }
-            (13 | 14, StageIo::Vertex(vs)) if vs.clip => {
+            (13 | 14, StageIo::Vertex(_)) => {
                 let base = 4 * (e.target as u32 - 13);
                 let tf = self.g.t_f32();
                 let n = self.g.k(8);
@@ -937,7 +937,7 @@ impl<'a> Tr<'a> {
                     Ok(())
                 })
             }
-            (13..=15, StageIo::Vertex(_)) => unsupported("exp pos1..3 other than clip distances"),
+            (15, StageIo::Vertex(_)) => unsupported("exp pos3"),
             (13 | 14, StageIo::Mesh(m)) if m.clip => {
                 let base = 4 * (e.target as u32 - 13);
                 let tf = self.g.t_f32();

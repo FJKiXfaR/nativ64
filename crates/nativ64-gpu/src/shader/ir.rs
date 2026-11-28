@@ -1764,6 +1764,9 @@ impl Builder<'_> {
             return Ok(self.arg(reg));
         }
         if strict {
+            if std::env::var_os("NATIV64_UNDEF_DEBUG").is_some() {
+                eprintln!("undef debug: {reg} at +{at:#x}");
+            }
             Err(bad(at, IrErrorKind::UndefinedRead(reg)))
         } else {
             Ok(Src::Undef)
