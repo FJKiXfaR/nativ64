@@ -222,6 +222,21 @@ pub fn key_button(code: u32) -> u32 {
         50 => MENU,           // M
         16 => LEFT_SHOULDER,  // Q
         18 => RIGHT_SHOULDER, // E
+        // a pad that reports BTN_* gamepad codes on its evdev node (the common case on Linux)
+        304 => A,              // BTN_SOUTH
+        305 => B,              // BTN_EAST
+        306 => X,              // BTN_WEST
+        307 => Y,              // BTN_NORTH
+        310 => LEFT_SHOULDER,  // BTN_TL
+        311 => RIGHT_SHOULDER, // BTN_TR
+        314 => VIEW,           // BTN_SELECT
+        315 => MENU,           // BTN_START
+        317 => LS,             // BTN_THUMBL
+        318 => RS,             // BTN_THUMBR
+        544 => UP,             // BTN_DPAD_UP
+        545 => DOWN,           // BTN_DPAD_DOWN
+        546 => LEFT,           // BTN_DPAD_LEFT
+        547 => RIGHT,          // BTN_DPAD_RIGHT
         _ => 0,
     }
 }
