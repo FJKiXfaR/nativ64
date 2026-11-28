@@ -735,6 +735,9 @@ struct Tr<'a> {
     /// The `If` arms being emitted whose branch is a per-lane test (a barrier must not be in
     /// one).
     lane_ifs: u32,
+    /// A barrier met inside a per-lane branch: it is emitted once the branch has merged, where
+    /// every invocation of the group reaches it.
+    pending_barrier: bool,
     /// The program's native code as words, for the literal tables a program indexes with its
     /// own address.
     code: Vec<u32>,
@@ -857,6 +860,7 @@ fn build<'a>(
         frames: Vec::new(),
         stage,
         lane_ifs: 0,
+        pending_barrier: false,
         code: code
             .as_chunks::<4>()
             .0
@@ -1465,6 +1469,12 @@ impl Tr<'_> {
                 }
                 self.lane_ifs -= u32::from(lane);
                 self.g.label(merge);
+                if self.pending_barrier {
+                    // a barrier that was under this per-lane branch: the merge is where the
+                    // whole group is together again
+                    self.pending_barrier = false;
+                    self.workgroup_barrier();
+                }
                 Ok(())
             }
             Node::Br { to, depth } => {

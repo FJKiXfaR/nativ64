@@ -3420,11 +3420,19 @@ impl<'a> Tr<'a> {
             return refuse("s_barrier outside a compute program");
         }
         if self.lane_ifs > 0 {
-            return refuse("s_barrier under a per-lane branch");
+            // a per-lane branch cannot hold a group barrier; the merge of the branch is where
+            // every invocation is together, and the emitter puts it there
+            self.pending_barrier = true;
+            return Ok(());
         }
+        self.workgroup_barrier();
+        Ok(())
+    }
+
+    /// `OpControlBarrier` over the whole workgroup (`s_barrier`'s effect).
+    pub(super) fn workgroup_barrier(&mut self) {
         // Execution Workgroup, Memory Workgroup, AcquireRelease | WorkgroupMemory
         let (wg, sem) = (self.g.k(2), self.g.k(0x108));
         self.g.op0(Op::ControlBarrier, &[wg, wg, sem]);
-        Ok(())
     }
 }
