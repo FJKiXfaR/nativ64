@@ -3413,6 +3413,33 @@ impl<'a> Tr<'a> {
         Ok(Some(out))
     }
 
+    /// `v_movrels_b32 vDst, v[index]`: the VGPR the per-lane index chooses. Every VGPR is a
+    /// source (an undefined one was read as zero); a select tree picks the lane's.
+    pub(super) fn movrels(&mut self, c: &Ctx<Gen>) -> R<Option<Vec<Opd<Gen>>>> {
+        let tu = self.g.t_u32();
+        let tb = self.g.t_bool();
+        let Some(Opd::V(index)) = c.srcs.first().and_then(|s| s.first()).copied() else {
+            return bad("a v_movrels_b32 without its index");
+        };
+        let mut result: Option<u32> = None;
+        for (k, src) in c.srcs.iter().skip(1).enumerate() {
+            let Some(Opd::V(value)) = src.first().copied() else {
+                continue;
+            };
+            let kk = self.g.k(k as u32);
+            let eq = self.g.op(Op::IEqual, tb, &[index, kk]);
+            result = Some(match result {
+                None => value,
+                Some(prev) => self.g.select(eq, value, prev),
+            });
+        }
+        let Some(result) = result else {
+            return bad("a v_movrels_b32 with no VGPR to choose");
+        };
+        let _ = tu;
+        Ok(Some(vec![self.lane_result(c, 0, result)]))
+    }
+
     /// `s_barrier`: every invocation of the group meets here, so the group's memory is
     /// consistent. Refused outside a compute program and under a per-lane branch.
     pub(super) fn barrier(&mut self) -> R<()> {

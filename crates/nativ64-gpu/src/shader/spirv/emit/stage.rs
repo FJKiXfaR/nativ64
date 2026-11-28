@@ -456,6 +456,9 @@ impl<'a> Tr<'a> {
         if name == "s_barrier" {
             return self.barrier().map(|()| Some(Vec::new()));
         }
+        if name == "v_movrels_b32" {
+            return self.movrels(c);
+        }
         if name == "s_swappc_b64" {
             return self.fetch(c).map(Some);
         }

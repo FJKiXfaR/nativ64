@@ -393,6 +393,9 @@ struct Lowered {
     srcs: Vec<Vec<Rd>>,
     imps: Vec<Reg>,
     olds: Vec<Reg>,
+    /// Sources that may be undefined: an undefined one reads as zero (the dynamic register
+    /// reads of `v_movrels_b32` name every VGPR, only some of which exist).
+    lenient: bool,
 }
 
 fn bad(at: usize, kind: IrErrorKind) -> IrError {
@@ -665,6 +668,38 @@ fn lower(i: &Instr) -> Result<Option<Lowered>, IrError> {
         | Enc::Vop3p
         | Enc::Flat => {}
         e => return Err(bad(i.at, IrErrorKind::UnsupportedEncoding(e.name()))),
+    }
+    if name == "v_movrels_b32" {
+        // `vDst = V[index]`: the index is a source and every VGPR is a possible value; the
+        // emitter builds the select tree. Always 256 VGPRs of the wave's register file.
+        let mut lo = Lowered {
+            lenient: true,
+            ..Lowered::default()
+        };
+        for (slot, op) in i.info.slots.iter().zip(&i.operands) {
+            match slot {
+                Slot::VDst(_)
+                | Slot::VDstS(_)
+                | Slot::SDst(_)
+                | Slot::SDstB(_)
+                | Slot::SData(_) => {
+                    let Some(w) = slot_width(slot, i.wave32) else {
+                        continue;
+                    };
+                    lo.dsts.extend(dst_dwords(op, w, i)?);
+                }
+                _ => {
+                    let Some(w) = slot_width(slot, i.wave32) else {
+                        continue;
+                    };
+                    lo.srcs.push(src_dwords(op, w, i)?);
+                }
+            }
+        }
+        for v in 0..256u16 {
+            lo.srcs.push(vec![Rd::Reg(Reg::V(v))]);
+        }
+        return Ok(Some(lo));
     }
     if name.contains("movrel") || name.starts_with("s_set_gpr_idx") {
         return Err(bad(
@@ -1671,6 +1706,7 @@ fn fetch_lowered(i: &Instr, regs: &EntryRegs) -> Lowered {
         srcs: vec![vec![Rd::Reg(Reg::S(4)), Rd::Reg(Reg::S(5))]],
         imps: mask_regs(i.wave32),
         olds: Vec::new(),
+        lenient: false,
     }
 }
 
@@ -1909,7 +1945,7 @@ impl Builder<'_> {
             for r in s {
                 v.push(match r {
                     Rd::Const(c) => Src::Const(*c),
-                    Rd::Reg(r) => self.read(st, *r, at, true)?,
+                    Rd::Reg(r) => self.read(st, *r, at, !l.lenient)?,
                 });
             }
             srcs.push(v);
