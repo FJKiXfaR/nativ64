@@ -77,6 +77,8 @@ code, `(host)` in our code) followed by up to 8 guest return addresses found in 
 stack. With it set, each `CreateThread` also prints `nativ64: thread TID start S param P [w0, w1]` (the
 first two words of the parameter, which carry the real entry when the title uses a generic start
 wrapper). Finds where a stuck thread sits; nothing runs when unset.
+`NATIV64_SAMPLE_THREADS_AT=<secs>[,<secs>...]` samples once at each of these times after start instead
+(the periodic signals perturb the run: the loading quit at ~570 s never happens with them).
 `NATIV64_PEEK=addr[,addr>off,...]` (`fault.rs`, hex guest addresses): a host thread reads the qword at
 each address every 100 ms and prints `nativ64: peek ADDR = VALUE at T s` on every change (`addr>off`
 reads the qword at `addr`, adds `off`, and reads there; `None` = unmapped). Finds when a flag flips.

@@ -326,14 +326,19 @@ extern "C" fn on_sample(_: i32, _: *mut libc::siginfo_t, uc: *mut libc::c_void) 
 
 /// `NATIV64_SAMPLE_THREADS=<secs>`: a host thread signals every registered guest thread each
 /// `secs` seconds and each prints where it is (see [`on_sample`]). Off when unset.
+/// `NATIV64_SAMPLE_THREADS_AT=<secs>[,<secs>...]` instead samples once at each of these times
+/// (seconds after start), to look at the threads without disturbing them all run long.
 fn start_sampler() {
-    let Some(secs) = std::env::var("NATIV64_SAMPLE_THREADS")
+    let at: Vec<u64> = std::env::var("NATIV64_SAMPLE_THREADS_AT")
+        .map(|v| v.split(',').filter_map(|t| t.trim().parse().ok()).collect())
+        .unwrap_or_default();
+    let every = std::env::var("NATIV64_SAMPLE_THREADS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
-        .filter(|&s| s > 0)
-    else {
+        .filter(|&s| s > 0);
+    if at.is_empty() && every.is_none() {
         return;
-    };
+    }
     unsafe {
         handle(
             libc::SIGUSR2,
@@ -341,10 +346,19 @@ fn start_sampler() {
             libc::SA_SIGINFO | libc::SA_ONSTACK | libc::SA_RESTART,
         )
     };
+    let t0 = std::time::Instant::now();
+    let mut next = at.into_iter();
     let _ = std::thread::Builder::new()
         .name("nativ64-sample".into())
         .spawn(move || loop {
-            std::thread::sleep(std::time::Duration::from_secs(secs));
+            let wait = match every {
+                Some(secs) => std::time::Duration::from_secs(secs),
+                None => match next.next() {
+                    Some(t) => std::time::Duration::from_secs(t).saturating_sub(t0.elapsed()),
+                    None => return,
+                },
+            };
+            std::thread::sleep(wait);
             say(format_args!("nativ64: samples\n"));
             let pid = unsafe { libc::getpid() };
             for slot in &THREAD_TIDS[..THREAD_COUNT.load(Ordering::Acquire).min(MAX_THREADS)] {
