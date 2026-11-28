@@ -459,6 +459,9 @@ impl<'a> Tr<'a> {
         if name == "v_movrels_b32" {
             return self.movrels(c);
         }
+        if name == "v_movreld_b32" {
+            return self.movreld(c);
+        }
         if name == "s_swappc_b64" {
             return self.fetch(c).map(Some);
         }

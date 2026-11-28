@@ -396,6 +396,9 @@ struct Lowered {
     /// Sources that may be undefined: an undefined one reads as zero (the dynamic register
     /// reads of `v_movrels_b32` name every VGPR, only some of which exist).
     lenient: bool,
+    /// `v_movreld_b32`: the destination operand is the index; the write becomes one conditional
+    /// write per VGPR.
+    dynamic_write: bool,
 }
 
 fn bad(at: usize, kind: IrErrorKind) -> IrError {
@@ -668,6 +671,20 @@ fn lower(i: &Instr) -> Result<Option<Lowered>, IrError> {
         | Enc::Vop3p
         | Enc::Flat => {}
         e => return Err(bad(i.at, IrErrorKind::UnsupportedEncoding(e.name()))),
+    }
+    if name == "v_movreld_b32" {
+        // `V[vdst] = src0`: the destination operand names the register that holds the index
+        let mut lo = Lowered {
+            dynamic_write: true,
+            ..Lowered::default()
+        };
+        for (slot, op) in i.info.slots.iter().zip(&i.operands) {
+            let Some(w) = slot_width(slot, i.wave32) else {
+                continue;
+            };
+            lo.srcs.push(src_dwords(op, w, i)?);
+        }
+        return Ok(Some(lo));
     }
     if name == "v_movrels_b32" {
         // `vDst = V[index]`: the index is a source and every VGPR is a possible value; the
@@ -1707,6 +1724,7 @@ fn fetch_lowered(i: &Instr, regs: &EntryRegs) -> Lowered {
         imps: mask_regs(i.wave32),
         olds: Vec::new(),
         lenient: false,
+        dynamic_write: false,
     }
 }
 
@@ -1974,6 +1992,38 @@ impl Builder<'_> {
                 }
                 return Ok(());
             }
+        }
+        if l.dynamic_write {
+            // one conditional write per VGPR: `if (index == k) V[k] = value`
+            let (Some(index), Some(value)) = (
+                srcs.first().and_then(|s| s.first()).copied(),
+                srcs.get(1).and_then(|s| s.first()).copied(),
+            ) else {
+                return Err(bad(
+                    at,
+                    IrErrorKind::Unsupported("v_movreld_b32 operands".into()),
+                ));
+            };
+            for k in 0..256u16 {
+                let reg = Reg::V(k);
+                let old = self.read(st, reg, at, false)?;
+                let index_at = block.insts.len();
+                let v = self.new_val(
+                    reg,
+                    ValDef::Inst {
+                        block: bid,
+                        index: index_at,
+                    },
+                );
+                st.insert(reg, Src::Val(v));
+                block.insts.push(Inst {
+                    instr: instr.clone(),
+                    dsts: vec![(reg, v)],
+                    srcs: vec![vec![index], vec![value], vec![old]],
+                    imps: Vec::new(),
+                });
+            }
+            return Ok(());
         }
         let index = block.insts.len();
         let mut dsts = Vec::new();

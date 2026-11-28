@@ -3413,6 +3413,30 @@ impl<'a> Tr<'a> {
         Ok(Some(out))
     }
 
+    /// `v_movreld_b32 v[index], src0`: a write to the VGPR the lane's index names. The IR turns
+    /// it into one conditional write per VGPR, so this instruction writes its destination when
+    /// the lane's index selects it.
+    pub(super) fn movreld(&mut self, c: &Ctx<Gen>) -> R<Option<Vec<Opd<Gen>>>> {
+        let tb = self.g.t_bool();
+        let k = match c.inst.dsts.first().map(|d| d.0) {
+            Some(crate::shader::ir::Reg::V(n)) => u32::from(n),
+            _ => return bad("a v_movreld_b32 without a VGPR destination"),
+        };
+        let get = |i: usize| c.srcs.get(i).and_then(|s| s.first()).copied();
+        let (Some(Opd::V(index)), Some(Opd::V(value)), Some(Opd::V(old))) =
+            (get(0), get(1), get(2))
+        else {
+            return bad("a v_movreld_b32 without its index, value and old value");
+        };
+        let kk = self.g.k(k);
+        let eq = self.g.op(Op::IEqual, tb, &[index, kk]);
+        let cond = match c.active {
+            Some(a) => self.and(eq, Some(a)),
+            None => eq,
+        };
+        Ok(Some(vec![Opd::V(self.g.select(cond, value, old))]))
+    }
+
     /// `v_movrels_b32 vDst, v[index]`: the VGPR the per-lane index chooses. Every VGPR is a
     /// source (an undefined one was read as zero); a select tree picks the lane's.
     pub(super) fn movrels(&mut self, c: &Ctx<Gen>) -> R<Option<Vec<Opd<Gen>>>> {
