@@ -409,8 +409,15 @@ pub fn note_presented_frame(frame: u64) {
     PRESENTED.store(frame, Ordering::Relaxed);
 }
 
+/// A test's overrides of the gate's frame (u64::MAX: the environment decides).
+static WAIT_FRAME_FORCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
+
 /// Whether the input script may run yet (a `NATIV64_INPUT_WAIT_FRAME` gate).
 fn script_armed() -> bool {
+    let forced = WAIT_FRAME_FORCE.load(Ordering::Relaxed);
+    if forced != u64::MAX {
+        return PRESENTED.load(Ordering::Relaxed) >= forced;
+    }
     static WAIT: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     let wait = *WAIT.get_or_init(|| {
         std::env::var("NATIV64_INPUT_WAIT_FRAME")
@@ -647,27 +654,56 @@ impl State {
     /// The newest reading: polls the buttons now, making a reading if they changed.
     fn poll(&self) -> Entry {
         if !script_armed() {
-            // the script's clock has not started: the pad is at rest (the gate is for scripts
-            // that have to wait for the title to reach a screen)
-            return self.rest_entry(now_micros());
+            // the scripted pad is at rest until the gate's frame (a script that has to wait for
+            // the title to reach a screen), but the player's own pad and keyboard are not
+            return self.poll_gated(now_micros());
         }
         let start = *self.start.get_or_init(Instant::now);
         self.poll_at(start.elapsed(), now_micros())
     }
 
-    /// The pad at rest, the reading a poll before the script's clock makes.
-    fn rest_entry(&self, timestamp: u64) -> Entry {
-        let mut history = self.history.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(last) = history.last() {
-            return *last;
-        }
-        let entry = Entry {
-            sequence: self.next_sequence.fetch_add(1, Ordering::Relaxed),
-            timestamp,
-            buttons: 0,
+    /// A poll before the script's clock starts: only the sources that are not the script.
+    fn poll_gated(&self, timestamp: u64) -> Entry {
+        *SCRIPT_AXES.lock().unwrap_or_else(|e| e.into_inner()) = Physical::REST;
+        let buttons = KEYBOARD_BUTTONS.load(Ordering::Relaxed)
+            | EVDEV_BUTTONS.load(Ordering::Relaxed)
+            | physical().buttons;
+        self.push_reading(buttons, timestamp)
+    }
+
+    /// Makes a reading of `buttons` when they differ from the newest one, hands it to the
+    /// title's callbacks and returns the newest reading.
+    fn push_reading(&self, buttons: u32, timestamp: u64) -> Entry {
+        let fresh = {
+            let mut history = self.history.lock().unwrap_or_else(|e| e.into_inner());
+            match history.last() {
+                Some(last) if last.buttons == buttons => None,
+                _ => {
+                    let entry = Entry {
+                        sequence: self.next_sequence.fetch_add(1, Ordering::Relaxed),
+                        timestamp,
+                        buttons,
+                    };
+                    eprintln!("nativ64: gamepad buttons {buttons:#x}");
+                    history.push(entry);
+                    if history.len() > HISTORY {
+                        history.remove(0);
+                    }
+                    Some(entry)
+                }
+            }
         };
-        history.push(entry);
-        entry
+        if let Some(entry) = fresh {
+            self.fire_reading_callbacks(entry);
+            entry
+        } else {
+            *self
+                .history
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .last()
+                .expect("an entry")
+        }
     }
 
     fn poll_at(&self, elapsed: Duration, timestamp: u64) -> Entry {
@@ -1736,6 +1772,22 @@ fn apply_js_event(kind: u8, number: u8, value: i16) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The frame gate holds only the script: a player's keyboard still presses the pad.
+    #[test]
+    fn the_frame_gate_does_not_hold_the_players_input() {
+        let mut st = State::default();
+        st.script = Script::parse("0x4@1+2");
+        WAIT_FRAME_FORCE.store(1_000_000, Ordering::Relaxed);
+        note_presented_frame(10);
+        set_keyboard_buttons(A);
+        let entry = st.poll();
+        assert_eq!(entry.buttons, A, "the keyboard's A before the gate's frame");
+        set_keyboard_buttons(0);
+        let entry = st.poll();
+        assert_eq!(entry.buttons, 0);
+        WAIT_FRAME_FORCE.store(u64::MAX, Ordering::Relaxed);
+    }
 
     /// One test only: the physical state is process-wide.
     #[test]
