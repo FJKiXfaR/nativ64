@@ -546,60 +546,92 @@ impl<'g> VkBackend<'g> {
         super::profile::stop(super::profile::Phase::Sync, ts);
         let sync_done = started.elapsed();
         let tr = super::profile::start();
-        let r = gpu.submit_once(|d, cb| {
-            let replay_started = super::profile::start();
-            for list in lists {
-                self.stats.lists += 1;
-                self.draw.reset_list();
-                for c in list {
-                    self.stats.commands += 1;
-                    if self.inspecting() {
-                        self.inspect_command(c);
-                    }
-                    // A command that takes milliseconds names a replay hot spot (the frame
-                    // budget of a fast frame here is a few tens of them).
-                    let command_started = std::time::Instant::now();
-                    let tc = super::profile::start();
-                    self.record(d, cb, c, &mut staging);
-                    super::profile::stop(super::profile::Phase::Cmds, tc);
-                    self.snap_after(d, cb, c);
-                    if matches!(c, Command::Dispatch { .. }) {
-                        super::profile::stop(super::profile::Phase::Disp, tc);
-                    }
-                    let took = command_started.elapsed();
-                    if took.as_millis() >= 2 {
-                        let mut what = format!("{c:?}");
-                        what.truncate(120);
-                        eprintln!("nativ64-gpu: recording {what} took {} ms", took.as_millis());
-                    }
-                    if matches!(
-                        c,
-                        Command::ClearRenderTarget { .. }
-                            | Command::ClearDepthStencil { .. }
-                            | Command::CopyTextureRegion { .. }
-                            | Command::CopyResource { .. }
-                    ) {
-                        global_barrier(d, cb);
-                    }
+        // the replay's commands, in batches when NATIV64_SUBMIT_SPLIT says so (each batch is
+        // recorded and waited for; the textures were synced once above)
+        let split = submit_split();
+        let mut chunks: Vec<(usize, usize)> = Vec::new();
+        {
+            let mut start = 0;
+            let mut acc = 0usize;
+            for (i, l) in lists.iter().enumerate() {
+                acc += l.len();
+                if (split > 0 && acc >= split) || i + 1 == lists.len() {
+                    chunks.push((start, i + 1));
+                    start = i + 1;
+                    acc = 0;
                 }
-                self.end_rendering(d, cb);
             }
-            super::profile::stop(super::profile::Phase::Replay, replay_started);
-            super::pipeline::log_submission_serials();
-            // The flat/global addresses the recorded shaders translate go through the import
-            // table: fill it after recording, before the submit runs the commands.
-            if let Some(Some(bl)) = self.draw.bindless.as_mut() {
-                bl.clear_clamp_log();
-            }
-            let generation = self.draw.mem.import_generation();
-            if generation != self.imports_gen {
-                self.imports_gen = generation;
-                let ranges = self.draw.mem.import_ranges();
+        }
+        let mut results = Vec::new();
+        for (a, b) in chunks {
+            let chunk = &lists[a..b];
+            let r = gpu.submit_once(|d, cb| {
+                let replay_started = super::profile::start();
+                for list in chunk {
+                    self.stats.lists += 1;
+                    self.draw.reset_list();
+                    for c in list {
+                        self.stats.commands += 1;
+                        if self.inspecting() {
+                            self.inspect_command(c);
+                        }
+                        // A command that takes milliseconds names a replay hot spot (the frame
+                        // budget of a fast frame here is a few tens of them).
+                        let command_started = std::time::Instant::now();
+                        let tc = super::profile::start();
+                        self.record(d, cb, c, &mut staging);
+                        super::profile::stop(super::profile::Phase::Cmds, tc);
+                        self.snap_after(d, cb, c);
+                        if matches!(c, Command::Dispatch { .. }) {
+                            super::profile::stop(super::profile::Phase::Disp, tc);
+                        }
+                        let took = command_started.elapsed();
+                        if took.as_millis() >= 2 {
+                            let mut what = format!("{c:?}");
+                            what.truncate(120);
+                            eprintln!("nativ64-gpu: recording {what} took {} ms", took.as_millis());
+                        }
+                        if matches!(
+                            c,
+                            Command::ClearRenderTarget { .. }
+                                | Command::ClearDepthStencil { .. }
+                                | Command::CopyTextureRegion { .. }
+                                | Command::CopyResource { .. }
+                        ) {
+                            global_barrier(d, cb);
+                        }
+                    }
+                    self.end_rendering(d, cb);
+                }
+                super::profile::stop(super::profile::Phase::Replay, replay_started);
+                super::pipeline::log_submission_serials();
+                // The flat/global addresses the recorded shaders translate go through the import
+                // table: fill it after recording, before the submit runs the commands.
                 if let Some(Some(bl)) = self.draw.bindless.as_mut() {
-                    bl.update_imports(&ranges);
+                    bl.clear_clamp_log();
                 }
+                let generation = self.draw.mem.import_generation();
+                if generation != self.imports_gen {
+                    self.imports_gen = generation;
+                    let ranges = self.draw.mem.import_ranges();
+                    if let Some(Some(bl)) = self.draw.bindless.as_mut() {
+                        bl.update_imports(&ranges);
+                    }
+                }
+            });
+            if let Err(e) = &r {
+                if format!("{e}").contains("device has been lost") {
+                    results.push(r);
+                    break;
+                }
+                log_once(format!("replay batch failed: {e}"));
             }
-        });
+            free_staging(gpu, std::mem::take(&mut staging));
+        }
+        let r = match results.pop() {
+            Some(r) => r,
+            None => Ok(()),
+        };
         // `NATIV64_LOOP_CLAMP`: did a shader stop a loop this submission?
         if let Some(Some(bl)) = self.draw.bindless.as_ref() {
             let n = bl.clamp_count();
