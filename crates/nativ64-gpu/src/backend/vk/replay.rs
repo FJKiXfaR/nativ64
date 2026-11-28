@@ -460,6 +460,23 @@ impl<'g> VkBackend<'g> {
 
     /// Replay `lists` in order and wait for the GPU to be idle.
     pub fn execute(&mut self, lists: &[Vec<Command>]) {
+        // `NATIV64_SUBMIT_SPLIT=<commands>`: submit in batches of lists up to that size, each
+        // waited for, so one huge submission cannot monopolise the GPU and a device loss lands
+        // on a small batch instead of a frame
+        let split = submit_split();
+        if split > 0 && lists.len() > 1 {
+            let mut start = 0;
+            let mut acc = 0usize;
+            for i in 0..lists.len() {
+                acc += lists[i].len();
+                if acc >= split || i + 1 == lists.len() {
+                    self.execute(&lists[start..=i]);
+                    start = i + 1;
+                    acc = 0;
+                }
+            }
+            return;
+        }
         self.dispatch_skipped = false;
         if !self.device_lost {
             // a pipeline cache write is due when new pipelines were made (the runner may exit
@@ -2033,6 +2050,17 @@ fn env_on(name: &str) -> bool {
     let name: &'static str = unsafe { std::mem::transmute::<&str, &'static str>(name) };
     list.push((name, on));
     on
+}
+
+/// `NATIV64_SUBMIT_SPLIT`: the command count a submission batch may reach (0: one submission).
+fn submit_split() -> usize {
+    static SPLIT: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *SPLIT.get_or_init(|| {
+        std::env::var("NATIV64_SUBMIT_SPLIT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0)
+    })
 }
 
 /// Whether a lost device ends the process (default: yes; `NATIV64_EXIT_ON_DEVICE_LOST=0` keeps
