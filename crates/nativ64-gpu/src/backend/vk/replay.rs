@@ -251,6 +251,7 @@ pub struct VkBackend<'g> {
     /// should have written, so indirect execution is not replayed from it.
     pub(super) dispatch_skipped: bool,
     /// Tests: the most device memory the images may hold (a failing allocation beyond it).
+
     #[cfg(test)]
     pub(super) budget: Option<u64>,
     /// In tests: the bytes of images kept alive after a sync, in place of the device's.
@@ -608,6 +609,15 @@ impl<'g> VkBackend<'g> {
                 self.device_lost = true;
                 let named = gpu.log_device_fault();
                 let drawn = super::draw::last_drawn();
+                // a development run should not leave a black window behind: snapshot what was
+                // being replayed and stop, so the script that started the run sees a failure
+                write_fault_snapshot(lists, &named, &drawn, self.frames, &format!("{e}"));
+                if exit_on_device_lost() {
+                    eprintln!(
+                        "nativ64-gpu: exiting (NATIV64_EXIT_ON_DEVICE_LOST=0 keeps the process)"
+                    );
+                    std::process::exit(9);
+                }
                 if !drawn.is_empty() {
                     let list = drawn
                         .iter()
@@ -2023,6 +2033,95 @@ fn env_on(name: &str) -> bool {
     let name: &'static str = unsafe { std::mem::transmute::<&str, &'static str>(name) };
     list.push((name, on));
     on
+}
+
+/// Whether a lost device ends the process (default: yes; `NATIV64_EXIT_ON_DEVICE_LOST=0` keeps
+/// it running with a black window, which only a player wants).
+fn exit_on_device_lost() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        !std::env::var("NATIV64_EXIT_ON_DEVICE_LOST").is_ok_and(|v| v == "0" || v == "no")
+    })
+}
+
+/// What was being replayed when the device was lost: the fault's addresses, the last draws'
+/// pipelines, and a summary of the submission's commands, written to
+/// `NATIV64_FAULT_SNAPSHOT` (default `/tmp/nativ64-fault.txt`).
+fn write_fault_snapshot(
+    lists: &[Vec<Command>],
+    fault: &[u64],
+    drawn: &[usize],
+    frame: u64,
+    error: &str,
+) {
+    use std::collections::BTreeMap;
+    let mut counts: BTreeMap<&'static str, u64> = BTreeMap::new();
+    let mut last = Vec::new();
+    for list in lists {
+        for c in list {
+            let kind = match c {
+                Command::Draw { .. } => "Draw",
+                Command::DrawIndexed { .. } => "DrawIndexed",
+                Command::Dispatch { .. } => "Dispatch",
+                Command::ExecuteIndirect { .. } => "ExecuteIndirect",
+                Command::DispatchMesh { .. } => "DispatchMesh",
+                Command::CopyBufferRegion { .. } => "CopyBufferRegion",
+                Command::ClearRenderTarget { .. } => "ClearRenderTarget",
+                Command::SetPipeline { .. } => "SetPipeline",
+                _ => "Other",
+            };
+            *counts.entry(kind).or_default() += 1;
+            if last.len() == 64 {
+                last.remove(0);
+            }
+            let mut line = format!("{c:?}");
+            line.truncate(160);
+            last.push(line);
+        }
+    }
+    let path = std::env::var("NATIV64_FAULT_SNAPSHOT")
+        .unwrap_or_else(|_| "/tmp/nativ64-fault.txt".to_string());
+    let mut out = String::new();
+    out.push_str(&format!("nativ64 device lost at frame {frame}: {error}\n"));
+    out.push_str(&format!(
+        "fault addresses: {}\n",
+        fault
+            .iter()
+            .map(|a| format!("{a:#x}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    ));
+    out.push_str(&format!(
+        "last draws' pipelines: {}\n",
+        drawn
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    ));
+    out.push_str(&format!(
+        "lists {} commands {}\n",
+        lists.len(),
+        lists.iter().map(|l| l.len()).sum::<usize>()
+    ));
+    out.push_str("commands by kind:\n");
+    for (kind, n) in counts {
+        out.push_str(&format!("  {kind} {n}\n"));
+    }
+    out.push_str("last commands:\n");
+    for line in last {
+        out.push_str(&format!("  {line}\n"));
+    }
+    let written = std::fs::write(&path, out).is_ok();
+    eprintln!(
+        "nativ64-gpu: device loss snapshot {} ({})",
+        if written {
+            "written to"
+        } else {
+            "could not be written to"
+        },
+        path
+    );
 }
 
 #[cfg(test)]
