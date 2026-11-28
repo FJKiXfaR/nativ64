@@ -58,6 +58,30 @@ const KNOWN_FORMATS: &[(u32, &[u32], BufNum)] = &[
     (25, &[10, 10, 10, 2], BufNum::Uint),
 ];
 
+/// The formats a runtime-format load converts, keyed by what the descriptor carries: a loaded
+/// view record names a DXGI format, a V# the code built names a GFX10 data format.
+fn format_table(gfx: bool) -> &'static [(u32, Vec<u32>, BufNum)] {
+    static DXGI: std::sync::OnceLock<Vec<(u32, Vec<u32>, BufNum)>> = std::sync::OnceLock::new();
+    static GFX: std::sync::OnceLock<Vec<(u32, Vec<u32>, BufNum)>> = std::sync::OnceLock::new();
+    let table = if gfx { &GFX } else { &DXGI };
+    table.get_or_init(|| {
+        if gfx {
+            // every format the ISA table names, keyed by its data-format code
+            (0..=127u32)
+                .filter_map(|code| {
+                    let (bits, num) = ufmt(code as u8).ok()?;
+                    Some((code, bits, num))
+                })
+                .collect()
+        } else {
+            KNOWN_FORMATS
+                .iter()
+                .map(|&(dxgi, bits, num)| (dxgi, bits.to_vec(), num))
+                .collect()
+        }
+    })
+}
+
 /// Components (bits each) and the numeric convention of an MTBUF format byte.
 fn ufmt(f: u8) -> R<(Vec<u32>, BufNum)> {
     let name = crate::shader::gfx10::table_ext::UFMT
@@ -1426,6 +1450,30 @@ impl<'a> Tr<'a> {
         // a `buffer_*_format_*` op has no format of its own: the descriptor's (a runtime value
         // in the view record) names it, so the components are only known per candidate format
         let runtime = m.format == 0 && !address_used;
+        // where a runtime format comes from: a loaded view's record (a DXGI format) or the
+        // descriptor the code built (its own GFX10 data-format field, word 3 bits 12..18)
+        let resources = c.srcs.len().saturating_sub(2);
+        let runtime_src: Option<(u32, bool)> = if !runtime || c.srcs.len() < 2 {
+            None
+        } else if matches!(
+            c.inst.srcs[resources].first(),
+            Some(Src::Val(v)) if self.res().analysis.format_ok.contains(v)
+        ) {
+            let index = self.bits_of(c.srcs[resources][0]);
+            Some((self.record_dword(index, 4), false))
+        } else if c.srcs[resources].len() >= 4 {
+            let w3 = self.bits_of(c.srcs[resources][3]);
+            let tu = self.g.t_u32();
+            let (k12, mask) = (self.g.k(12), self.g.k(0x7f));
+            let code = self.g.op(Op::ShiftRightLogical, tu, &[w3, k12]);
+            let code = self.g.op(Op::BitwiseAnd, tu, &[code, mask]);
+            Some((code, true))
+        } else {
+            None
+        };
+        if runtime && runtime_src.is_none() {
+            return refuse(&format!("{} of a descriptor that is not loaded", i.name()));
+        }
         let (bits, num) = if runtime {
             (Vec::new(), BufNum::Uint)
         } else {
@@ -1490,71 +1538,14 @@ impl<'a> Tr<'a> {
         let inside = self.g.op(Op::ULessThanEqual, tb, &[end, buf.size]);
         let tu = self.g.t_u32();
         let dwords = elem.div_ceil(4);
-        let runtime_fmt = if runtime {
-            if !matches!(
-                c.inst.srcs[ns - 2].first(),
-                Some(Src::Val(v)) if self.res().analysis.format_ok.contains(v)
-            ) {
-                if std::env::var_os("NATIV64_FMT_DEBUG").is_some() {
-                    if let Some(Src::Val(v)) = c.inst.srcs[ns - 2].first() {
-                        let mut seen = *v;
-                        for _ in 0..6 {
-                            let mut next = None;
-                            for blk in &self.f.blocks {
-                                for inst in &blk.insts {
-                                    if inst.dsts.iter().any(|d| d.1 == seen) {
-                                        eprintln!(
-                                            "fmt debug: value {seen:?} is defined by {} (srcs {:?})",
-                                            inst.instr.name(),
-                                            inst.srcs
-                                                .iter()
-                                                .map(|s| format!("{s:?}"))
-                                                .collect::<Vec<_>>()
-                                        );
-                                        next = inst.srcs.first().and_then(|s| s.first()).and_then(
-                                            |s| match s {
-                                                Src::Val(x) => Some(*x),
-                                                _ => None,
-                                            },
-                                        );
-                                    }
-                                }
-                            }
-                            match next {
-                                Some(n) if n != seen => seen = n,
-                                _ => break,
-                            }
-                        }
-                    }
-                    eprintln!(
-                        "fmt debug: {} first-in-loaded {:?} srcs {:?} loaded {} numbers {}",
-                        i.name(),
-                        c.inst.srcs[ns - 2].first().map(|s| match s {
-                            Src::Val(v) => self.res().analysis.loaded.contains(v),
-                            _ => false,
-                        }),
-                        c.inst.srcs[ns - 2]
-                            .iter()
-                            .map(|s| format!("{s:?}"))
-                            .collect::<Vec<_>>(),
-                        self.res().analysis.loaded.len(),
-                        self.res().analysis.numbers.len()
-                    );
-                }
-                return refuse(&format!("{} of a descriptor that is not loaded", i.name()));
-            }
-            let index = self.bits_of(c.srcs[ns - 2][0]);
-            Some(self.record_dword(index, 4))
-        } else {
-            None
-        };
+        let runtime_fmt = runtime_src;
         if !load {
-            if let Some(fmt) = runtime_fmt {
+            if let Some((fmt, gfx)) = runtime_fmt {
                 // one predicated store per candidate format: the bytes a store covers depend
                 // on the format, so each candidate writes its own range
                 let tb = self.g.t_bool();
                 let tu = self.g.t_u32();
-                for &(dxgi, cbits, cnum) in KNOWN_FORMATS {
+                for &(dxgi, ref cbits, cnum) in format_table(gfx) {
                     if cbits.len() < n {
                         continue;
                     }
@@ -1659,12 +1650,12 @@ impl<'a> Tr<'a> {
             words.push(self.guarded_load(a, ok)?);
         }
         let mut out = Vec::new();
-        if let Some(fmt) = runtime_fmt {
+        if let Some((fmt, gfx)) = runtime_fmt {
             // one conversion per candidate format, selected by the descriptor's format
             let tb = self.g.t_bool();
             for j in 0..n {
                 let mut selected = self.g.k(0);
-                for &(dxgi, cbits, cnum) in KNOWN_FORMATS {
+                for &(dxgi, ref cbits, cnum) in format_table(gfx) {
                     if cbits.len() < n {
                         continue;
                     }

@@ -899,7 +899,8 @@ mod tests {
         // the ranges are merged (adjacent ones coalesce), so the release shows as a covering range
         let ch = take_gpu_changes();
         assert!(
-            ch.iter().any(|&(at, len)| at <= a && a + 0x10000 <= at + len),
+            ch.iter()
+                .any(|&(at, len)| at <= a && a + 0x10000 <= at + len),
             "{ch:x?}"
         );
     }
