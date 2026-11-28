@@ -345,6 +345,7 @@ mod tests {
 
     #[test]
     fn imports_on_demand_reuses_and_forgets_changed_ranges() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         let mut m = GpuMemory::new(&g);
         let a = table::alloc(0, 0x40000, RESERVE | COMMIT, RW, None).unwrap();
@@ -373,6 +374,7 @@ mod tests {
 
     #[test]
     fn a_run_that_grew_is_imported_again_and_the_old_import_outlives_the_submission() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         let mut m = GpuMemory::new(&g);
         let a = table::alloc(0, 0x100000, RESERVE, RW, None).unwrap();
@@ -402,6 +404,7 @@ mod tests {
 
     #[test]
     fn a_huge_run_is_imported_in_windows() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         let mut m = GpuMemory::new(&g);
         let run = 4 * WINDOW;
@@ -422,6 +425,7 @@ mod tests {
 
     #[test]
     fn idle_and_surplus_imports_are_retired() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         let mut m = GpuMemory::new(&g);
         let a = table::alloc(0, 4 * WINDOW, RESERVE | COMMIT, RW, None).unwrap();
@@ -491,6 +495,8 @@ mod tests {
 
     #[test]
     fn importing_pool_memory_does_not_populate_it() {
+        // The measure is process-wide: the tests that import memory must not run beside it.
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         use crate::xmem::*;
         let Some(g) = gpu_or_skip() else { return };
         let mut m = GpuMemory::new(&g);

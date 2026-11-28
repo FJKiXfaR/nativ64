@@ -432,6 +432,9 @@ pub fn install(base: u64, size: usize) {
     HOST_BASE.store(find_host_base(), Ordering::Relaxed);
     nativ64::seh::set_fatal_hook(report_unhandled);
     nativ64::seh::set_fault_hook(crate::stubs::snapshot_imports);
+    if std::env::var_os("NATIV64_TRACE_FAULTS").is_some_and(|v| v != "0" && !v.is_empty()) {
+        nativ64::seh::set_fault_trace();
+    }
     start_sampler();
     start_peek();
     start_trace_trigger();

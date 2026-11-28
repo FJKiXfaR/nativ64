@@ -303,8 +303,8 @@ impl Gpu {
 
     /// Like `open`, with the override given explicitly (an index or a name part).
     pub fn open_with(over: Option<&str>) -> Result<Gpu> {
-        // SAFETY: loads libvulkan.so.1; the entry is kept alive by the Gpu.
-        let entry = unsafe { Entry::load() }.map_err(|e| VkError::Load(e.to_string()))?;
+        let _loader = loader_lock();
+        let entry = entry()?;
         let (instance, wsi_instance) = instance::create(&entry)?;
         match Self::pick_and_create(&instance, over) {
             Ok((device, queue_family, phys, name, wsi_device, device_fault, mesh_draw)) => {
@@ -734,6 +734,7 @@ impl Drop for Gpu {
                 self.device.destroy_fence(st.fence, None);
                 self.device.destroy_command_pool(st.pool, None);
             }
+            let _loader = loader_lock();
             self.device.destroy_device(None);
             self.instance.destroy_instance(None);
         }
@@ -817,6 +818,26 @@ fn save_pipeline_cache(device: &Device, cache: vk::PipelineCache) {
     }
 }
 
+/// Held while an instance and its device are created or destroyed. The Vulkan loader loads
+/// and unloads the drivers and implicit layers there, and doing so on two threads at once
+/// (parallel tests opening and dropping `Gpu`s) made one call a null entry point.
+fn loader_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The process's libvulkan.so.1, loaded once and never unloaded: a `Gpu` dropped on one
+/// thread no longer unloads the loader under another thread that is opening one.
+fn entry() -> Result<Entry> {
+    static ENTRY: std::sync::OnceLock<std::result::Result<Entry, String>> =
+        std::sync::OnceLock::new();
+    // SAFETY: loads libvulkan.so.1; the static keeps it loaded for the whole process.
+    ENTRY
+        .get_or_init(|| unsafe { Entry::load() }.map_err(|e| e.to_string()))
+        .clone()
+        .map_err(VkError::Load)
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::tests::gpu_or_skip;
@@ -828,6 +849,24 @@ mod tests {
         println!("device: {}", g.name());
         assert!(!g.name().is_empty());
         assert!(g.import_alignment().is_power_of_two());
+    }
+
+    #[test]
+    fn gpus_open_and_drop_on_several_threads() {
+        let Some(g) = gpu_or_skip() else { return };
+        drop(g);
+        let threads: Vec<_> = (0..4)
+            .map(|_| {
+                std::thread::spawn(|| {
+                    for _ in 0..8 {
+                        drop(Gpu::open().unwrap());
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
     }
 
     #[test]

@@ -2288,6 +2288,7 @@ pub(super) mod tests {
 
     #[test]
     fn clear_then_read_back() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         let mut b = VkBackend::new(&g);
         let res = texture(16, 8, 28, 1);
@@ -2359,6 +2360,7 @@ pub(super) mod tests {
 
     #[test]
     fn memory_copies_and_fills_run_on_committed_memory() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         use nativ64::api_ms_win_core_memory as table;
         let Some(g) = gpu_or_skip() else { return };
         let mut b = VkBackend::new(&g);
@@ -2450,6 +2452,7 @@ pub(super) mod tests {
 
     #[test]
     fn partial_rectangles_clear_only_inside() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         let mut b = VkBackend::new(&g);
         let res = texture(16, 8, 28, 1);
@@ -2474,6 +2477,7 @@ pub(super) mod tests {
 
     #[test]
     fn depth_clear_and_unknown_view() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         let mut b = VkBackend::new(&g);
         let res = texture(8, 8, 40, 2);
@@ -2496,6 +2500,7 @@ pub(super) mod tests {
 
     #[test]
     fn buffer_upload_copy_and_texture_copy() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         let mut b = VkBackend::new(&g);
         // 4x2 texels, row pitch 32 bytes (8 texels) in the buffer.
@@ -2539,6 +2544,7 @@ pub(super) mod tests {
 
     #[test]
     fn present_dumps_a_png() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         let mut b = VkBackend::new(&g);
         let dir = std::env::temp_dir().join(format!("nativ64-dump-{}", std::process::id()));
@@ -2577,6 +2583,7 @@ pub(super) mod tests {
     /// with the frame count (images are reused, per-frame buffers freed).
     #[test]
     fn long_run_keeps_a_stable_footprint() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         let mut b = VkBackend::new(&g);
         let dir = std::env::temp_dir().join(format!("nativ64-rss-{}", std::process::id()));

@@ -82,6 +82,12 @@ wrapper). Finds where a stuck thread sits; nothing runs when unset.
 `NATIV64_PEEK=addr[,addr>off,...]` (`fault.rs`, hex guest addresses): a host thread reads the qword at
 each address every 100 ms and prints `nativ64: peek ADDR = VALUE at T s` on every change (`addr>off`
 reads the qword at `addr`, adds `off`, and reads there; `None` = unmapped). Finds when a flag flips.
+`NATIV64_TRACE_FAULTS=1` (`seh.rs`): one line per hardware fault dispatched to the title's handlers
+(faults our runtime handles itself, such as emulated instructions, never reach them):
+`nativ64: fault [TID] Ts code C rip image+0xOFF addr A -> OUTCOME`, where OUTCOME is `continue (vectored
+H)`, `continue (handler H frame F)`, `caught: unwind to T (handler H frame F)` (an `__except` or `/EHa`
+catch) or `unhandled`. Identical lines print the first 3 times, then at each power of two with `(xN)`.
+Finds faults a title handler swallows silently.
 `--trace-imports` lines carry the calling thread: `nativ64: [TID] SECONDSs call NAME(...)`.
 `NATIV64_TRACE_TRIGGER=addr` (with `--trace-imports`, hex guest address): trace lines go to a ring of
 the last 6000 until the byte at `addr` goes from non-zero to zero (polled every 2 ms); the ring is then

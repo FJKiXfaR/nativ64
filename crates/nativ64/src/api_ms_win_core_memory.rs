@@ -896,7 +896,12 @@ mod tests {
         let ch = take_gpu_changes();
         assert!(ch.contains(&(a + 0x2000, 0x1000)), "{ch:x?}");
         release(a).unwrap();
-        assert!(take_gpu_changes().contains(&(a, 0x10000)));
+        // the ranges are merged (adjacent ones coalesce), so the release shows as a covering range
+        let ch = take_gpu_changes();
+        assert!(
+            ch.iter().any(|&(at, len)| at <= a && a + 0x10000 <= at + len),
+            "{ch:x?}"
+        );
     }
 
     #[test]

@@ -92,6 +92,14 @@ pub(super) fn log_once(msg: String) {
 mod tests {
     use super::*;
 
+    /// Held by every test that drains the process-wide list of changed memory
+    /// (`GpuMemory::sync`, which `execute` calls): run beside one that expects a change, it
+    /// could take it. Also held by the test that measures the process's shared memory.
+    pub fn gpu_changes_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     /// A `Gpu`, or None after printing the skip line (no loader or no suitable device).
     pub fn gpu_or_skip() -> Option<Gpu> {
         match Gpu::open() {
