@@ -261,6 +261,12 @@ fn texture_view(gpu: &Gpu, t: &mut TitleImage, desc: Option<[u32; 10]>) -> Optio
         None => (
             if volume {
                 vk::ImageViewType::TYPE_3D
+            } else if t.desc.dimension == TEXTURE1D {
+                if all_layers > 1 {
+                    vk::ImageViewType::TYPE_1D_ARRAY
+                } else {
+                    vk::ImageViewType::TYPE_1D
+                }
             } else if all_layers > 1 {
                 vk::ImageViewType::TYPE_2D_ARRAY
             } else {
@@ -287,6 +293,15 @@ fn texture_view(gpu: &Gpu, t: &mut TitleImage, desc: Option<[u32; 10]>) -> Optio
             };
             if (ty == vk::ImageViewType::TYPE_3D) != volume {
                 log_once(format!("a view of dimension {} of {:?}", w[1], t.desc));
+                return None;
+            }
+            if t.desc.dimension == TEXTURE1D
+                && !matches!(
+                    ty,
+                    vk::ImageViewType::TYPE_1D | vk::ImageViewType::TYPE_1D_ARRAY
+                )
+            {
+                log_once(format!("a view of dimension {} of a 1D texture", w[1]));
                 return None;
             }
             if matches!(ty, vk::ImageViewType::CUBE | vk::ImageViewType::CUBE_ARRAY) && !cube_ok {
@@ -937,15 +952,15 @@ impl<'g> VkBackend<'g> {
     fn classify(&self, v: &View) -> Entry {
         match v {
             View::Shader(res, desc) => match info_of_checked(*res as *mut _) {
-                Some((rd, _)) if rd.dimension == TEXTURE2D || rd.dimension == TEXTURE3D => {
+                Some((rd, _))
+                    if rd.dimension == TEXTURE1D
+                        || rd.dimension == TEXTURE2D
+                        || rd.dimension == TEXTURE3D =>
+                {
                     Entry::Texture {
                         res: *res,
                         desc: *desc,
                     }
-                }
-                Some((rd, _)) if rd.dimension == TEXTURE1D => {
-                    log_once("a view of a 1D texture is left empty".into());
-                    Entry::Hole
                 }
                 _ => Entry::Hole,
             },
