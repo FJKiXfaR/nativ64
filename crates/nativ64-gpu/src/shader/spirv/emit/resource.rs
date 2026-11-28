@@ -3855,7 +3855,11 @@ impl<'a> Tr<'a> {
         else {
             return bad("a v_movreld_b32 without its index, value and old value");
         };
-        let kk = self.g.k(k);
+        let base = Self::field_reg(c, true).unwrap_or(0);
+        let Some(rel) = u16::try_from(k).ok().and_then(|k| k.checked_sub(base)) else {
+            return bad("a v_movreld_b32 destination below its base register");
+        };
+        let kk = self.g.k(u32::from(rel));
         let eq = self.g.op(Op::IEqual, tb, &[index, kk]);
         let cond = match c.active {
             Some(a) => self.and(eq, Some(a)),
@@ -3899,19 +3903,41 @@ impl<'a> Tr<'a> {
 
     /// `v_movrels_b32 vDst, v[index]`: the VGPR the per-lane index chooses. Every VGPR is a
     /// source (an undefined one was read as zero); a select tree picks the lane's.
+    /// The register number of an instruction's field (`VDst` or `Src0`), a constant.
+    fn field_reg(c: &Ctx<Gen>, vdst: bool) -> Option<u16> {
+        let slots = &c.inst.instr.info.slots;
+        let at = slots.iter().position(|s| match s {
+            Slot::VDst(_) | Slot::VDstS(_) => vdst,
+            Slot::Src0(_) => !vdst,
+            _ => false,
+        })?;
+        match c.inst.instr.operands.get(at) {
+            Some(Operand::Reg { code, .. }) => Some(*code),
+            _ => None,
+        }
+    }
+
     pub(super) fn movrels(&mut self, c: &Ctx<Gen>) -> R<Option<Vec<Opd<Gen>>>> {
         let tu = self.g.t_u32();
         let tb = self.g.t_bool();
         let Some(Opd::V(index)) = c.srcs.first().and_then(|s| s.first()).copied() else {
             return bad("a v_movrels_b32 without its index");
         };
+        // the source field names the base VGPR (codes 256.. name V0..)
+        let Some(code) = Self::field_reg(c, false).filter(|c| *c >= 256) else {
+            return bad("a v_movrels_b32 whose source is not a VGPR base");
+        };
+        let base = code - 256;
         let mut result: Option<u32> = None;
         for (k, src) in c.srcs.iter().skip(1).enumerate() {
             let Some(Opd::V(value)) = src.first().copied() else {
                 continue;
             };
-            let kk = self.g.k(k as u32);
-            let eq = self.g.op(Op::IEqual, tb, &[index, kk]);
+            if k < usize::from(base) {
+                continue;
+            }
+            let rel = self.g.k((k as u16 - base) as u32);
+            let eq = self.g.op(Op::IEqual, tb, &[index, rel]);
             result = Some(match result {
                 None => value,
                 Some(prev) => self.g.select(eq, value, prev),

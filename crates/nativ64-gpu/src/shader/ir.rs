@@ -401,6 +401,19 @@ struct Lowered {
     dynamic_write: bool,
 }
 
+/// The register number of an instruction's `VDst` field (a constant, not a source read).
+fn vdst_code(i: &Instr) -> Option<u16> {
+    let k = i
+        .info
+        .slots
+        .iter()
+        .position(|s| matches!(s, Slot::VDst(_) | Slot::VDstS(_)))?;
+    match i.operands.get(k) {
+        Some(Operand::Reg { code, .. }) => Some(*code),
+        _ => None,
+    }
+}
+
 fn bad(at: usize, kind: IrErrorKind) -> IrError {
     IrError { at, kind }
 }
@@ -673,49 +686,45 @@ fn lower(i: &Instr) -> Result<Option<Lowered>, IrError> {
         e => return Err(bad(i.at, IrErrorKind::UnsupportedEncoding(e.name()))),
     }
     if name == "v_movreld_b32" {
-        // `V[vdst] = src0`: the destination operand names the register that holds the index
+        // `V[vdst + M0] = src0`: the destination field is a constant register number and the
+        // index is M0 (as the reference recompiler has it); the write expands to one
+        // conditional write per VGPR in `rename`.
         let mut lo = Lowered {
             dynamic_write: true,
             ..Lowered::default()
         };
         for (slot, op) in i.info.slots.iter().zip(&i.operands) {
+            if matches!(slot, Slot::VDst(_) | Slot::VDstS(_)) {
+                continue;
+            }
             let Some(w) = slot_width(slot, i.wave32) else {
                 continue;
             };
             lo.srcs.push(src_dwords(op, w, i)?);
         }
+        lo.imps.push(Reg::M0);
         return Ok(Some(lo));
     }
     if name == "v_movrels_b32" {
-        // `vDst = V[index]`: the index is a source and every VGPR is a possible value; the
-        // emitter builds the select tree. Always 256 VGPRs of the wave's register file.
+        // `vDst = V[src0 + M0]`: the index is M0 and src0 only names the base register; every
+        // VGPR is a possible value, so the 256 of the wave's register file are the sources and
+        // the emitter builds the select tree.
         let mut lo = Lowered {
             lenient: true,
             ..Lowered::default()
         };
         for (slot, op) in i.info.slots.iter().zip(&i.operands) {
-            match slot {
-                Slot::VDst(_)
-                | Slot::VDstS(_)
-                | Slot::SDst(_)
-                | Slot::SDstB(_)
-                | Slot::SData(_) => {
-                    let Some(w) = slot_width(slot, i.wave32) else {
-                        continue;
-                    };
-                    lo.dsts.extend(dst_dwords(op, w, i)?);
-                }
-                _ => {
-                    let Some(w) = slot_width(slot, i.wave32) else {
-                        continue;
-                    };
-                    lo.srcs.push(src_dwords(op, w, i)?);
-                }
+            if matches!(slot, Slot::VDst(_) | Slot::VDstS(_)) {
+                let Some(w) = slot_width(slot, i.wave32) else {
+                    continue;
+                };
+                lo.dsts.extend(dst_dwords(op, w, i)?);
             }
         }
         for v in 0..256u16 {
             lo.srcs.push(vec![Rd::Reg(Reg::V(v))]);
         }
+        lo.imps.push(Reg::M0);
         return Ok(Some(lo));
     }
     if name.contains("movrel") || name.starts_with("s_set_gpr_idx") {
@@ -1869,7 +1878,16 @@ impl Builder<'_> {
                 st.insert(reg, Src::Val(dst));
             }
             for (instr, l) in &raw[b].insts {
-                self.rename(instr, l, &mut st, &mut blocks[b], b)?;
+                self.rename(instr, l, &mut st, &mut blocks[b], b)
+                    .map_err(|e| {
+                        if std::env::var_os("NATIV64_UNDEF_DEBUG").is_some() {
+                            eprintln!("undef debug: block +{:#x}:", raw[b].at);
+                            for (i2, l2) in &raw[b].insts {
+                                eprintln!("  {} dsts {:?} srcs {:?}", i2.name(), l2.dsts, l2.srcs);
+                            }
+                        }
+                        e
+                    })?;
             }
             blocks[b].term = match &raw[b].term {
                 RawTerm::Jump(t) => Term::Jump(*t),
@@ -1997,17 +2015,21 @@ impl Builder<'_> {
             }
         }
         if l.dynamic_write {
-            // one conditional write per VGPR: `if (index == k) V[k] = value`
-            let (Some(index), Some(value)) = (
-                srcs.first().and_then(|s| s.first()).copied(),
-                srcs.get(1).and_then(|s| s.first()).copied(),
-            ) else {
+            // one conditional write per VGPR: `if (M0 == k) V[base + k] = value`
+            let base = vdst_code(instr).ok_or_else(|| {
+                bad(
+                    at,
+                    IrErrorKind::Unsupported("v_movreld_b32 operands".into()),
+                )
+            })?;
+            let index = self.read(st, Reg::M0, at, false)?;
+            let Some(value) = srcs.first().and_then(|s| s.first()).copied() else {
                 return Err(bad(
                     at,
                     IrErrorKind::Unsupported("v_movreld_b32 operands".into()),
                 ));
             };
-            for k in 0..256u16 {
+            for k in base..256u16 {
                 let reg = Reg::V(k);
                 let old = self.read(st, reg, at, false)?;
                 let index_at = block.insts.len();
