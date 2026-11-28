@@ -526,6 +526,9 @@ unsafe extern "win64" fn copy_from(
     }
 }
 
+/// The largest linear copy a subresource can ask for (1 GiB; 4K 128-bit textures are 64 MiB).
+const MAX_SUBRESOURCE_BYTES: usize = 1 << 30;
+
 /// How many bytes of the title's linear memory a copy of the subresource touches.
 fn linear_len(l: &Layout, plane: u32, subresource: u32, row: u32, slice: u32) -> Option<usize> {
     let p = l.planes.get(plane as usize)?;
@@ -539,8 +542,26 @@ fn linear_len(l: &Layout, plane: u32, subresource: u32, row: u32, slice: u32) ->
     } else {
         1
     };
-    let bytes = mip.width as usize * p.element_bytes as usize;
-    Some((depth as usize - 1) * slice as usize + (mip.height as usize - 1) * row as usize + bytes)
+    // the pitches come from the title: a pitch narrower than a row, or a size that does not fit
+    // the resource, is a malformed copy (a garbage pitch once asked for a 103 GiB allocation)
+    let row_bytes = mip.width as usize * p.element_bytes as usize;
+    let row = row as usize;
+    if row < row_bytes {
+        return None;
+    }
+    let slice_bytes = row.checked_mul(mip.height as usize)?;
+    let slice = slice as usize;
+    if slice != 0 && slice < slice_bytes {
+        return None;
+    }
+    let slice = if slice == 0 { slice_bytes } else { slice };
+    let len = (depth as usize)
+        .checked_sub(1)?
+        .checked_mul(slice)?
+        .checked_add((mip.height as usize).checked_sub(1)?.checked_mul(row)?)?
+        .checked_add(row_bytes)?;
+    // a subresource larger than this is not a copy the title means
+    (len <= MAX_SUBRESOURCE_BYTES).then_some(len)
 }
 
 /// `GetResourceTiling(*tiles, *packed, *shape, *count, first, *out)`: D3D12's call for the
@@ -1010,5 +1031,61 @@ mod tests {
                 E_FAIL
             );
         }
+    }
+
+    /// A pitch the title made up must not turn into a giant allocation.
+    #[test]
+    fn a_garbage_linear_pitch_is_refused() {
+        let layout = Layout {
+            mode: crate::texture::SwizzleMode::LINEAR,
+            dimension: 3,
+            width: 64,
+            height: 64,
+            depth_or_array: 1,
+            mip_levels: 1,
+            samples: 1,
+            thick: false,
+            planes: vec![crate::texture::layout::Plane {
+                kind: crate::texture::layout::PlaneKind::Main,
+                offset: 0,
+                size: 16 * 1024,
+                element_bytes: 4,
+                block: [64, 1, 1],
+                slice_size: 16 * 1024,
+                slices: 1,
+                mips: vec![crate::texture::layout::Mip {
+                    width: 64,
+                    height: 64,
+                    depth: 1,
+                    pitch: 64,
+                    rows: 64,
+                    offset: 0,
+                    tail: None,
+                }],
+            }],
+            metadata: Vec::new(),
+            size: 16 * 1024,
+            alignment: 4096,
+        };
+        // 64 x 64 pixels of 4 bytes: 256-byte rows, 16 KiB slices
+        assert_eq!(
+            super::linear_len(&layout, 0, 0, 256, 16 * 1024),
+            Some(16 * 1024)
+        );
+        assert_eq!(
+            super::linear_len(&layout, 0, 0, 128, 16 * 1024),
+            None,
+            "row below one row"
+        );
+        assert_eq!(
+            super::linear_len(&layout, 0, 0, 256, 128),
+            None,
+            "slice below one row"
+        );
+        assert_eq!(
+            super::linear_len(&layout, 0, 0, u32::MAX, 16 * 1024),
+            None,
+            "a row pitch that makes the copy huge"
+        );
     }
 }
