@@ -280,6 +280,9 @@ struct Views {
     /// Between the first and the last step of a sweep: `record` and copies note in
     /// `Registry::touched` the indices they hand out. Set and cleared under the registry lock.
     sweeping: std::sync::atomic::AtomicBool,
+    /// Threads waiting for `reg`: the sweep lets them in between its batches (the mutex is not
+    /// fair, so unlocking and locking again at once would keep them waiting for every batch).
+    waiting: std::sync::atomic::AtomicUsize,
 }
 
 /// The views and a hash index to find one in O(1): `heads` maps a view's hash to the last index
@@ -600,11 +603,16 @@ impl Views {
                 std::hash::BuildHasherDefault::new(),
             )),
             sweeping: std::sync::atomic::AtomicBool::new(false),
+            waiting: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
     fn reg(&self) -> std::sync::MutexGuard<'_, Registry> {
-        self.reg.lock().unwrap_or_else(|e| e.into_inner())
+        use std::sync::atomic::Ordering::SeqCst;
+        self.waiting.fetch_add(1, SeqCst);
+        let reg = self.reg.lock().unwrap_or_else(|e| e.into_inner());
+        self.waiting.fetch_sub(1, SeqCst);
+        reg
     }
 
     fn add_heap(&self, root: Root) {
@@ -848,6 +856,14 @@ impl Views {
             swept.settle_max = swept.settle_max.max(b.elapsed());
             if last {
                 break;
+            }
+            // Let the threads that queued during the batch take the lock first (for 2 ms at
+            // most: a thread that keeps recording must not stall the sweep).
+            let wait = std::time::Instant::now();
+            while self.waiting.load(std::sync::atomic::Ordering::SeqCst) > 0
+                && wait.elapsed() < std::time::Duration::from_millis(2)
+            {
+                std::thread::yield_now();
             }
             w0 = w1;
         }
@@ -1632,6 +1648,45 @@ mod tests {
         let sw = V.sweep(false).unwrap();
         assert_eq!((sw.freed, sw.held), (199_999, 1));
         table::release(s as usize).unwrap();
+    }
+
+    #[test]
+    fn a_record_during_a_long_settle_waits_for_one_batch_not_all() {
+        static V: Views = Views::new();
+        let s = title_slots(4096);
+        // 400k entries (49 batches), only the last held: the second sweep frees the others.
+        for n in 0..400_000 {
+            V.record(s, constant(n));
+        }
+        V.sweep(true).unwrap();
+        let other = title_slots(4096);
+        let done = std::sync::atomic::AtomicBool::new(false);
+        let (sw, wait) = std::thread::scope(|sc| {
+            let rec = sc.spawn(|| {
+                let mut max = std::time::Duration::ZERO;
+                let mut n = 1 << 24;
+                while !done.load(std::sync::atomic::Ordering::SeqCst) {
+                    let t = std::time::Instant::now();
+                    V.record(other, constant(n));
+                    max = max.max(t.elapsed());
+                    n += 1;
+                }
+                max
+            });
+            let sw = V.sweep(true).unwrap();
+            done.store(true, std::sync::atomic::Ordering::SeqCst);
+            (sw, rec.join().unwrap())
+        });
+        assert!(sw.freed >= 399_999, "freed {}", sw.freed);
+        // Unfair hand-off: the record waited for about the whole settle.
+        assert!(
+            wait < sw.settle / 4,
+            "record waited {wait:?}, settle {:?} (batch max {:?})",
+            sw.settle,
+            sw.settle_max
+        );
+        table::release(s as usize).unwrap();
+        table::release(other as usize).unwrap();
     }
 
     #[test]
