@@ -250,6 +250,10 @@ pub struct VkBackend<'g> {
     /// A dispatch in this submission was skipped: an indirect argument buffer may hold what it
     /// should have written, so indirect execution is not replayed from it.
     pub(super) dispatch_skipped: bool,
+    /// A mesh dispatch in this submission was skipped: the title's GPU-driven buffers hold what
+    /// it should have written, so with `NATIV64_MESH_QUARANTINE` the draws that would read them
+    /// are left out too (a GPU fault from garbage pointers is worse than a missing frame).
+    pub(super) mesh_skipped: bool,
     /// Tests: the most device memory the images may hold (a failing allocation beyond it).
 
     #[cfg(test)]
@@ -451,6 +455,7 @@ impl<'g> VkBackend<'g> {
             imports_gen: 0,
             dd: Default::default(),
             dispatch_skipped: false,
+            mesh_skipped: false,
             #[cfg(test)]
             budget: None,
             #[cfg(test)]
@@ -460,6 +465,7 @@ impl<'g> VkBackend<'g> {
 
     /// Replay `lists` in order and wait for the GPU to be idle.
     pub fn execute(&mut self, lists: &[Vec<Command>]) {
+        self.mesh_skipped = false;
         // `NATIV64_SUBMIT_SPLIT=<commands>`: submit in batches of lists up to that size, each
         // waited for, so one huge submission cannot monopolise the GPU and a device loss lands
         // on a small batch instead of a frame
@@ -1318,7 +1324,13 @@ impl<'g> VkBackend<'g> {
                 self.stats.dispatches += 1;
                 self.dispatch_command(d, cb, c);
             }
-            C::DispatchMesh { .. } | C::DispatchMeshX { .. } => self.stats.dispatches += 1,
+            C::DispatchMesh { .. } | C::DispatchMeshX { .. } => {
+                self.stats.dispatches += 1;
+                self.mesh_skipped = true;
+                log_once(
+                    "a mesh dispatch is not replayed (the mesh stage is not translated)".into(),
+                );
+            }
             C::ExecuteIndirect {
                 signature,
                 max,

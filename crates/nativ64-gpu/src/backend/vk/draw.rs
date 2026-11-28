@@ -362,6 +362,16 @@ impl Drop for DrawState<'_> {
     }
 }
 
+/// `NATIV64_MESH_QUARANTINE=1`: a submission whose mesh dispatch was skipped leaves its draws
+/// out too - they read the buffers that dispatch should have written, and a draw over garbage
+/// pointers is a lost device.
+fn mesh_quarantine_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        std::env::var("NATIV64_MESH_QUARANTINE").is_ok_and(|v| v != "0" && !v.is_empty())
+    })
+}
+
 /// `NATIV64_SKIP_PIPELINE=<serial[,serial...]>`: leave out the draws of those pipelines in
 /// every frame (a GPU fault from one draw is first placed by its pipeline).
 fn skipped_by_pipeline(serial: usize) -> bool {
@@ -1198,7 +1208,8 @@ impl<'g> VkBackend<'g> {
         }
         self.log_rows_once(pd, &built, c);
         self.note_draw(c, pd.serial, resources.first().map(|t| t.resource));
-        if self.skipped_by_filter()
+        if (mesh_quarantine_on() && self.mesh_skipped)
+            || self.skipped_by_filter()
             || self.skipped_by_serial(pd.serial as usize)
             || self.skipped_by_ps(pd)
             || self.skipped_by_skip_ps(pd)
