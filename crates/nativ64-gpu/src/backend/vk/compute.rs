@@ -367,6 +367,7 @@ mod tests {
 
     #[test]
     fn a_dispatch_writes_a_buffer_and_a_storage_image_and_owns_the_image() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         let mut b = VkBackend::new(&g);
         let (tex, table, index) = unordered(4);
@@ -403,6 +404,7 @@ mod tests {
 
     #[test]
     fn an_image_without_unordered_access_reads_the_storage_hole() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         let mut b = VkBackend::new(&g);
         let (tex, table, index) = unordered(0);
@@ -419,6 +421,7 @@ mod tests {
 
     #[test]
     fn dispatches_that_cannot_be_replayed_are_counted_by_reason() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         let mut b = VkBackend::new(&g);
         let (_, table, index) = unordered(4);

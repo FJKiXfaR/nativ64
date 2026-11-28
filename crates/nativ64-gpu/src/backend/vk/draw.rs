@@ -1219,6 +1219,7 @@ pub(super) mod tests {
 
     #[test]
     fn a_draw_pulls_vertices_from_a_root_buffer_and_honours_viewport_and_scissor() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         let mut b = VkBackend::new(&g);
         let target = texture(16, 8, 28, 1);
@@ -1294,6 +1295,7 @@ pub(super) mod tests {
 
     #[test]
     fn an_indexed_draw_reads_a_vertex_buffer_with_a_base_vertex() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         let mut b = VkBackend::new(&g);
         let target = texture(16, 8, 28, 1);
@@ -1344,6 +1346,7 @@ pub(super) mod tests {
 
     #[test]
     fn draws_that_cannot_be_replayed_are_skipped_and_counted_by_reason() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         let mut b = VkBackend::new(&g);
         let target = texture(16, 8, 28, 1);
@@ -1401,6 +1404,7 @@ pub(super) mod tests {
 
     #[test]
     fn the_depth_test_keeps_the_nearer_draw() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         let mut b = VkBackend::new(&g);
         let target = texture(16, 8, 28, 1);
@@ -1491,6 +1495,7 @@ pub(super) mod tests {
 
     #[test]
     fn a_quad_draw_covers_the_target_as_two_triangles() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         let mut b = VkBackend::new(&g);
         let target = texture(16, 8, 28, 1);
@@ -1510,6 +1515,7 @@ pub(super) mod tests {
 
     #[test]
     fn an_indexed_quad_draw_rewrites_the_indices_it_reads() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         for wide in [false, true] {
             let mut b = VkBackend::new(&g);
@@ -1555,6 +1561,7 @@ pub(super) mod tests {
 
     #[test]
     fn line_loops_and_quad_strips_are_refused_by_name() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         let mut b = VkBackend::new(&g);
         let target = texture(16, 8, 28, 1);
@@ -1578,6 +1585,7 @@ pub(super) mod tests {
 
     #[test]
     fn a_rectangle_list_is_completed_by_the_geometry_stage() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         if !g.caps.geometry {
             return;
@@ -1611,6 +1619,7 @@ pub(super) mod tests {
 
     #[test]
     fn a_rectangle_list_covers_the_target_wherever_its_right_angle_is() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         if !g.caps.geometry {
             return;
@@ -1650,6 +1659,7 @@ pub(super) mod tests {
 
     #[test]
     fn a_rectangle_list_is_a_skip_by_name_without_geometry_shaders() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         if g.caps.geometry {
             return;

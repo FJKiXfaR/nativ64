@@ -1406,6 +1406,7 @@ mod tests {
 
     #[test]
     fn a_tiled_texture_with_two_mips_is_detiled_exactly_and_uploaded_when_it_changes() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         let mut b = VkBackend::new(&g);
         let d = desc(16, 8, 2, 28, 0, 0);
@@ -1476,6 +1477,7 @@ mod tests {
 
     #[test]
     fn textures_are_uploaded_in_passes_when_the_staging_cap_is_reached() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         let mut b = VkBackend::new(&g);
         // every pass stages one texture at most
@@ -1507,6 +1509,7 @@ mod tests {
 
     #[test]
     fn consecutive_upload_passes_reuse_the_staging_buffer() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         let mut b = VkBackend::new(&g);
         let d = desc(8, 8, 1, 28, 0, 0);
@@ -1536,6 +1539,7 @@ mod tests {
 
     #[test]
     fn a_texture_view_is_sampled_with_its_mapping_and_a_hole_reads_zero() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         let mut b = VkBackend::new(&g);
         let d = desc(8, 8, 2, 28, 0, 0);
@@ -1582,6 +1586,7 @@ mod tests {
 
     #[test]
     fn a_render_target_drawn_in_one_list_is_sampled_in_the_next_not_overwritten_from_host() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         let mut b = VkBackend::new(&g);
         let d = desc(16, 8, 1, 28, TARGET, 0);
@@ -1613,6 +1618,7 @@ mod tests {
 
     #[test]
     fn heap_samplers_clamp_and_wrap() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         let mut b = VkBackend::new(&g);
         // red on the left half, green on the right: (1.0, 0.5) is texel 0 when wrapped and
@@ -1650,6 +1656,7 @@ mod tests {
 
     #[test]
     fn a_bc1_texture_and_a_placed_view_are_uploaded_and_sampled() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         if !g.caps.bc {
             return;
@@ -1712,6 +1719,7 @@ mod tests {
 
     #[test]
     fn a_placed_image_over_changed_memory_is_freed() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         let mut b = VkBackend::new(&g);
         let pipe = sampling_pipeline(stage::draw_ps_sampling_a_heap_sampler());
@@ -1760,6 +1768,7 @@ mod tests {
 
     #[test]
     fn a_released_resource_frees_its_image_and_its_descriptor_becomes_the_hole() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         let mut b = VkBackend::new(&g);
         let d = desc(8, 8, 1, 28, 0, 0);
@@ -1831,6 +1840,7 @@ mod tests {
 
     #[test]
     fn the_arena_is_kept_across_submissions_and_grows_by_doubling() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         let mut b = VkBackend::new(&g);
         let pipe = sampling_pipeline(SAMPLING());
@@ -1864,6 +1874,7 @@ mod tests {
 
     #[test]
     fn only_the_textures_a_draw_reads_get_an_image() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         let mut b = VkBackend::new(&g);
         let (read, unread) = (flat([10, 200, 30, 255]), flat([250, 0, 0, 255]));
@@ -1887,6 +1898,7 @@ mod tests {
 
     #[test]
     fn an_evicted_texture_comes_back_when_read_again() {
+        let _changes = crate::backend::vk::tests::gpu_changes_lock();
         let Some(g) = gpu_or_skip() else { return };
         let mut b = VkBackend::new(&g);
         let (a, c) = (flat([0, 0, 255, 255]), flat([255, 255, 0, 255]));
