@@ -6,7 +6,8 @@
 //! `residency::scan` has listed the registry indices the draws can read (`TexState::wanted`:
 //! the descriptors their root tables reach):
 //!
-//! * the registry entries added since the last time are classified (`Entry`): a shader
+//! * the registry indices that got a view or lost theirs since the last time (the change log,
+//!   `descriptor::Consumer`) are classified again (`Entry`): a shader
 //!   resource view of a texture, a placed view (memory with a resource description), a heap
 //!   sampler, or anything else (a hole);
 //! * only the textures a wanted index names get their image (`VkBackend::image`, marked
@@ -16,7 +17,7 @@
 //!   staging buffer and copied in. A registered texture that no draw reads has no image;
 //! * the host images that this submission does not read are freed, least recently used first,
 //!   while the images exceed the device's budget (`Gpu::image_budget`, `VkBackend::trim`);
-//! * the descriptors of the new entries are written once: a `VkImageView` per resident
+//! * the descriptors of the changed entries are written once: a `VkImageView` per resident
 //!   texture (cached on the image by description), a 1x1 zero RGBA8 view for every index that
 //!   is not a usable texture or whose image is not resident, a `VkSampler` per heap sampler, a
 //!   default sampler elsewhere, so that no shader reads an unwritten descriptor. After that
@@ -49,7 +50,7 @@ use super::profile::{self, Count, Phase};
 use super::replay::{global_barrier, mip_count, TitleImage, VkBackend};
 use super::sampler::Spec;
 use super::{log_once, Gpu};
-use crate::d3d12::descriptor::{view_at, views_from, View};
+use crate::d3d12::descriptor::{view_at, Consumer, View};
 use crate::d3d12::resource::{info_of_checked, take_released, ResourceDesc};
 use crate::texture::detile;
 use ash::{vk, Device};
@@ -105,10 +106,11 @@ struct Hole {
 pub(super) struct TexState {
     /// By registry index.
     entries: Vec<Entry>,
-    /// Registry indices below this are in `entries`.
-    scanned: usize,
-    /// Descriptors from this index on are new: written (image and sampler) at the next sync.
-    pub(super) dirty_from: usize,
+    /// Its cursor in the registry's change log (made at the first sync).
+    changes: Option<Consumer>,
+    /// Registry indices that got a view or lost theirs: their descriptors (image and sampler)
+    /// are written at the next sync.
+    fresh: HashSet<u32>,
     /// Registry indices whose image descriptor is written again at the next sync: an image
     /// was replaced, evicted or released, or an entry was classified again.
     rewrite: HashSet<u32>,
@@ -151,6 +153,34 @@ impl TexState {
     /// The keys of the placed views registered so far.
     pub(super) fn placed_keys(&self) -> Vec<PlacedKey> {
         self.by_placed.keys().copied().collect()
+    }
+
+    /// Drops what was built for the view registry index `i` held (its place in `by_res` or
+    /// `by_placed`); the descriptors are written again.
+    fn forget(&mut self, i: u32) {
+        let Some(entry) = self.entries.get(i as usize) else {
+            return;
+        };
+        match entry {
+            Entry::Texture { res, .. } | Entry::Storage { res, .. } => {
+                if let Some(v) = self.by_res.get_mut(res) {
+                    v.retain(|&k| k != i);
+                    if v.is_empty() {
+                        self.by_res.remove(res);
+                    }
+                }
+            }
+            Entry::Placed { key, .. } => {
+                if let Some(v) = self.by_placed.get_mut(key) {
+                    v.retain(|&k| k != i);
+                    if v.is_empty() {
+                        self.by_placed.remove(key);
+                    }
+                }
+            }
+            _ => {}
+        }
+        self.fresh.insert(i);
     }
 
     /// The descriptors of the texture views of `res` are written again.
@@ -1024,29 +1054,33 @@ impl<'g> VkBackend<'g> {
         let Some(count) = self.draw.bindless().map(|b| b.count as usize) else {
             return;
         };
-        // 1. the registry entries added since the last time
-        let new = views_from(self.tex.scanned);
-        for v in &new {
-            let entry = self.classify(v);
+        // 1. the registry indices that got a view or lost theirs since the last time
+        let changed = self.tex.changes.get_or_insert_with(Consumer::new).changes();
+        if let Some(&(last, _)) = changed.last() {
+            let n = last as usize + 1;
+            if self.tex.entries.len() < n {
+                self.tex.entries.resize(n, Entry::Hole);
+                self.tex.bound.resize(n, vk::ImageView::null());
+                self.tex.bound1.resize(n, vk::ImageView::null());
+            }
+        }
+        for (index, v) in changed {
+            self.tex.forget(index);
+            let entry = v.as_ref().map_or(Entry::Hole, |v| self.classify(v));
             match &entry {
                 Entry::Texture { res, .. } | Entry::Storage { res, .. } => {
                     if self.tex.source_set.insert(*res) {
                         self.tex.sources.push(*res);
                     }
-                    let index = self.tex.entries.len() as u32;
                     self.tex.by_res.entry(*res).or_default().push(index);
                 }
                 Entry::Placed { key, .. } => {
-                    let index = self.tex.entries.len() as u32;
                     self.tex.by_placed.entry(*key).or_default().push(index);
                 }
                 _ => {}
             }
-            self.tex.entries.push(entry);
-            self.tex.bound.push(vk::ImageView::null());
-            self.tex.bound1.push(vk::ImageView::null());
+            self.tex.entries[index as usize] = entry;
         }
-        self.tex.scanned += new.len();
         // 2. images and uploads: of what the draws can read
         let mut uploaded = false;
         let (mut resources, mut placed, mut storage) = (Vec::new(), Vec::new(), Vec::new());
@@ -1089,26 +1123,26 @@ impl<'g> VkBackend<'g> {
             self.own(res);
         }
         self.trim();
-        // 3. descriptors: the new entries (image and sampler), then the image of the indices
-        // whose image changed, and of those the draws read whose view is not the one written
+        // 3. descriptors: the changed entries (image and sampler), then the image of the
+        // indices whose image changed, and of those the draws read whose view is not the one
+        // written
         let total = self.tex.entries.len();
-        let from = self.tex.dirty_from.min(total);
-        self.tex.dirty_from = total;
         if total > count {
             log_once(format!(
                 "{total} descriptors registered, the bindless set holds {count}"
             ));
         }
         let end = total.min(count);
+        let fresh = std::mem::take(&mut self.tex.fresh);
         let mut again: HashSet<usize> = std::mem::take(&mut self.tex.rewrite)
             .into_iter()
+            .chain(fresh.iter().copied())
             .map(|i| i as usize)
-            .filter(|&i| i < from)
             .collect();
         let wanted: Vec<u32> = self.tex.wanted.iter().copied().collect();
         for i in wanted {
             let i = i as usize;
-            if i < from.min(end) && !again.contains(&i) {
+            if i < end && !again.contains(&i) {
                 let view = self.view_of(i);
                 let storage = matches!(self.tex.entries[i], Entry::Storage { .. })
                     && self.storage_view_of(i).unwrap_or_default() != self.tex.bound1[i];
@@ -1118,18 +1152,18 @@ impl<'g> VkBackend<'g> {
             }
         }
         again.retain(|&i| i < end);
-        if from >= end && again.is_empty() {
+        if again.is_empty() {
             return;
         }
         let td = profile::start();
-        profile::count(Count::Written, (end - from.min(end) + again.len()) as u64);
+        profile::count(Count::Written, again.len() as u64);
         let hole = self.hole(d, cb, false);
         let hole1 = self.hole(d, cb, true);
         let default = self.draw.samplers.get(Spec::default_sampler());
         let mut images = Vec::new();
         let mut storages = Vec::new();
         let mut samplers = Vec::new();
-        for i in again.into_iter().chain(from..end) {
+        for i in again {
             let view = self.view_of(i);
             self.tex.bound[i] = view.unwrap_or_default();
             if let Some(v) = view.or(hole) {
@@ -1140,7 +1174,7 @@ impl<'g> VkBackend<'g> {
             if let Some(v) = sview.or(hole1) {
                 storages.push((i, v));
             }
-            if i >= from {
+            if fresh.contains(&(i as u32)) {
                 let sampler = match &self.tex.entries[i] {
                     Entry::Sampler(s) => self.draw.samplers.get(*s).or(default),
                     _ => default,

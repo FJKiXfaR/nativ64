@@ -159,16 +159,50 @@ pub unsafe extern "win64" fn create_descriptor_heap(
         &TABLE,
         Iface::DescriptorHeap,
         &DESCRIPTOR_HEAP_IIDS,
-        move || DescriptorHeapData {
-            bits: 0,
-            console_refs: 0,
-            desc: plain,
-            start,
-            memory: memory.take(),
+        move || {
+            if plain.kind <= 1 {
+                VIEWS.add_heap(root(plain.kind, start, size, memory.is_some()));
+            }
+            DescriptorHeapData {
+                bits: 0,
+                console_refs: 0,
+                desc: plain,
+                start,
+                memory: memory.take(),
+            }
         },
         iid,
         out,
     )
+}
+
+/// The root a heap of views (kind 0) or samplers (kind 1) is to the sweep.
+fn root(kind: u32, start: u64, size: u64, owned: bool) -> Root {
+    Root {
+        start,
+        end: start + size,
+        stride: step(kind),
+        owned,
+    }
+}
+
+fn step(kind: u32) -> u64 {
+    // SAFETY: reads no object.
+    unsafe { get_descriptor_increment_size(std::ptr::null_mut(), kind) as u64 }
+}
+
+impl Drop for DescriptorHeapData {
+    fn drop(&mut self) {
+        if self.desc.kind <= 1 {
+            let size = step(self.desc.kind) * u64::from(self.desc.count.max(1));
+            VIEWS.remove_heap(root(
+                self.desc.kind,
+                self.start,
+                size,
+                self.memory.is_some(),
+            ));
+        }
+    }
 }
 
 /// Slot 8, `GetDesc()`: a 16-byte struct, so the return pointer comes first and `this` second.
@@ -213,23 +247,64 @@ const VIEW_TAG: u32 = u32::from_le_bytes(*b"nVEW");
 const RTV_TAG: u32 = u32::from_le_bytes(*b"nRTV");
 const DSV_TAG: u32 = u32::from_le_bytes(*b"nDSV");
 
-/// The recorded views. An index, once handed out, names the same view for the whole run: it is
-/// written into the title's descriptor memory, which the title copies as bytes, and the backend
-/// keeps per-index tables of its own (`views_from`, `view_at`).
-// shortcut: entries are never freed; a view of a resource that is released stays in the table.
-// Freeing would need to know that no descriptor slot (in any heap, or any copy the title made of
-// one) still holds the index, and the backend's per-index tables to drop the entry. Measured: once
-// frames run fast, a title can make ~30k new entries a second (constant and placed views at fresh
-// addresses), ~150 bytes each here plus the backend's records.
-static VIEWS: std::sync::Mutex<Registry> = std::sync::Mutex::new(Registry::new());
+/// The recorded views (`docs/gpu.md`, "Reclaiming view registry indices"). An index is written
+/// into the title's descriptor memory, which the title copies as bytes, so it cannot be
+/// refcounted: a sweep ([`sweep`]) reads every slot that can hold one (the roots: the heaps of
+/// views and samplers, and the slots outside them that `record` wrote) and frees the indices
+/// that no slot held in two sweeps in a row. The backend learns which indices got a view or
+/// lost theirs from the change log ([`Consumer::changes`]).
+// shortcut: a slot outside every heap is a root only once `record` wrote it; an index the title
+// keeps, by its own copy, in memory outside the heaps for longer than two sweeps is freed under
+// it (no title seen doing so yet).
+static VIEWS: Views = Views::new();
+
+/// A heap of views or samplers the sweep reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Root {
+    start: u64,
+    end: u64,
+    /// Bytes between descriptors.
+    stride: u64,
+    /// The heap's own memory (else the title's: read where committed).
+    owned: bool,
+}
+
+/// The registry and what its sweep reads.
+struct Views {
+    reg: std::sync::Mutex<Registry>,
+    /// The live heaps of views and samplers, sorted by start.
+    heaps: std::sync::RwLock<Vec<Root>>,
+    /// The slots outside every heap that `record` wrote and that still held a tag at the last
+    /// sweep.
+    outside: std::sync::Mutex<std::collections::HashSet<u64, std::hash::BuildHasherDefault<Mixed>>>,
+    /// Between the first and the last step of a sweep: `record` and copies note in
+    /// `Registry::touched` the indices they hand out. Set and cleared under the registry lock.
+    sweeping: std::sync::atomic::AtomicBool,
+}
 
 /// The views and a hash index to find one in O(1): `heads` maps a view's hash to the last index
 /// with that hash, `next` chains each index to the previous one with the same hash (`NONE` ends
 /// it). About 16 bytes per entry next to the view, against a second copy as a map key.
 struct Registry {
-    views: Vec<View>,
+    /// None: a free index.
+    views: Vec<Option<View>>,
     next: Vec<u32>,
     heads: std::collections::HashMap<u64, u32, std::hash::BuildHasherDefault<Unhashed>>,
+    /// The free indices, the lowest first out (the live range stays compact).
+    free: std::collections::BinaryHeap<std::cmp::Reverse<u32>>,
+    live: usize,
+    /// Bitset: in use and held by no root at the last sweep (freed if the next agrees).
+    quarantine: Vec<u64>,
+    /// Bitset, during a sweep: the indices `record` and copies handed out since its start.
+    touched: Vec<u64>,
+    /// Indices given a view (new or reused) since the last sweep.
+    added: usize,
+    /// Indices that got a view or lost theirs, in order; `log_base` numbers `log[0]`.
+    log: std::collections::VecDeque<u32>,
+    log_base: u64,
+    /// By consumer id: None, an unused id; `Some(None)`, a consumer that reads every index at
+    /// its next call; `Some(Some(n))`, one that has read the log up to number `n`.
+    cursors: Vec<Option<Option<u64>>>,
 }
 
 const NONE: u32 = u32::MAX;
@@ -252,68 +327,564 @@ impl std::hash::Hasher for Unhashed {
     }
 }
 
+/// Hasher of slot addresses (aligned: their low bits say little).
+#[derive(Default)]
+struct Mixed(u64);
+
+impl std::hash::Hasher for Mixed {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(self.0.rotate_left(8) ^ u64::from(b));
+        }
+    }
+    fn write_u64(&mut self, n: u64) {
+        self.0 = (n ^ n >> 29).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    }
+}
+
+fn bit(set: &[u64], i: usize) -> bool {
+    set.get(i / 64).is_some_and(|w| w >> (i % 64) & 1 != 0)
+}
+
+fn set_bit(set: &mut [u64], i: usize) {
+    if let Some(w) = set.get_mut(i / 64) {
+        *w |= 1 << (i % 64);
+    }
+}
+
+fn clear_bit(set: &mut [u64], i: usize) {
+    if let Some(w) = set.get_mut(i / 64) {
+        *w &= !(1 << (i % 64));
+    }
+}
+
+fn key(view: &View) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::hash::DefaultHasher::new();
+    view.hash(&mut h);
+    h.finish()
+}
+
+/// The registry index the slot at `slot` holds, if it holds one.
+///
+/// # Safety
+/// `slot..slot + 8` is readable (racy writes by other threads are fine).
+unsafe fn tagged(slot: u64) -> Option<u32> {
+    // SAFETY: as the caller guarantees.
+    let [tag, index] = unsafe { (slot as *const [u32; 2]).read_unaligned() };
+    (tag == VIEW_TAG).then_some(index)
+}
+
+/// The committed run `(start, end)` of title memory around `addr`.
+fn committed(addr: u64) -> Option<(u64, u64)> {
+    nativ64::api_ms_win_core_memory::committed_run(addr as usize).map(|(a, b)| (a as u64, b as u64))
+}
+
 impl Registry {
     const fn new() -> Self {
         Registry {
             views: Vec::new(),
             next: Vec::new(),
             heads: std::collections::HashMap::with_hasher(std::hash::BuildHasherDefault::new()),
+            free: std::collections::BinaryHeap::new(),
+            live: 0,
+            quarantine: Vec::new(),
+            touched: Vec::new(),
+            added: 0,
+            log: std::collections::VecDeque::new(),
+            log_base: 0,
+            cursors: Vec::new(),
         }
     }
 
-    /// The index of `view`, added if it is new, and whether it was.
+    /// The index of `view`, given one (the lowest free, else a new one) if it has none, and
+    /// whether it was.
     fn index(&mut self, view: View) -> (usize, bool) {
-        use std::hash::{Hash, Hasher};
-        let mut h = std::hash::DefaultHasher::new();
-        view.hash(&mut h);
-        let key = h.finish();
+        let key = key(&view);
         let head = self.heads.get(&key).copied().unwrap_or(NONE);
         let mut i = head;
         while i != NONE {
-            if self.views[i as usize] == view {
+            if self.views[i as usize].as_ref() == Some(&view) {
                 return (i as usize, false);
             }
             i = self.next[i as usize];
         }
-        let index = self.views.len();
-        assert!(index < NONE as usize, "view registry full");
-        self.views.push(view);
-        self.next.push(head);
+        let index = match self.free.pop() {
+            Some(std::cmp::Reverse(i)) => i as usize,
+            None => {
+                let i = self.views.len();
+                assert!(i < NONE as usize, "view registry full");
+                self.views.push(None);
+                self.next.push(NONE);
+                i
+            }
+        };
+        self.views[index] = Some(view);
+        self.next[index] = head;
         self.heads.insert(key, index as u32);
+        self.live += 1;
+        self.added += 1;
+        self.note(index);
         (index, true)
+    }
+
+    /// Frees `index`: out of its hash chain, its view dropped, on the free list.
+    fn free(&mut self, index: usize) {
+        let Some(view) = self.views[index].take() else {
+            return;
+        };
+        let key = key(&view);
+        let after = self.next[index];
+        match self.heads.get(&key).copied() {
+            Some(h) if h as usize == index => {
+                if after == NONE {
+                    self.heads.remove(&key);
+                } else {
+                    self.heads.insert(key, after);
+                }
+            }
+            Some(mut j) => {
+                while j != NONE {
+                    let n = self.next[j as usize];
+                    if n as usize == index {
+                        self.next[j as usize] = after;
+                        break;
+                    }
+                    j = n;
+                }
+            }
+            None => {}
+        }
+        self.next[index] = NONE;
+        self.free.push(std::cmp::Reverse(index as u32));
+        self.live -= 1;
+        clear_bit(&mut self.quarantine, index);
+        self.note(index);
+    }
+
+    /// Logs a change of `index` for the consumers that read the log.
+    fn note(&mut self, index: usize) {
+        if !self.cursors.iter().any(|c| matches!(c, Some(Some(_)))) {
+            self.log_base += self.log.len() as u64 + 1;
+            self.log.clear();
+            return;
+        }
+        self.log.push_back(index as u32);
+        // A consumer that stopped reading must not keep the log forever: past the cap it
+        // reads every index at its next call instead.
+        let cap = (1usize << 20).max(2 * self.views.len());
+        if self.log.len() > cap {
+            let n = self.log.len() / 2;
+            self.log.drain(..n);
+            self.log_base += n as u64;
+        }
+    }
+
+    /// Drops the log entries every consumer has read.
+    fn trim(&mut self) {
+        let end = self.log_base + self.log.len() as u64;
+        let read = self
+            .cursors
+            .iter()
+            .filter_map(|c| match c {
+                Some(Some(n)) => Some(*n),
+                _ => None,
+            })
+            .min()
+            .unwrap_or(end)
+            .max(self.log_base);
+        self.log.drain(..(read - self.log_base) as usize);
+        self.log_base = read;
+    }
+
+    fn add_consumer(&mut self) -> usize {
+        let id = match self.cursors.iter().position(Option::is_none) {
+            Some(id) => id,
+            None => {
+                self.cursors.push(None);
+                self.cursors.len() - 1
+            }
+        };
+        self.cursors[id] = Some(None);
+        id
+    }
+
+    fn remove_consumer(&mut self, id: usize) {
+        if let Some(c) = self.cursors.get_mut(id) {
+            *c = None;
+        }
+        self.trim();
+    }
+
+    /// The indices changed since consumer `id` last asked (every index at its first call),
+    /// once each, lowest first, with their view (None: freed).
+    fn changes(&mut self, id: usize) -> Vec<(u32, Option<View>)> {
+        let end = self.log_base + self.log.len() as u64;
+        let from = match self.cursors.get(id) {
+            Some(Some(Some(n))) if *n >= self.log_base => Some(*n),
+            _ => None,
+        };
+        let out = match from {
+            None => (0..self.views.len())
+                .map(|i| (i as u32, self.views[i].clone()))
+                .collect(),
+            Some(n) => {
+                let mut ix: Vec<u32> = self
+                    .log
+                    .range((n - self.log_base) as usize..)
+                    .copied()
+                    .collect();
+                ix.sort_unstable();
+                ix.dedup();
+                ix.into_iter()
+                    .map(|i| (i, self.views[i as usize].clone()))
+                    .collect()
+            }
+        };
+        if let Some(c @ Some(_)) = self.cursors.get_mut(id) {
+            *c = Some(Some(end));
+        }
+        self.trim();
+        out
+    }
+}
+
+/// What a sweep did (`NATIV64_VIEW_STATS` prints it).
+#[derive(Debug, Default)]
+struct Swept {
+    live: usize,
+    free: usize,
+    quarantined: usize,
+    freed: usize,
+    /// Heap bytes read, outside slots read and dropped from the set.
+    heap_bytes: u64,
+    outside: usize,
+    dropped: usize,
+    mark: std::time::Duration,
+    settle: std::time::Duration,
+}
+
+/// Between the first and the last step of a sweep.
+struct Sweep {
+    len: usize,
+    marked: Vec<u64>,
+    swept: Swept,
+}
+
+impl Views {
+    const fn new() -> Self {
+        Views {
+            reg: std::sync::Mutex::new(Registry::new()),
+            heaps: std::sync::RwLock::new(Vec::new()),
+            outside: std::sync::Mutex::new(std::collections::HashSet::with_hasher(
+                std::hash::BuildHasherDefault::new(),
+            )),
+            sweeping: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    fn reg(&self) -> std::sync::MutexGuard<'_, Registry> {
+        self.reg.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn add_heap(&self, root: Root) {
+        let mut h = self.heaps.write().unwrap_or_else(|e| e.into_inner());
+        let at = h.partition_point(|r| r.start <= root.start);
+        h.insert(at, root);
+    }
+
+    fn remove_heap(&self, root: Root) {
+        let mut h = self.heaps.write().unwrap_or_else(|e| e.into_inner());
+        if let Some(at) = h.iter().position(|r| *r == root) {
+            h.remove(at);
+        }
+    }
+
+    fn in_heap(&self, slot: u64) -> bool {
+        let h = self.heaps.read().unwrap_or_else(|e| e.into_inner());
+        let at = h.partition_point(|r| r.start <= slot);
+        h[..at].iter().rev().any(|r| slot < r.end)
+    }
+
+    fn record(&self, handle: u64, view: View) {
+        if handle == 0 {
+            return;
+        }
+        let stats = stats::on().then(std::time::Instant::now);
+        let kind = match view {
+            View::Constant(..) => 0,
+            View::Shader(..) => 1,
+            View::Unordered(..) => 2,
+            View::Sampler(_) | View::ConsoleSampler(_) => 3,
+            View::Placed(false, ..) => 4,
+            View::Placed(true, ..) => 5,
+        };
+        let outside = !self.in_heap(handle);
+        let mut reg = self.reg();
+        let locked = stats.map(|t| t.elapsed());
+        // Rewriting a descriptor with the same view reuses its entry.
+        let (index, new) = reg.index(view);
+        if self.sweeping.load(std::sync::atomic::Ordering::SeqCst) {
+            set_bit(&mut reg.touched, index);
+        }
+        let len = reg.views.len();
+        // Under the lock: a sweep that starts after it reads the slot written; one that started
+        // before has the index touched. (Written after the lock, a thread paused in between
+        // could see a reused index freed under it.)
+        // SAFETY: the handle is a descriptor slot of at least 16 bytes the title owns.
+        unsafe { (handle as *mut [u32; 2]).write_unaligned([VIEW_TAG, index as u32]) };
+        // Also under the lock: a sweep that starts after it finds the slot in the set. A sweep
+        // drops a slot only after reading it again under the set's lock.
+        if outside {
+            self.outside
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(handle);
+        }
+        drop(reg);
+        if let (Some(t), Some(wait)) = (stats, locked) {
+            stats::note(wait, t.elapsed(), new.then_some(kind), len);
+        }
+    }
+
+    /// After a copy of `bytes` bytes of descriptors to `dst`: during a sweep, the indices
+    /// copied stay live.
+    fn copied(&self, dst: u64, bytes: u64, stride: u64) {
+        use std::sync::atomic::{fence, Ordering::SeqCst};
+        // The copy visible before the flag is read: a sweep that starts after this read sees
+        // the destination.
+        fence(SeqCst);
+        if stride == 0 || !self.sweeping.load(SeqCst) {
+            return;
+        }
+        // SAFETY: the destination was just written, so it is readable.
+        let ix: Vec<u32> = (0..bytes / stride)
+            .filter_map(|k| unsafe { tagged(dst + k * stride) })
+            .collect();
+        if ix.is_empty() {
+            return;
+        }
+        let mut reg = self.reg();
+        if self.sweeping.load(SeqCst) {
+            for i in ix {
+                set_bit(&mut reg.touched, i as usize);
+            }
+        }
+    }
+
+    fn view_at(&self, index: usize) -> Option<View> {
+        self.reg().views.get(index).cloned().flatten()
+    }
+
+    /// Step 1 (`force`: even if not due).
+    fn begin(&self, force: bool) -> Option<Sweep> {
+        let mut reg = self.reg();
+        if !force && reg.added < 65_536.max(reg.live / 2) {
+            return None;
+        }
+        let len = reg.views.len();
+        reg.added = 0;
+        reg.touched.clear();
+        reg.touched.resize(len.div_ceil(64), 0);
+        self.sweeping
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        Some(Sweep {
+            len,
+            marked: vec![0; len.div_ceil(64)],
+            swept: Swept::default(),
+        })
+    }
+
+    /// Step 2, without the registry lock: marks the indices every root holds.
+    fn mark(&self, s: &mut Sweep) {
+        let t = std::time::Instant::now();
+        let len = s.len;
+        let marked = &mut s.marked;
+        let mut mark = |slot: u64| {
+            // SAFETY: the callers pass readable slots.
+            let index = unsafe { tagged(slot) };
+            if let Some(i) = index.filter(|&i| (i as usize) < len) {
+                set_bit(marked, i as usize);
+            }
+            index.is_some()
+        };
+        {
+            let heaps = self.heaps.read().unwrap_or_else(|e| e.into_inner());
+            for r in heaps.iter() {
+                let mut a = r.start;
+                while a < r.end {
+                    let end = if r.owned {
+                        r.end
+                    } else {
+                        match committed(a) {
+                            Some((_, e)) => e.min(r.end),
+                            None => {
+                                a = (a | (HEAP_PAGE as u64 - 1)) + 1;
+                                continue;
+                            }
+                        }
+                    };
+                    let mut slot = r.start + (a - r.start).div_ceil(r.stride) * r.stride;
+                    while slot + 8 <= end {
+                        mark(slot);
+                        slot += r.stride;
+                    }
+                    s.swept.heap_bytes += end - a;
+                    a = end;
+                }
+            }
+        }
+        let mut slots: Vec<u64> = self
+            .outside
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .copied()
+            .collect();
+        slots.sort_unstable();
+        s.swept.outside = slots.len();
+        let mut run = (0, 0);
+        let mut gone = Vec::new();
+        for slot in slots {
+            if !(run.0 <= slot && slot + 8 <= run.1) {
+                run = committed(slot).unwrap_or((0, 0));
+                if !(run.0 <= slot && slot + 8 <= run.1) {
+                    gone.push(slot);
+                    continue;
+                }
+            }
+            if !mark(slot) {
+                gone.push(slot);
+            }
+        }
+        if !gone.is_empty() {
+            let mut set = self.outside.lock().unwrap_or_else(|e| e.into_inner());
+            for slot in gone {
+                // Read again under the lock: `record` may have written it since.
+                let readable = committed(slot).is_some_and(|(a, b)| a <= slot && slot + 8 <= b);
+                // SAFETY: committed.
+                if !(readable && unsafe { tagged(slot) }.is_some()) {
+                    set.remove(&slot);
+                    s.swept.dropped += 1;
+                }
+            }
+        }
+        s.swept.mark = t.elapsed();
+    }
+
+    /// Step 3: frees the indices absent from this sweep and the last, quarantines the ones
+    /// absent from this one only.
+    fn settle(&self, s: Sweep) -> Swept {
+        let t = std::time::Instant::now();
+        let mut swept = s.swept;
+        let mut reg = self.reg();
+        let words = reg.views.len().div_ceil(64);
+        reg.quarantine.resize(words, 0);
+        for i in 0..s.len {
+            if reg.views[i].is_none() {
+                continue;
+            }
+            let live = bit(&s.marked, i) || bit(&reg.touched, i);
+            match (live, bit(&reg.quarantine, i)) {
+                (false, true) => {
+                    reg.free(i);
+                    swept.freed += 1;
+                }
+                (false, false) => set_bit(&mut reg.quarantine, i),
+                (true, true) => clear_bit(&mut reg.quarantine, i),
+                (true, false) => {}
+            }
+        }
+        self.sweeping
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        reg.touched.clear();
+        swept.live = reg.live;
+        swept.free = reg.free.len();
+        swept.quarantined = reg.quarantine.iter().map(|w| w.count_ones() as usize).sum();
+        swept.settle = t.elapsed();
+        swept
+    }
+
+    fn sweep(&self, force: bool) -> Option<Swept> {
+        let mut s = self.begin(force)?;
+        self.mark(&mut s);
+        Some(self.settle(s))
     }
 }
 
 fn record(handle: u64, view: View) {
-    if handle == 0 {
-        return;
+    VIEWS.record(handle, view);
+}
+
+/// Frees the registry indices no descriptor slot held in this sweep and the last, when enough
+/// entries were made since the last sweep. Called at the start of each submission under the
+/// backend's lock, its queue idle (the backend learns of the changes through
+/// [`Consumer::changes`] before it uses an index).
+pub fn sweep() {
+    let Some(s) = VIEWS.sweep(false) else { return };
+    if stats::on() {
+        let ms = |d: std::time::Duration| d.as_secs_f64() * 1e3;
+        eprintln!(
+            "nativ64: view stats sweep {:.0}s: live {}, free {}, quarantined {}, freed {}, \
+             roots {} heap bytes + {} outside slots ({} dropped), mark {:.1} ms, settle {:.1} ms",
+            stats::secs(),
+            s.live,
+            s.free,
+            s.quarantined,
+            s.freed,
+            s.heap_bytes,
+            s.outside,
+            s.dropped,
+            ms(s.mark),
+            ms(s.settle),
+        );
     }
-    let stats = stats::on().then(std::time::Instant::now);
-    let kind = match view {
-        View::Constant(..) => 0,
-        View::Shader(..) => 1,
-        View::Unordered(..) => 2,
-        View::Sampler(_) | View::ConsoleSampler(_) => 3,
-        View::Placed(false, ..) => 4,
-        View::Placed(true, ..) => 5,
-    };
-    let mut views = VIEWS.lock().unwrap_or_else(|e| e.into_inner());
-    let locked = stats.map(|t| t.elapsed());
-    // Rewriting a descriptor with the same view reuses its entry.
-    let (index, new) = views.index(view);
-    let len = views.views.len();
-    drop(views);
-    if let (Some(t), Some(wait)) = (stats, locked) {
-        stats::note(wait, t.elapsed(), new.then_some(kind), len);
+}
+
+/// A reader of the change log: what it built per registry index is kept up to date by
+/// [`Consumer::changes`].
+pub struct Consumer {
+    views: &'static Views,
+    id: usize,
+}
+
+impl Consumer {
+    pub fn new() -> Consumer {
+        Consumer::of(&VIEWS)
     }
-    // SAFETY: the handle is a descriptor slot of at least 16 bytes the title owns.
-    unsafe { (handle as *mut [u32; 2]).write_unaligned([VIEW_TAG, index as u32]) };
+
+    fn of(views: &'static Views) -> Consumer {
+        let id = views.reg().add_consumer();
+        Consumer { views, id }
+    }
+
+    /// The registry indices that got a view or lost theirs since the last call (every index
+    /// at the first), once each, lowest first, with their view now (None: freed).
+    pub fn changes(&self) -> Vec<(u32, Option<View>)> {
+        self.views.reg().changes(self.id)
+    }
+}
+
+impl Default for Consumer {
+    fn default() -> Self {
+        Consumer::new()
+    }
+}
+
+impl Drop for Consumer {
+    fn drop(&mut self) {
+        self.views.reg().remove_consumer(self.id);
+    }
 }
 
 /// Optional counters of the view registry (`NATIV64_VIEW_STATS=1`): every 30 s, one line with
 /// the registry size, records and new entries per second, and the time spent in `record`
 /// (lock wait and whole call: total and max over the period), then the new entries of the period
-/// by kind: constant, shader, unordered, sampler, placed shader, placed unordered.
+/// by kind: constant, shader, unordered, sampler, placed shader, placed unordered. And one line
+/// per sweep (`sweep`).
 mod stats {
     use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
     use std::sync::OnceLock;
@@ -342,6 +913,11 @@ mod stats {
 
     pub fn on() -> bool {
         start().is_some()
+    }
+
+    /// Seconds since the counters started.
+    pub fn secs() -> f64 {
+        start().map_or(0.0, |s| s.elapsed().as_secs_f64())
     }
 
     /// `new`: the kind of the view (see the module) when it made a new entry.
@@ -383,9 +959,9 @@ mod stats {
     }
 }
 
-/// How many views are recorded: registry indices are below it.
-pub fn view_count() -> usize {
-    VIEWS.lock().unwrap_or_else(|e| e.into_inner()).views.len()
+/// The length of the registry: every index is below it (some may be free).
+pub fn view_capacity() -> usize {
+    VIEWS.reg().views.len()
 }
 
 /// The registry index the view or sampler descriptor at `handle` holds, if it holds one.
@@ -394,27 +970,12 @@ pub fn view_count() -> usize {
 /// `handle..handle + 8` is readable.
 pub unsafe fn registry_index_at(handle: u64) -> Option<u32> {
     // SAFETY: the caller guarantees the slot is readable.
-    let [tag, index] = unsafe { (handle as *const [u32; 2]).read_unaligned() };
-    (tag == VIEW_TAG).then_some(index)
+    unsafe { tagged(handle) }
 }
 
-/// The recorded views from registry index `first` on.
-pub fn views_from(first: usize) -> Vec<View> {
-    let v = VIEWS.lock().unwrap_or_else(|e| e.into_inner());
-    v.views
-        .get(first..)
-        .map(<[View]>::to_vec)
-        .unwrap_or_default()
-}
-
-/// The view recorded at registry index `index`.
+/// The view recorded at registry index `index` (None: free).
 pub fn view_at(index: usize) -> Option<View> {
-    VIEWS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .views
-        .get(index)
-        .cloned()
+    VIEWS.view_at(index)
 }
 
 /// The view recorded at `handle`, if one is.
@@ -423,16 +984,8 @@ pub fn view(handle: u64) -> Option<View> {
         return None;
     }
     // SAFETY: the handle is a descriptor slot the title passes back.
-    let [tag, index] = unsafe { (handle as *const [u32; 2]).read_unaligned() };
-    if tag != VIEW_TAG {
-        return None;
-    }
-    VIEWS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .views
-        .get(index as usize)
-        .cloned()
+    let index = unsafe { tagged(handle) }?;
+    VIEWS.view_at(index as usize)
 }
 
 fn words<const N: usize>(desc: *const [u32; N]) -> Option<[u32; N]> {
@@ -630,6 +1183,7 @@ pub unsafe extern "win64" fn copy_descriptors_simple(
     let step = get_descriptor_increment_size(std::ptr::null_mut(), kind) as usize;
     if step != 0 && dst != 0 && src != 0 {
         std::ptr::copy(src as *const u8, dst as *mut u8, count as usize * step);
+        VIEWS.copied(dst, (count as usize * step) as u64, step as u64);
     }
 }
 
@@ -671,6 +1225,7 @@ pub unsafe extern "win64" fn copy_descriptors(
             let n = left.min(room);
             let bytes = u64::from(n) * step;
             std::ptr::copy(from as *const u8, to as *mut u8, bytes as usize);
+            VIEWS.copied(to, bytes, step);
             (to, from, room, left) = (to + bytes, from + bytes, room - n, left - n);
         }
     }
@@ -804,7 +1359,7 @@ mod tests {
         assert_eq!(r.index(View::Constant(1, 3)), (5001, true));
         assert_eq!(r.index(View::Constant(1, 2)), (5000, false));
         assert_eq!(r.views.len(), 5002);
-        assert_eq!(r.views[17], placed(17));
+        assert_eq!(r.views[17], Some(placed(17)));
     }
 
     #[test]
@@ -812,7 +1367,7 @@ mod tests {
         // Two views forced under one hash key: both found, each at its own index.
         let mut r = Registry::new();
         let (a, b) = (View::Constant(1, 1), View::Constant(2, 2));
-        r.views.extend([a.clone(), b.clone()]);
+        r.views.extend([Some(a.clone()), Some(b.clone())]);
         r.next.extend([NONE, 0]);
         let (ka, kb) = {
             use std::hash::{Hash, Hasher};
@@ -950,5 +1505,306 @@ mod tests {
             create_render_target_view(n, 0x55 as *mut c_void, std::ptr::null(), 0);
             assert_eq!(render_target_view(0), None);
         }
+    }
+
+    use nativ64::api_ms_win_core_memory as table;
+
+    /// Committed title memory of `bytes` bytes (a page at least).
+    fn title_slots(bytes: usize) -> u64 {
+        table::alloc(
+            0,
+            bytes.max(4096),
+            table::MEM_RESERVE | table::MEM_COMMIT,
+            0x04,
+            None,
+        )
+        .unwrap() as u64
+    }
+
+    fn constant(n: u64) -> View {
+        View::Constant(0xc0de_0000_0000 + n * 256, 256)
+    }
+
+    fn index_in(slot: u64) -> usize {
+        // SAFETY: a slot of the test's.
+        unsafe { tagged(slot) }.unwrap() as usize
+    }
+
+    #[test]
+    fn an_index_is_freed_after_two_sweeps_without_a_holder() {
+        static V: Views = Views::new();
+        let s = title_slots(4096);
+        V.record(s, constant(1));
+        let a = index_in(s);
+        assert_eq!(V.sweep(true).unwrap().freed, 0);
+        // the slot overwritten: no slot holds `a`
+        V.record(s, constant(2));
+        let sw = V.sweep(true).unwrap();
+        assert_eq!((sw.freed, sw.quarantined), (0, 1));
+        assert_eq!(V.view_at(a), Some(constant(1)), "quarantined, not freed");
+        // found again by dedup while quarantined, and held: out of quarantine
+        V.record(s + 32, constant(1));
+        assert_eq!(index_in(s + 32), a);
+        let sw = V.sweep(true).unwrap();
+        assert_eq!((sw.freed, sw.quarantined), (0, 0));
+        // unheld again: freed at the second sweep
+        V.record(s + 32, constant(3));
+        assert_eq!(V.sweep(true).unwrap().freed, 0);
+        let sw = V.sweep(true).unwrap();
+        assert_eq!((sw.freed, sw.live, sw.free), (1, 2, 1));
+        assert_eq!(V.view_at(a), None);
+        assert_eq!(V.view_at(index_in(s)), Some(constant(2)));
+        // dedup no longer finds it: recorded again, it takes the free index anew
+        V.record(s + 64, constant(1));
+        assert_eq!(index_in(s + 64), a);
+        assert_eq!(V.sweep(false).map(|s| s.freed), None, "not due");
+        table::release(s as usize).unwrap();
+    }
+
+    #[test]
+    fn indices_held_by_a_slot_are_never_freed() {
+        static V: Views = Views::new();
+        let mut own = vec![0u64; 4 * 8].into_boxed_slice();
+        let own_at = own.as_mut_ptr() as u64;
+        V.add_heap(Root {
+            start: own_at,
+            end: own_at + 256,
+            stride: 32,
+            owned: true,
+        });
+        let placed = title_slots(8192);
+        V.add_heap(Root {
+            start: placed,
+            end: placed + 8192,
+            stride: 16,
+            owned: false,
+        });
+        let outside = title_slots(4096);
+        V.record(own_at + 32 * 3, constant(10));
+        V.record(placed + 16 * 300, View::Sampler([5; 13]));
+        V.record(outside + 64, constant(11));
+        let held = [own_at + 32 * 3, placed + 16 * 300, outside + 64].map(index_in);
+        assert_eq!(
+            V.outside
+                .lock()
+                .unwrap()
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
+            [outside + 64]
+        );
+        for _ in 0..4 {
+            let sw = V.sweep(true).unwrap();
+            assert_eq!((sw.freed, sw.quarantined, sw.outside), (0, 0, 1));
+            assert_eq!(sw.heap_bytes, 256 + 8192);
+        }
+        for i in held {
+            assert!(V.view_at(i).is_some());
+        }
+        // the outside slot's memory released: dropped from the set, its index freed
+        table::release(outside as usize).unwrap();
+        assert_eq!(V.sweep(true).unwrap().dropped, 1);
+        assert!(V.outside.lock().unwrap().is_empty());
+        assert_eq!(V.sweep(true).unwrap().freed, 1);
+        assert_eq!(V.view_at(held[2]), None);
+        // a heap dropped: its slots are no root any more
+        V.remove_heap(Root {
+            start: own_at,
+            end: own_at + 256,
+            stride: 32,
+            owned: true,
+        });
+        V.sweep(true);
+        assert_eq!(V.sweep(true).unwrap().freed, 1);
+        assert_eq!(V.view_at(held[0]), None);
+        assert!(V.view_at(held[1]).is_some());
+        drop(own);
+        table::release(placed as usize).unwrap();
+    }
+
+    #[test]
+    fn records_and_copies_during_a_sweep_keep_the_index() {
+        static V: Views = Views::new();
+        let s = title_slots(4096);
+        V.record(s, constant(20));
+        let a = index_in(s);
+        V.record(s, constant(21));
+        assert_eq!(V.sweep(true).unwrap().quarantined, 1);
+        // a record hands `a` out during the sweep, into a slot cleared before the sweep reads
+        // it (moved where no sweep looks): kept, out of quarantine
+        let mut sw = V.begin(true).unwrap();
+        V.record(s + 32, constant(20));
+        assert_eq!(index_in(s + 32), a);
+        // SAFETY: the test's slot.
+        unsafe { ((s + 32) as *mut [u32; 8]).write([0; 8]) };
+        V.mark(&mut sw);
+        let r = V.settle(sw);
+        assert_eq!((r.freed, r.quarantined), (0, 0));
+        // the same with a copy of a slot outside the roots
+        assert_eq!(V.sweep(true).unwrap().quarantined, 1);
+        let stash = Box::new([VIEW_TAG, a as u32, 0, 0, 0, 0, 0, 0]);
+        let mut sw = V.begin(true).unwrap();
+        // SAFETY: 32 bytes each.
+        unsafe {
+            std::ptr::copy(stash.as_ptr().cast::<u8>(), (s + 64) as *mut u8, 32);
+            V.copied(s + 64, 32, 32);
+            ((s + 64) as *mut [u32; 8]).write([0; 8]);
+        }
+        V.mark(&mut sw);
+        let r = V.settle(sw);
+        assert_eq!((r.freed, r.quarantined), (0, 0));
+        assert_eq!(V.view_at(a), Some(constant(20)));
+        // and without either, two sweeps free it
+        V.sweep(true);
+        assert_eq!(V.sweep(true).unwrap().freed, 1);
+        table::release(s as usize).unwrap();
+    }
+
+    #[test]
+    fn reuse_takes_the_lowest_free_index() {
+        static V: Views = Views::new();
+        let s = title_slots(4096);
+        for n in 0..5 {
+            V.record(s + 32 * n, constant(30 + n));
+        }
+        V.record(s + 32, constant(40));
+        V.record(s + 96, constant(41));
+        assert_eq!((index_in(s + 32), index_in(s + 96)), (5, 6));
+        V.sweep(true);
+        assert_eq!(V.sweep(true).unwrap().freed, 2);
+        let next: Vec<usize> = (8..11)
+            .map(|n| {
+                V.record(s + 32 * n, constant(50 + n));
+                index_in(s + 32 * n)
+            })
+            .collect();
+        assert_eq!(next, [1, 3, 7]);
+        table::release(s as usize).unwrap();
+    }
+
+    #[test]
+    fn the_change_log_gives_each_changed_index_once() {
+        static V: Views = Views::new();
+        let s = title_slots(4096);
+        V.record(s, constant(60));
+        V.record(s + 32, constant(61));
+        let c = Consumer::of(&V);
+        // every index at the first call
+        assert_eq!(
+            c.changes(),
+            [(0, Some(constant(60))), (1, Some(constant(61)))]
+        );
+        assert!(c.changes().is_empty());
+        let d = Consumer::of(&V);
+        assert_eq!(d.changes().len(), 2);
+        V.record(s + 64, constant(62));
+        V.record(s + 64, constant(62));
+        V.record(s + 32, constant(63));
+        assert_eq!(
+            c.changes(),
+            [(2, Some(constant(62))), (3, Some(constant(63)))]
+        );
+        V.sweep(true);
+        V.sweep(true);
+        assert_eq!(c.changes(), [(1, None)]);
+        // the other reads it all once, lowest first
+        assert_eq!(
+            d.changes(),
+            [(1, None), (2, Some(constant(62))), (3, Some(constant(63)))]
+        );
+        assert!(V.reg().log.is_empty(), "trimmed once both read it");
+        V.record(s + 96, constant(64));
+        drop(d);
+        assert_eq!(V.reg().log.len(), 1, "kept for the other");
+        assert_eq!(c.changes(), [(1, Some(constant(64)))]);
+        assert!(V.reg().log.is_empty());
+        drop(c);
+        V.record(s + 128, constant(65));
+        assert!(V.reg().log.is_empty(), "no reader: nothing logged");
+        // a reader that comes later reads every index
+        let e = Consumer::of(&V);
+        assert_eq!(e.changes().len(), 5);
+        table::release(s as usize).unwrap();
+    }
+
+    #[test]
+    fn slots_keep_their_views_under_records_copies_and_sweeps() {
+        use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+        static V: Views = Views::new();
+        static STOP: AtomicBool = AtomicBool::new(false);
+        const SLOTS: usize = 64;
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let sweeper = std::thread::spawn(|| {
+                let (mut n, mut freed) = (0, 0);
+                while !STOP.load(SeqCst) {
+                    freed += V.sweep(true).unwrap().freed;
+                    n += 1;
+                }
+                (n, freed)
+            });
+            let workers: Vec<_> = (0..8u64)
+                .map(|t| {
+                    std::thread::spawn(move || {
+                        // the first half a heap (placed in title memory), the rest outside slots
+                        let base = title_slots(SLOTS * 32);
+                        V.add_heap(Root {
+                            start: base,
+                            end: base + SLOTS as u64 * 16,
+                            stride: 32,
+                            owned: false,
+                        });
+                        let at = |k: usize| base + 32 * k as u64;
+                        let read = |k: usize| {
+                            // SAFETY: the thread's slot.
+                            unsafe { tagged(at(k)) }.and_then(|i| V.view_at(i as usize))
+                        };
+                        let mut want: Vec<Option<View>> = vec![None; SLOTS];
+                        let mut x = 0x9e37_79b9_7f4a_7c15u64.wrapping_mul(t + 1);
+                        for _ in 0..40_000 {
+                            x ^= x << 13;
+                            x ^= x >> 7;
+                            x ^= x << 17;
+                            let k = (x % SLOTS as u64) as usize;
+                            // copies go into heaps, as `CopyDescriptors` does
+                            if x >> 40 & 3 == 0 && k < SLOTS / 2 {
+                                let j = (x >> 20) as usize % SLOTS;
+                                // SAFETY: the thread's slots.
+                                unsafe {
+                                    std::ptr::copy(at(j) as *const u8, at(k) as *mut u8, 32);
+                                }
+                                V.copied(at(k), 32, 32);
+                                want[k] = want[j].clone();
+                            } else {
+                                // views shared by threads (dedup) and fresh ones
+                                let v = View::Constant(
+                                    0x7000_0000 + (x >> 24) % 4096 * 256,
+                                    256 + (t % 2) as u32,
+                                );
+                                V.record(at(k), v.clone());
+                                want[k] = Some(v);
+                            }
+                            assert_eq!(read(k), want[k]);
+                        }
+                        for (k, w) in want.iter().enumerate() {
+                            assert_eq!(read(k), *w, "slot {k}");
+                        }
+                        base
+                    })
+                })
+                .collect();
+            let bases: Vec<u64> = workers.into_iter().map(|h| h.join().unwrap()).collect();
+            STOP.store(true, SeqCst);
+            let swept = sweeper.join().unwrap();
+            tx.send((swept, V.reg().live)).unwrap();
+            for b in bases {
+                table::release(b as usize).unwrap();
+            }
+        });
+        let ((sweeps, freed), live) = rx
+            .recv_timeout(std::time::Duration::from_secs(120))
+            .expect("the stress took over 120 s");
+        assert!(sweeps > 2 && freed > 0, "{sweeps} sweeps freed {freed}");
+        assert!(live <= 8 * SLOTS + 2 * 8192, "{live} live");
     }
 }

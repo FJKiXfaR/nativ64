@@ -96,7 +96,12 @@ unsafe extern "win64" fn execute_command_lists(
             .fetch_add(commands.len() as u64, Ordering::Relaxed);
         streams.push(commands);
     }
-    backend::with(|b| b.execute(&streams));
+    backend::with(|b| {
+        // Under the backend's lock, before it replays (its queue idle), on any backend: the
+        // null one too, or the registry grows unbounded on headless runs.
+        crate::d3d12::descriptor::sweep();
+        b.execute(&streams)
+    });
 }
 
 /// Slot 35, `ExecuteCommandListsX(count, lists, frame token, flags)`: frames are not paced, so

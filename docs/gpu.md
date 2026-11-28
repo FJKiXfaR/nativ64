@@ -288,6 +288,49 @@ The executable imports from `d3d12_xs` only `D3D12XboxCreateDevice` and
   read zero). A pool page that is not physical memory fails (logged once with the address).
 - Done at once (null backend: nothing in flight). In G3, after the queue's earlier work.
 
+### Reclaiming view registry indices
+
+Measured during loading: ~57k new registry entries a second (constant and placed buffer views
+at fresh ring addresses), 3.4M entries at 450 s, never freed. Past `1 << 20` entries an index no
+longer fits the bindless arrays either. Indices are written into descriptor slots that the
+title copies as bytes, so an index cannot be refcounted; it is reclaimed by a **sweep** that
+finds which indices some slot still holds.
+
+- **Roots.** Every live descriptor heap of kind 0 (32-byte slots) and 1 (16-byte slots),
+  placed heaps in title memory included: `create_descriptor_heap` adds `(start, end, kind)` to a
+  sorted list, the heap's drop removes it. `record` also notes, in a set, any handle that lies
+  in no heap ("outside slots"; tests and the compute path write such slots); a sweep reads them
+  as roots after checking the page is committed (`table::committed_run`), and drops from the set
+  a slot that no longer holds the tag.
+- **Sweep** (`descriptor::sweep`, called at the start of each submission under the backend's
+  lock, before it replays, queue idle, whatever the backend: the null one of headless runs too;
+  due when the entries added since the last sweep reach `max(65_536, live / 2)`):
+  1. under the lock: `sweeping = true`, clear a `touched` bitset sized to the registry;
+     `len0 = len`.
+  2. without the lock: read every root slot (`read_unaligned`, racy reads are fine), set
+     `marked[index]` for each tagged index below `len0`.
+  3. under the lock: for each index below `len0` that is in use, live =
+     `marked || touched`. Dead and in quarantine: freed (removed from its hash chain, the view
+     dropped, index pushed on the free list, logged as changed). Dead and not in quarantine:
+     quarantined (it stays findable and reusable by dedup). Live and quarantined:
+     un-quarantined. `sweeping = false`.
+  While `sweeping`, `record` sets `touched` for the index it returns, and `copy_descriptors*`
+  set it for every tagged source slot they copy. The quarantine (an index must be absent from
+  two consecutive sweeps) covers the race left: a title thread moving an index from an
+  unscanned slot to a scanned one by its own memcpy during step 2.
+- **Reuse.** A new view takes the lowest free index (min-heap), else a new one, so the live
+  range stays compact and under the bindless size.
+- **Change log for the backend** (replaces the append-only `views_from(first)`): every index
+  that got a view (new or reused) or was freed is appended to a log with a sequence number.
+  Each consumer (`ViewTable`, `TexState`) has a fixed cursor id; `changes(consumer)` returns
+  the indices changed since its cursor, each with its current `Option<View>` (one entry per
+  index), and advances it; the log is trimmed below the smallest cursor. A consumer handles a
+  changed index like the released-resource path: drop what it built for the old view (texture
+  entry, `by_res` / `by_placed` lists, bound image views, record), classify the new one or
+  write a hole. Buffers sized by `view_capacity()` (the registry length).
+- **Stats** (`NATIV64_VIEW_STATS=1`): one line per sweep with live, free, quarantined, freed,
+  roots read (bytes, outside slots) and the time of steps 2 and 3.
+
 ### Validation
 
 - Unit tests per object (slots, refcounts, recorded commands) with the null backend; Vulkan
@@ -320,7 +363,11 @@ The executable imports from `d3d12_xs` only `D3D12XboxCreateDevice` and
 - `NATIV64_VIEW_STATS=1` prints, at most every 30 s (on the next view the title creates), the size
   of the view registry (`descriptor.rs`), the records and new entries per second, and the time
   spent recording views (lock wait and whole call, total and max over the period), then the
-  new entries by kind (constant, shader, unordered, sampler, placed shader, placed unordered).
+  new entries by kind (constant, shader, unordered, sampler, placed shader, placed unordered)
+  (new: an index given a view, fresh or reused). And one `nativ64: view stats sweep` line per
+  sweep: live, free and quarantined indices after it, indices freed, heap bytes and outside
+  slots read (and outside slots dropped from the set), time of the mark (step 2) and of the
+  settle (step 3, under the lock).
 
 ## Milestones and chunks
 

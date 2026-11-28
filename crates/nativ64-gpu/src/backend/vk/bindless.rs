@@ -534,8 +534,8 @@ pub struct ViewTable<'g> {
     buf: HostBuf<'g>,
     /// Records the buffer holds room for.
     capacity: usize,
-    /// Registry indices below this have been looked at.
-    written: usize,
+    /// Its cursor in the registry's change log.
+    changes: crate::d3d12::descriptor::Consumer,
     /// Indices of buffer views whose memory did not translate: tried again.
     retry: Vec<usize>,
     /// Per index, the title address span its record points into (empty when it has none).
@@ -549,7 +549,7 @@ impl<'g> ViewTable<'g> {
             gpu,
             buf: HostBuf::new(gpu, capacity * RECORD)?,
             capacity,
-            written: 0,
+            changes: crate::d3d12::descriptor::Consumer::new(),
             retry: Vec::new(),
             spans: vec![(0, 0); capacity],
         })
@@ -569,7 +569,7 @@ impl<'g> ViewTable<'g> {
         let mut sorted: Vec<(u64, u64)> =
             dropped.iter().map(|&(a, b)| (a as u64, b as u64)).collect();
         sorted.sort_unstable();
-        for index in 0..self.written.min(self.spans.len()) {
+        for index in 0..self.spans.len() {
             let (a, b) = self.spans[index];
             if a >= b {
                 continue;
@@ -602,7 +602,7 @@ impl<'g> ViewTable<'g> {
 
     /// Stores the record of `index`; a record that went (None, memory lost) is zeroed: kind 0.
     fn put(&mut self, index: usize, rec: Rec) {
-        let had = std::mem::take(&mut self.spans[index]);
+        self.spans[index] = (0, 0);
         match rec {
             Rec::Buffer(r, span) => {
                 self.buf.write(index * RECORD, &r);
@@ -610,27 +610,28 @@ impl<'g> ViewTable<'g> {
             }
             Rec::Retry => {
                 self.retry.push(index);
-                if had.0 < had.1 {
-                    self.buf.write(index * RECORD, &[0u8; RECORD]);
-                }
+                self.buf.write(index * RECORD, &[0u8; RECORD]);
             }
-            Rec::None => {
-                if had.0 < had.1 {
-                    self.buf.write(index * RECORD, &[0u8; RECORD]);
-                }
-            }
+            Rec::None => self.buf.write(index * RECORD, &[0u8; RECORD]),
         }
     }
 
-    /// Writes the records of the views registered since the last call, and retries the ones
+    /// Writes the records of the registry indices that changed since the last call (a new or
+    /// reused index gets its view's record, a freed one a zeroed record), and retries the ones
     /// whose memory did not translate. The queue is idle.
     pub fn update(&mut self, mem: &mut GpuMemory<'_>) {
-        // One snapshot: the title's threads keep registering views, so a count taken apart
-        // from the list could be smaller than the list.
-        let first = self.written;
-        let views = crate::d3d12::descriptor::views_from(first);
-        if self.grow(first + views.len()).is_err() {
+        let changed = self.changes.changes();
+        let need = changed
+            .last()
+            .map(|c| c.0 as usize)
+            .into_iter()
+            .chain(self.retry.iter().copied())
+            .max()
+            .map_or(0, |i| i + 1);
+        if self.grow(need).is_err() {
             log_once("view table: cannot grow the buffer".into());
+            // looked at again (as they are then) by the next call
+            self.retry.extend(changed.iter().map(|c| c.0 as usize));
             return;
         }
         // views tried before and not translated, then the new ones
@@ -642,11 +643,10 @@ impl<'g> ViewTable<'g> {
             let rec = v.as_ref().map_or(Rec::None, |v| record_of(v, mem));
             self.put(index, rec);
         }
-        for (k, v) in views.iter().enumerate() {
-            let rec = record_of(v, mem);
-            self.put(first + k, rec);
+        for (index, v) in changed {
+            let rec = v.as_ref().map_or(Rec::None, |v| record_of(v, mem));
+            self.put(index as usize, rec);
         }
-        self.written = first + views.len();
     }
 }
 
