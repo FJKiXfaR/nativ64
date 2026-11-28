@@ -100,6 +100,29 @@ pub fn errno() -> i32 {
 static TRACED: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static TRACE_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// With `NATIV64_TRACE_TRIGGER`, the last trace lines are kept here instead of printed.
+static TRACE_RING: Mutex<Option<std::collections::VecDeque<String>>> = Mutex::new(None);
+const TRACE_RING_LINES: usize = 6000;
+
+/// Starts keeping trace lines in a ring of the last [`TRACE_RING_LINES`] instead of printing them.
+pub fn trace_ring_start() {
+    *TRACE_RING.lock().unwrap_or_else(|p| p.into_inner()) =
+        Some(std::collections::VecDeque::with_capacity(TRACE_RING_LINES));
+}
+
+/// Prints the ring, then goes back to printing every trace line as it comes.
+pub fn trace_ring_flush() {
+    let ring = TRACE_RING.lock().unwrap_or_else(|p| p.into_inner()).take();
+    for l in ring.into_iter().flatten() {
+        eprintln!("{l}");
+    }
+}
+
+fn trace_epoch() -> &'static std::time::Instant {
+    static T: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    T.get_or_init(std::time::Instant::now)
+}
+
 /// Number of traced import calls logged so far in the process.
 pub fn trace_calls() -> u64 {
     TRACE_CALLS.load(std::sync::atomic::Ordering::Relaxed)
@@ -176,10 +199,22 @@ extern "win64" fn trace_handler(index: u32, args: *const u64) {
     }
     TRACE_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let [r9, r8, rdx, rcx] = unsafe { std::ptr::read(args.cast::<[u64; 4]>()) };
-    eprintln!(
-        "nativ64: call {name}({rcx:#x}, {rdx:#x}, {r8:#x}, {r9:#x}){}",
+    let tid = unsafe { libc::syscall(libc::SYS_gettid) };
+    let line = format!(
+        "nativ64: [{tid}] {:.1}s call {name}({rcx:#x}, {rdx:#x}, {r8:#x}, {r9:#x}){}",
+        trace_epoch().elapsed().as_secs_f32(),
         peek_string(rcx)
     );
+    if let Ok(mut g) = TRACE_RING.lock() {
+        if let Some(ring) = g.as_mut() {
+            if ring.len() == TRACE_RING_LINES {
+                ring.pop_front();
+            }
+            ring.push_back(line);
+            return;
+        }
+    }
+    eprintln!("{line}");
 }
 
 const TRAMPOLINE_SIZE: usize = 160;

@@ -235,6 +235,8 @@ pub fn install(base: u64, size: usize) {
     );
     nativ64::seh::set_fatal_hook(report_unhandled);
     start_sampler();
+    start_peek();
+    start_trace_trigger();
     for sig in [
         libc::SIGSEGV,
         libc::SIGILL,
@@ -349,6 +351,98 @@ fn start_sampler() {
                 let tid = slot.load(Ordering::Relaxed);
                 unsafe { libc::syscall(libc::SYS_tgkill, pid, tid as i64, libc::SIGUSR2) };
                 std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        });
+}
+
+/// Reads `len` bytes of this process at `addr`, `None` when unmapped.
+fn read_guest(addr: u64, buf: &mut [u8]) -> Option<()> {
+    let local = libc::iovec {
+        iov_base: buf.as_mut_ptr().cast(),
+        iov_len: buf.len(),
+    };
+    let remote = libc::iovec {
+        iov_base: addr as *mut libc::c_void,
+        iov_len: buf.len(),
+    };
+    let n = unsafe { libc::process_vm_readv(libc::getpid(), &local, 1, &remote, 1, 0) };
+    (n == buf.len() as isize).then_some(())
+}
+
+/// Parses one `NATIV64_PEEK` item: `ADDR` or `ADDR>OFF` (hex, read the qword at ADDR, add OFF,
+/// then read there), giving `(addr, off)`.
+fn parse_peek(item: &str) -> Option<(u64, Option<u64>)> {
+    let hex = |t: &str| u64::from_str_radix(t.trim().trim_start_matches("0x"), 16).ok();
+    match item.split_once('>') {
+        Some((a, o)) => Some((hex(a)?, Some(hex(o)?))),
+        None => Some((hex(item)?, None)),
+    }
+}
+
+/// `NATIV64_PEEK=addr[,addr>off...]` (hex guest addresses): a host thread reads 8 bytes at each
+/// address every 100 ms and prints a line, with the elapsed seconds, whenever one changes
+/// (`addr>off` follows the qword stored at `addr` first). Off when unset.
+fn start_peek() {
+    let Ok(spec) = std::env::var("NATIV64_PEEK") else {
+        return;
+    };
+    let items: Vec<(String, (u64, Option<u64>))> = spec
+        .split(',')
+        .filter_map(|i| Some((i.to_string(), parse_peek(i)?)))
+        .collect();
+    let _ = std::thread::Builder::new()
+        .name("nativ64-peek".into())
+        .spawn(move || {
+            let t0 = std::time::Instant::now();
+            let mut last: Vec<Option<u64>> = vec![None; items.len()];
+            loop {
+                for (k, (name, (addr, off))) in items.iter().enumerate() {
+                    let mut b = [0u8; 8];
+                    let mut at = Some(*addr);
+                    if let Some(off) = off {
+                        at = read_guest(*addr, &mut b).map(|()| u64::from_le_bytes(b) + off);
+                    }
+                    let v = at.and_then(|a| read_guest(a, &mut b).map(|()| u64::from_le_bytes(b)));
+                    if v != last[k] {
+                        last[k] = v;
+                        say(format_args!(
+                            "nativ64: peek {name} = {v:x?} at {:.1}s\n",
+                            t0.elapsed().as_secs_f32()
+                        ));
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        });
+}
+
+/// `NATIV64_TRACE_TRIGGER=addr` (hex guest address, with `--trace-imports`): the trace lines are
+/// kept in a ring of the last 6000 until the byte at `addr` goes from non-zero to zero (polled
+/// every 2 ms); the ring is then printed and tracing goes on live. Catches what led to a flag flip.
+fn start_trace_trigger() {
+    let Some(addr) = std::env::var("NATIV64_TRACE_TRIGGER")
+        .ok()
+        .and_then(|v| u64::from_str_radix(v.trim().trim_start_matches("0x"), 16).ok())
+    else {
+        return;
+    };
+    crate::stubs::trace_ring_start();
+    let _ = std::thread::Builder::new()
+        .name("nativ64-trigger".into())
+        .spawn(move || {
+            let mut was_set = false;
+            loop {
+                let mut b = [0u8; 1];
+                match read_guest(addr, &mut b) {
+                    Some(()) if b[0] != 0 => was_set = true,
+                    Some(()) if was_set => {
+                        say(format_args!("nativ64: trace trigger fired\n"));
+                        crate::stubs::trace_ring_flush();
+                        return;
+                    }
+                    _ => {}
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
             }
         });
 }

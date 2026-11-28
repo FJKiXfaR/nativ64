@@ -77,6 +77,13 @@ code, `(host)` in our code) followed by up to 8 guest return addresses found in 
 stack. With it set, each `CreateThread` also prints `nativ64: thread TID start S param P [w0, w1]` (the
 first two words of the parameter, which carry the real entry when the title uses a generic start
 wrapper). Finds where a stuck thread sits; nothing runs when unset.
+`NATIV64_PEEK=addr[,addr>off,...]` (`fault.rs`, hex guest addresses): a host thread reads the qword at
+each address every 100 ms and prints `nativ64: peek ADDR = VALUE at T s` on every change (`addr>off`
+reads the qword at `addr`, adds `off`, and reads there; `None` = unmapped). Finds when a flag flips.
+`--trace-imports` lines carry the calling thread: `nativ64: [TID] SECONDSs call NAME(...)`.
+`NATIV64_TRACE_TRIGGER=addr` (with `--trace-imports`, hex guest address): trace lines go to a ring of
+the last 6000 until the byte at `addr` goes from non-zero to zero (polled every 2 ms); the ring is then
+printed and tracing continues live. Shows what led up to a flag flip without logging hours of calls.
 `--trace-imports` (`LoadOptions::trace_imports`) routes every resolved import through a
 trampoline that logs `nativ64: call module!name(rcx, rdx, r8, r9)` on entry, followed by the
 string at rcx when it reads as ASCII or UTF-16 (argument registers, xmm0-3 and stack arguments are
