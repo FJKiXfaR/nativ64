@@ -2727,12 +2727,13 @@ pub(crate) mod stage {
     }
 
     #[test]
-    fn a_sampler_neither_constant_nor_loaded_is_refused() {
+    fn a_sampler_neither_constant_nor_loaded_samples_with_default_modes() {
+        // the address modes are computed: the translation keeps wrap and the other words'
+        // defaults instead of refusing the whole shader
         let mut pre = TEX_CONST_SAMPLER.to_vec();
         pre[2] = "s_mov_b32 s12, s8"; // a word of user data
-        let (chunk, op) = refused(&ps_tables(&ps_after(&pre, &[SAMPLE_2D])));
-        assert_eq!(chunk, 9);
-        assert!(op.contains("address modes are not constants"), "{op}");
+        let t = translate_full(&ps_tables(&ps_after(&pre, &[SAMPLE_2D])), None);
+        assert!(count_op(&t.words, 113) > 0, "an OpImageSample* is emitted");
     }
 
     #[test]
