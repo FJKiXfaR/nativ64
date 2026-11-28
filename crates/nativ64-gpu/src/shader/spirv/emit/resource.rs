@@ -3182,10 +3182,14 @@ impl<'a> Tr<'a> {
         let ptr = self.g.op(Op::AccessChain, p, &[var, safe]);
         let v = self.g.load(tu, ptr);
         let v = self.g.select(inside, v, zero);
-        // the half: bit 1 of the byte address
-        let bit = self.g.op(Op::BitwiseAnd, tu, &[byte, two]);
-        let one = self.g.k(1);
-        let sh = self.g.op(Op::ShiftLeftLogical, tu, &[bit, one]);
+        // the half: bit 1 of the byte address, or the high half for `_d16_hi`
+        let sh = if name.ends_with("_d16_hi") {
+            self.g.k(16)
+        } else {
+            let bit = self.g.op(Op::BitwiseAnd, tu, &[byte, two]);
+            let one = self.g.k(1);
+            self.g.op(Op::ShiftLeftLogical, tu, &[bit, one])
+        };
         let half = self.g.op(Op::ShiftRightLogical, tu, &[v, sh]);
         let mask = self.g.k(0xffff);
         let half = self.g.op(Op::BitwiseAnd, tu, &[half, mask]);
@@ -3346,7 +3350,7 @@ impl<'a> Tr<'a> {
             _ if !read && rest.starts_with("_b16") => {
                 return self.ds_write_b16(c);
             }
-            "_u16" if read => {
+            _ if read && rest.starts_with("_u16") => {
                 return self.ds_read_u16(c);
             }
             "_b16" | "_u16" => return refuse(name),

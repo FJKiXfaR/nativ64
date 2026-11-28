@@ -327,64 +327,64 @@ fn spawn_evdev(path: String) {
     std::thread::Builder::new()
         .name("nativ64-evdev".into())
         .spawn(move || {
-            let Ok(name) = std::ffi::CString::new(path.clone()) else {
-                return;
-            };
-            let mut attempts = 0;
-            // the device can appear after the title starts (a controller switched on late)
-            let fd = loop {
+            // the pad can sleep (a wireless one) or be re-added: the reader reopens it
+            loop {
+                let Ok(name) = std::ffi::CString::new(path.clone()) else {
+                    return;
+                };
                 // SAFETY: `name` is a valid C string; a failure is handled below.
                 let fd = unsafe { libc::open(name.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
-                if fd >= 0 {
-                    break fd;
-                }
-                attempts += 1;
-                if attempts > 120 {
-                    eprintln!(
-                        "nativ64: gamepad {path} cannot be opened (errno {})",
-                        std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
-                    );
-                    return;
-                }
-                std::thread::sleep(std::time::Duration::from_secs(2));
-            };
-            eprintln!("nativ64: reading gamepad keys {path}");
-            let mut buf = [0u8; 24];
-            loop {
-                let mut got = 0usize;
-                while got < buf.len() {
-                    // SAFETY: the rest of `buf` is writable and the fd is open.
-                    let n = unsafe {
-                        libc::read(fd, buf.as_mut_ptr().add(got).cast(), buf.len() - got)
-                    };
-                    if n <= 0 {
-                        EVDEV_BUTTONS.store(0, Ordering::Relaxed);
-                        return;
-                    }
-                    got += n as usize;
-                }
-                // struct input_event: timeval (16 bytes), type (u16), code (u16), value (i32)
-                let kind = u16::from_le_bytes([buf[16], buf[17]]);
-                let code = u32::from(u16::from_le_bytes([buf[18], buf[19]]));
-                let value = i32::from_le_bytes([buf[20], buf[21], buf[22], buf[23]]);
-                if kind != 1 {
+                if fd < 0 {
+                    std::thread::sleep(std::time::Duration::from_secs(2));
                     continue;
                 }
-                let bit = key_button(code);
-                if bit == 0 {
+                eprintln!("nativ64: reading gamepad keys {path}");
+                let mut buf = [0u8; 24];
+                let mut alive = true;
+                while alive {
+                    let mut got = 0usize;
+                    while got < buf.len() {
+                        // SAFETY: the rest of `buf` is writable and the fd is open.
+                        let n = unsafe {
+                            libc::read(fd, buf.as_mut_ptr().add(got).cast(), buf.len() - got)
+                        };
+                        if n <= 0 {
+                            alive = false;
+                            break;
+                        }
+                        got += n as usize;
+                    }
+                    if !alive {
+                        break;
+                    }
+                    // struct input_event: timeval (16 bytes), type (u16), code (u16), value (i32)
+                    let kind = u16::from_le_bytes([buf[16], buf[17]]);
+                    let code = u32::from(u16::from_le_bytes([buf[18], buf[19]]));
+                    let value = i32::from_le_bytes([buf[20], buf[21], buf[22], buf[23]]);
+                    if kind != 1 {
+                        continue;
+                    }
+                    let bit = key_button(code);
+                    if bit == 0 {
+                        if gamepad_log() {
+                            eprintln!("nativ64: gamepad key {code} (value {value}) has no button");
+                        }
+                        continue;
+                    }
                     if gamepad_log() {
-                        eprintln!("nativ64: gamepad key {code} (value {value}) has no button");
+                        eprintln!("nativ64: gamepad key {code} (value {value}) -> button {bit:#x}");
                     }
-                    continue;
+                    match value {
+                        1 => EVDEV_BUTTONS.fetch_or(bit, Ordering::Relaxed),
+                        0 => EVDEV_BUTTONS.fetch_and(!bit, Ordering::Relaxed),
+                        _ => 0,
+                    };
                 }
-                if gamepad_log() {
-                    eprintln!("nativ64: gamepad key {code} (value {value}) -> button {bit:#x}");
-                }
-                match value {
-                    1 => EVDEV_BUTTONS.fetch_or(bit, Ordering::Relaxed),
-                    0 => EVDEV_BUTTONS.fetch_and(!bit, Ordering::Relaxed),
-                    _ => 0,
-                };
+                // the device went away (or the pad slept): forget what it held
+                EVDEV_BUTTONS.store(0, Ordering::Relaxed);
+                // SAFETY: closing our own descriptor.
+                unsafe { libc::close(fd) };
+                std::thread::sleep(std::time::Duration::from_secs(1));
             }
         })
         .ok();
@@ -1613,47 +1613,47 @@ pub fn start_joystick(path: Option<&str>) {
     std::thread::Builder::new()
         .name("nativ64-joystick".into())
         .spawn(move || {
-            let Ok(name) = std::ffi::CString::new(path.clone()) else {
-                return;
-            };
-            // a controller can be switched on after the title has started: keep trying
-            let mut attempts = 0;
-            let fd = loop {
-                // SAFETY: `name` is a valid C string; a failure is handled below.
-                let fd = unsafe { libc::open(name.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
-                if fd >= 0 {
-                    break fd;
-                }
-                attempts += 1;
-                if attempts > 120 {
-                    eprintln!(
-                        "nativ64: gamepad {path} cannot be opened (errno {})",
-                        std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
-                    );
-                    return;
-                }
-                std::thread::sleep(std::time::Duration::from_secs(2));
-            };
-            eprintln!("nativ64: reading gamepad {path}");
-            let mut buf = [0u8; 8];
+            // a controller can be switched on after the title has started, and a wireless one
+            // sleeps: the reader keeps reopening it
             loop {
-                let mut got = 0usize;
-                while got < buf.len() {
-                    // SAFETY: the rest of `buf` is writable and the fd is open.
-                    let n = unsafe {
-                        libc::read(fd, buf.as_mut_ptr().add(got).cast(), buf.len() - got)
-                    };
-                    if n <= 0 {
-                        reset_physical();
-                        return;
+                let Ok(name) = std::ffi::CString::new(path.clone()) else {
+                    return;
+                };
+                // SAFETY: `name` is a valid C string; a failure retries below.
+                let fd = unsafe { libc::open(name.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
+                if fd < 0 {
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    continue;
+                }
+                eprintln!("nativ64: reading gamepad {path}");
+                let mut buf = [0u8; 8];
+                let mut alive = true;
+                while alive {
+                    let mut got = 0usize;
+                    while got < buf.len() {
+                        // SAFETY: the rest of `buf` is writable and the fd is open.
+                        let n = unsafe {
+                            libc::read(fd, buf.as_mut_ptr().add(got).cast(), buf.len() - got)
+                        };
+                        if n <= 0 {
+                            alive = false;
+                            break;
+                        }
+                        got += n as usize;
                     }
-                    got += n as usize;
+                    if !alive {
+                        break;
+                    }
+                    let (kind, number, value) = js_event(&buf);
+                    if gamepad_log() && value != 0 {
+                        eprintln!("nativ64: gamepad js kind {kind} number {number} value {value}");
+                    }
+                    apply_js_event(kind, number, value);
                 }
-                let (kind, number, value) = js_event(&buf);
-                if gamepad_log() && value != 0 {
-                    eprintln!("nativ64: gamepad js kind {kind} number {number} value {value}");
-                }
-                apply_js_event(kind, number, value);
+                reset_physical();
+                // SAFETY: closing our own descriptor.
+                unsafe { libc::close(fd) };
+                std::thread::sleep(std::time::Duration::from_secs(1));
             }
         })
         .ok();
