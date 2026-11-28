@@ -859,8 +859,38 @@ impl<'g> VkBackend<'g> {
         }
     }
 
+    /// `DispatchMesh` / `DispatchMeshX`: a mesh pipeline's draw of `groups` task workgroups.
+    pub(super) fn mesh_dispatch_command(
+        &mut self,
+        d: &Device,
+        cb: vk::CommandBuffer,
+        groups: [u32; 3],
+    ) {
+        let c = Command::Draw {
+            vertices: 0,
+            instances: 1,
+            first_vertex: 0,
+            first_instance: 0,
+        };
+        match self.try_draw(d, cb, &c, &[], Some(groups)) {
+            Ok(()) => {
+                self.stats.drawn += 1;
+                super::profile::count(super::profile::Count::Drawn, 1);
+            }
+            Err(s) => {
+                let (n, why) = match s {
+                    Skip::Pipeline(w) => (&mut self.stats.draw_skips.pipeline, w),
+                    Skip::Memory(w) => (&mut self.stats.draw_skips.memory, w),
+                    Skip::Target(w) | Skip::State(w) => (&mut self.stats.draw_skips.target, w),
+                };
+                *n += 1;
+                log_once(format!("mesh dispatch skipped: {why}"));
+            }
+        }
+    }
+
     pub(super) fn draw_command(&mut self, d: &Device, cb: vk::CommandBuffer, c: &Command) {
-        match self.try_draw(d, cb, c, &[]) {
+        match self.try_draw(d, cb, c, &[], None) {
             Ok(()) => {
                 self.stats.drawn += 1;
                 super::profile::count(super::profile::Count::Drawn, 1);
@@ -912,6 +942,7 @@ impl<'g> VkBackend<'g> {
         cb: vk::CommandBuffer,
         c: &Command,
         over: &[u32],
+        mesh: Option<[u32; 3]>,
     ) -> Result<(), Skip> {
         let ptr = self.draw.list.pipeline;
         if ptr == 0 {
@@ -1002,7 +1033,7 @@ impl<'g> VkBackend<'g> {
                     let mut v = over.to_vec();
                     v.resize(built.color.len(), 0);
                     v[i] = t;
-                    return self.try_draw(d, cb, c, &v);
+                    return self.try_draw(d, cb, c, &v, mesh);
                 }
                 return skip(Skip::Target(format!(
                     "render target {i} is {:?}, the pipeline was made for {:?}",
@@ -1314,13 +1345,12 @@ impl<'g> VkBackend<'g> {
                 .flatten()
                 .collect();
             d.cmd_bind_descriptor_sets(cb, gfx, layout, 0, &sets, &[]);
-            d.cmd_push_constants(
-                cb,
-                layout,
-                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                0,
-                &root_address.to_le_bytes(),
-            );
+            let push_stages = if mesh.is_some() {
+                vk::ShaderStageFlags::MESH_EXT | vk::ShaderStageFlags::FRAGMENT
+            } else {
+                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT
+            };
+            d.cmd_push_constants(cb, layout, push_stages, 0, &root_address.to_le_bytes());
             d.cmd_set_viewport(cb, 0, &[vp]);
             d.cmd_set_scissor(cb, 0, &[sc]);
             d.cmd_set_blend_constants(cb, &blend.unwrap_or([1.0; 4]));
@@ -1336,6 +1366,17 @@ impl<'g> VkBackend<'g> {
                     Some(&[u64::from(v.size)]),
                     Some(&[u64::from(v.stride)]),
                 );
+            }
+            if let Some(groups) = mesh {
+                // the mesh stage's draw: one task workgroup per requested group
+                let Some(f) = self.gpu.mesh_draw else {
+                    log_once("a mesh dispatch on a device without vkCmdDrawMeshTasksEXT".into());
+                    return Ok(());
+                };
+                // SAFETY: the mesh pipeline is bound and the command buffer is recording; the
+                // group counts come from the command.
+                f(cb, groups[0], groups[1], groups[2]);
+                return Ok(());
             }
             match (c, index) {
                 (c, _) if quad_index.is_some() => {

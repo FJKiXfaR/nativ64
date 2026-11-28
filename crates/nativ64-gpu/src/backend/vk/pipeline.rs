@@ -538,30 +538,53 @@ fn build(
     if let Some(s) = pd
         .stages
         .iter()
-        .find(|s| !matches!(s.name, "vertex" | "pixel"))
+        .find(|s| !matches!(s.name, "vertex" | "pixel" | "mesh"))
     {
         return Err(format!("a {} stage (chunk 10c)", s.name));
     }
-    let vs_bytes = stage(pd, "vertex").ok_or("no vertex stage")?;
+    // a mesh pipeline: one mesh stage and a pixel stage, no vertex input
+    let mesh_bytes = stage(pd, "mesh");
     let fixed = fixed_state(g)?;
     check_fixed(&fixed, g)?;
-    let vs = parse_stage(vs_bytes, "vertex")?;
+    let first_name = if mesh_bytes.is_some() {
+        "mesh"
+    } else {
+        "vertex"
+    };
+    let vs = parse_stage(
+        mesh_bytes
+            .or_else(|| stage(pd, "vertex"))
+            .ok_or("no vertex stage")?,
+        first_name,
+    )?;
     let ps = stage(pd, "pixel")
         .map(|b| parse_stage(b, "pixel"))
         .transpose()?;
     if rect && !gpu.caps.geometry {
         return Err("a rectangle list needs geometryShader, which this device lacks".into());
     }
-    let (tv, tp) = match &ps {
-        Some(ps) => {
-            let (a, b) =
-                io::translate_pair(&vs, ps, &g.target_formats).map_err(|e| e.to_string())?;
-            (a, Some(b))
+    let (tv, tp) = if mesh_bytes.is_some() {
+        if !gpu.caps.mesh_shader {
+            return Err("a mesh pipeline on a device without VK_EXT_mesh_shader".into());
         }
-        None => (
-            io::translate_stage(&vs, &[], None).map_err(|e| e.to_string())?,
-            None,
-        ),
+        let tm = io::translate_stage(&vs, &g.target_formats, None).map_err(|e| e.to_string())?;
+        let tp = ps
+            .as_ref()
+            .map(|p| io::translate_stage(p, &g.target_formats, None).map_err(|e| e.to_string()))
+            .transpose()?;
+        (tm, tp)
+    } else {
+        match &ps {
+            Some(ps) => {
+                let (a, b) =
+                    io::translate_pair(&vs, ps, &g.target_formats).map_err(|e| e.to_string())?;
+                (a, Some(b))
+            }
+            None => (
+                io::translate_stage(&vs, &[], None).map_err(|e| e.to_string())?,
+                None,
+            ),
+        }
     };
     for t in std::iter::once(&tv).chain(tp.iter()) {
         if t.memory_addresses {
@@ -570,8 +593,16 @@ fn build(
     }
     // the pair's static samplers: both stages carry the whole list
     let layouts = bindless.layouts(&tv.samplers, samplers)?;
-    let vio = io::stage_io(&vs, &[], None).ok_or("the vertex stage has no I/O")?;
-    let input = vertex_input(g, &vio)?;
+    let vio = io::stage_io(&vs, &[], None).ok_or("the first stage has no I/O")?;
+    let input = if mesh_bytes.is_some() {
+        // a mesh pipeline takes no vertex buffers: the mesh stage fetches what it needs
+        Input {
+            bindings: Vec::new(),
+            attributes: Vec::new(),
+        }
+    } else {
+        vertex_input(g, &vio)?
+    };
     let color = color_formats(g)?;
     let depth = match g.depth_format {
         0 => None,
@@ -605,6 +636,9 @@ fn build(
         })
         .collect::<Result<_, _>>()?;
     let mut rows = vs.record().map(|r| r.layout.clone()).unwrap_or_default();
+    if mesh_bytes.is_some() {
+        // the mesh stage's pipeline layout rows come first (they name the user SGPRs 8..)
+    }
     for r in ps
         .as_ref()
         .and_then(|p| p.record())
@@ -615,7 +649,7 @@ fn build(
         }
     }
     let d = &gpu.device;
-    validate(&tv.words, "vertex")?;
+    validate(&tv.words, first_name)?;
     if let Some(t) = &tp {
         validate(&t.words, "pixel")?;
     }
@@ -648,8 +682,13 @@ fn build(
             }
         };
         let entry = c"main";
+        let first_stage = if mesh_bytes.is_some() {
+            vk::ShaderStageFlags::MESH_EXT
+        } else {
+            vk::ShaderStageFlags::VERTEX
+        };
         let mut stages = vec![vk::PipelineShaderStageCreateInfo::default()
-            .stage(vk::ShaderStageFlags::VERTEX)
+            .stage(first_stage)
             .module(vm)
             .name(entry)];
         if let Some(pm) = pm {

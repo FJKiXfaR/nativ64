@@ -20,8 +20,24 @@ pub(super) type DeviceFaultFn = unsafe extern "system" fn(
     *mut vk::DeviceFaultInfoEXT<'_>,
 ) -> vk::Result;
 
+/// `vkCmdDrawMeshTasksEXT`: the mesh stage's draw (VK_EXT_mesh_shader).
+pub type MeshDrawFn = unsafe extern "system" fn(vk::CommandBuffer, u32, u32, u32);
+
+/// What `pick_and_create` found: the device and everything opened with it.
+type Picked = (
+    Device,
+    u32,
+    vk::PhysicalDevice,
+    String,
+    bool,
+    Option<DeviceFaultFn>,
+    Option<MeshDrawFn>,
+);
+
 pub struct Gpu {
     pub(super) device: Device,
+    /// `vkCmdDrawMeshTasksEXT` when the device has mesh shaders.
+    pub(super) mesh_draw: Option<MeshDrawFn>,
     pub(super) ext_host: external_memory_host::Device,
     pub(super) queue: Mutex<vk::Queue>,
     pub(super) queue_family: u32,
@@ -291,7 +307,7 @@ impl Gpu {
         let entry = unsafe { Entry::load() }.map_err(|e| VkError::Load(e.to_string()))?;
         let (instance, wsi_instance) = instance::create(&entry)?;
         match Self::pick_and_create(&instance, over) {
-            Ok((device, queue_family, phys, name, wsi_device, device_fault)) => {
+            Ok((device, queue_family, phys, name, wsi_device, device_fault, mesh_draw)) => {
                 // SAFETY: valid handles of this instance.
                 let (mem_props, import_align, ext_host, queue) = unsafe {
                     let mut hp = vk::PhysicalDeviceExternalMemoryHostPropertiesEXT::default();
@@ -346,6 +362,7 @@ impl Gpu {
                 let (pipeline_cache, cache_note) = load_pipeline_cache(&device);
                 log_once(format!("pipeline cache: {cache_note}"));
                 Ok(Gpu {
+                    mesh_draw,
                     pipeline_cache,
                     cache_saved: Mutex::new(None),
                     caps,
@@ -374,17 +391,7 @@ impl Gpu {
         }
     }
 
-    fn pick_and_create(
-        instance: &Instance,
-        over: Option<&str>,
-    ) -> Result<(
-        Device,
-        u32,
-        vk::PhysicalDevice,
-        String,
-        bool,
-        Option<DeviceFaultFn>,
-    )> {
+    fn pick_and_create(instance: &Instance, over: Option<&str>) -> Result<Picked> {
         // SAFETY: plain enumeration.
         let devs = vk_try("vkEnumeratePhysicalDevices", unsafe {
             instance.enumerate_physical_devices()
@@ -418,8 +425,8 @@ impl Gpu {
         for (_, d, name, _) in cands {
             match check(instance, d) {
                 Ok(family) => {
-                    let (device, wsi, fault) = Self::create_device(instance, d, family)?;
-                    return Ok((device, family, d, name, wsi, fault));
+                    let (device, wsi, fault, mesh_draw) = Self::create_device(instance, d, family)?;
+                    return Ok((device, family, d, name, wsi, fault, mesh_draw));
                 }
                 Err(why) => {
                     log_once(format!("skipping {name}: {why}"));
@@ -439,7 +446,7 @@ impl Gpu {
         instance: &Instance,
         phys: vk::PhysicalDevice,
         family: u32,
-    ) -> Result<(Device, bool, Option<DeviceFaultFn>)> {
+    ) -> Result<(Device, bool, Option<DeviceFaultFn>, Option<MeshDrawFn>)> {
         let prio = [1.0f32];
         let qi = [vk::DeviceQueueCreateInfo::default()
             .queue_family_index(family)
@@ -509,6 +516,16 @@ impl Gpu {
         }
         let mut atomic_float_features = vk::PhysicalDeviceShaderAtomicFloat2FeaturesEXT::default()
             .shader_buffer_float32_atomic_min_max(true);
+        // the console's mesh shaders run as Vulkan mesh shaders (VK_EXT_mesh_shader)
+        let mesh_shader = have
+            .iter()
+            .any(|e| e.extension_name_as_c_str() == Ok(vk::EXT_MESH_SHADER_NAME));
+        if mesh_shader {
+            exts.push(vk::EXT_MESH_SHADER_NAME.as_ptr());
+        }
+        let mut mesh_features = vk::PhysicalDeviceMeshShaderFeaturesEXT::default()
+            .mesh_shader(true)
+            .multiview_mesh_shader(false);
         // a lost device then says what faulted (VK_EXT_device_fault)
         let faults = have
             .iter()
@@ -530,10 +547,21 @@ impl Gpu {
         if atomic_float2 {
             info = info.push_next(&mut atomic_float_features);
         }
+        if mesh_shader {
+            info = info.push_next(&mut mesh_features);
+        }
         // SAFETY: `info` and its pointees outlive the call.
         let device = vk_try("vkCreateDevice", unsafe {
             instance.create_device(phys, &info, None)
         })?;
+        let mesh_draw: Option<MeshDrawFn> = if mesh_shader {
+            // SAFETY: the device is live and the extension enabled; the function's signature
+            // is the extension's (a command buffer and three group counts).
+            let loader = ash::ext::mesh_shader::Device::new(instance, &device);
+            Some(loader.fp().cmd_draw_mesh_tasks_ext)
+        } else {
+            None
+        };
         let fault_fn = if faults {
             // SAFETY: the device exists; the name is the extension's one function.
             // the command name, not the extension name
@@ -547,7 +575,7 @@ impl Gpu {
         } else {
             None
         };
-        Ok((device, swapchain, fault_fn))
+        Ok((device, swapchain, fault_fn, mesh_draw))
     }
 
     /// Name of the chosen physical device.

@@ -1324,12 +1324,11 @@ impl<'g> VkBackend<'g> {
                 self.stats.dispatches += 1;
                 self.dispatch_command(d, cb, c);
             }
-            C::DispatchMesh { .. } | C::DispatchMeshX { .. } => {
+            C::DispatchMesh { x, .. } | C::DispatchMeshX { x, .. } => {
                 self.stats.dispatches += 1;
-                self.mesh_skipped = true;
-                log_once(
-                    "a mesh dispatch is not replayed (the mesh stage is not translated)".into(),
-                );
+                // a mesh pipeline's draw: `x` task workgroups (indirect forms are counted and
+                // left to the same path)
+                self.mesh_dispatch_command(d, cb, [*x, 1, 1]);
             }
             C::ExecuteIndirect {
                 signature,
