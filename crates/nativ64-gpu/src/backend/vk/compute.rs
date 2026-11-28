@@ -67,6 +67,7 @@ impl VkBackend<'_> {
                     Skip::Target(w) | Skip::State(w) => (&mut self.stats.dispatch_skips.state, w),
                 };
                 *n += 1;
+                self.dispatch_skipped = true;
                 log_once(format!("dispatch skipped: {why}"));
             }
         }

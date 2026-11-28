@@ -247,6 +247,9 @@ pub struct VkBackend<'g> {
     imports_gen: u64,
     /// `NATIV64_DUMP_DRAWS`: the snapshots of the frame being recorded.
     pub(super) dd: super::inspect::DrawDump,
+    /// A dispatch in this submission was skipped: an indirect argument buffer may hold what it
+    /// should have written, so indirect execution is not replayed from it.
+    pub(super) dispatch_skipped: bool,
     /// Tests: the most device memory the images may hold (a failing allocation beyond it).
     #[cfg(test)]
     pub(super) budget: Option<u64>,
@@ -446,6 +449,7 @@ impl<'g> VkBackend<'g> {
             device_lost: false,
             imports_gen: 0,
             dd: Default::default(),
+            dispatch_skipped: false,
             #[cfg(test)]
             budget: None,
             #[cfg(test)]
@@ -455,6 +459,7 @@ impl<'g> VkBackend<'g> {
 
     /// Replay `lists` in order and wait for the GPU to be idle.
     pub fn execute(&mut self, lists: &[Vec<Command>]) {
+        self.dispatch_skipped = false;
         if !self.device_lost {
             // a pipeline cache write is due when new pipelines were made (the runner may exit
             // through `_exit`, which skips `Drop`)
@@ -1033,6 +1038,12 @@ impl<'g> VkBackend<'g> {
         let Some(sig) = (unsafe { crate::d3d12::signature::signature_data(signature) }) else {
             return false;
         };
+        if self.dispatch_skipped {
+            log_once(
+                "indirect execution not replayed: a dispatch it depends on was skipped".into(),
+            );
+            return false;
+        }
         let stride = sig.stride;
         let Some(desc) = sig.arguments.first() else {
             return false;
@@ -1092,6 +1103,15 @@ impl<'g> VkBackend<'g> {
                     if words.len() < 4 || words[0] == 0 || words[1] == 0 {
                         continue;
                     }
+                    // an argument the GPU wrote from a skipped dispatch can be garbage; a draw
+                    // it cannot have meant is better skipped than left to fault the device
+                    if words[0] > 1 << 24 || words[1] > 1 << 16 || words[2] > 1 << 28 {
+                        log_once(format!(
+                            "indirect draw argument {:?} is not replayed",
+                            words
+                        ));
+                        continue;
+                    }
                     let c = Command::Draw {
                         vertices: words[0],
                         instances: words[1],
@@ -1104,6 +1124,13 @@ impl<'g> VkBackend<'g> {
                 1 => {
                     // D3D12_DRAW_INDEXED_ARGUMENTS
                     if words.len() < 5 || words[0] == 0 || words[1] == 0 {
+                        continue;
+                    }
+                    if words[0] > 1 << 27 || words[1] > 1 << 16 || words[2] > 1 << 28 {
+                        log_once(format!(
+                            "indirect indexed argument {:?} is not replayed",
+                            words
+                        ));
                         continue;
                     }
                     let c = Command::DrawIndexed {
@@ -1119,6 +1146,13 @@ impl<'g> VkBackend<'g> {
                 _ => {
                     // D3D12_DISPATCH_ARGUMENTS
                     if words.len() < 3 || words.iter().take(3).any(|&w| w == 0) {
+                        continue;
+                    }
+                    if words.iter().take(3).any(|&w| w > 65535) {
+                        log_once(format!(
+                            "indirect dispatch argument {:?} is not replayed",
+                            words
+                        ));
                         continue;
                     }
                     let c = Command::Dispatch {
