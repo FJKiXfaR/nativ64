@@ -9,6 +9,11 @@ Closes #
 <!-- Anything non-obvious: where real Windows differs from its documentation or from glibc,
      and your source (docs page, test on Windows, Wine's tests...). -->
 
+## AI assistance
+
+<!-- None, or the tool (e.g. Claude Code, OpenCode, Copilot) and what it wrote. Say what you
+     checked yourself: read every line, ran the tests, compared with Windows/docs... -->
+
 ## Checklist
 
 Maintainers check the legal items for every pull request and will ask you to remove and squash out anything that breaks them (see `CONTRIBUTING.md`).
@@ -25,4 +30,5 @@ Maintainers check the legal items for every pull request and will ask you to rem
 - [ ] Pure native: no Wine, Proton, DXVK, vkd3d(-proton), dxil-spirv or shim over them
 - [ ] Memory: every cache is bounded or retired, no CPU copy kept after upload, staging freed or reused, GPU imports/images released with the title's memory; for memory paths, how it was measured is described above
 - [ ] I claimed this work on an issue first (or opened one)
+- [ ] AI use, if any, is declared above, and I understand and tested every line
 - [ ] Code taken from another open-source project is credited and its license allows it
