@@ -339,7 +339,16 @@ fn high_is_zero(f: &Func, s: Src, depth: u32) -> bool {
 }
 
 fn is_copy(i: &Inst) -> bool {
-    matches!(i.instr.name(), "s_mov_b32" | "s_mov_b64")
+    // `v_readlane_b32`/`v_readfirstlane_b32` broadcast a descriptor dword a lane holds (a
+    // program that picks a descriptor by lane, say), so the result is that loaded dword
+    matches!(
+        i.instr.name(),
+        "s_mov_b32"
+            | "s_mov_b64"
+            | "v_readlane_b32"
+            | "v_readfirstlane_b32"
+            | "v_writelane_b32"
+    )
 }
 
 /// Whether operand `j` of `i` (of `n`) is a place a descriptor goes.
@@ -1454,6 +1463,38 @@ impl<'a> Tr<'a> {
                 Some(Src::Val(v)) if self.res().analysis.loaded.contains(v)
             ) {
                 if std::env::var_os("NATIV64_FMT_DEBUG").is_some() {
+                    if let Some(Src::Val(v)) = c.inst.srcs[ns - 2].first() {
+                        let mut seen = *v;
+                        for _ in 0..6 {
+                            let mut next = None;
+                            for blk in &self.f.blocks {
+                                for inst in &blk.insts {
+                                    if inst.dsts.iter().any(|d| d.1 == seen) {
+                                        eprintln!(
+                                            "fmt debug: value {seen:?} is defined by {} (srcs {:?})",
+                                            inst.instr.name(),
+                                            inst.srcs
+                                                .iter()
+                                                .map(|s| format!("{s:?}"))
+                                                .collect::<Vec<_>>()
+                                        );
+                                        next = inst
+                                            .srcs
+                                            .first()
+                                            .and_then(|s| s.first())
+                                            .and_then(|s| match s {
+                                                Src::Val(x) => Some(*x),
+                                                _ => None,
+                                            });
+                                    }
+                                }
+                            }
+                            match next {
+                                Some(n) if n != seen => seen = n,
+                                _ => break,
+                            }
+                        }
+                    }
                     eprintln!(
                         "fmt debug: {} first-in-loaded {:?} srcs {:?} loaded {} numbers {}",
                         i.name(),
