@@ -275,8 +275,36 @@ fn start_evdev_auto() {
             .iter()
             .any(|k| lower.contains(k))
             || (lower.contains("xbox") && !lower.contains("keyboard"));
-        let has_joy_axis = block.contains("ABS=3") || block.contains("ABS=3003f");
-        if !looks_like_pad && !has_joy_axis {
+        // gamepad axes: right stick (ABS_RX/RY, 3 and 4) or the D-pad hat (ABS_HAT0X/Y,
+        // 16 and 17) - a touchpad has ABS_X/Y but neither
+        let has_joy_axis = block
+            .lines()
+            .find_map(|l| l.strip_prefix("B: ABS="))
+            .is_some_and(|abs| {
+                let bits = abs
+                    .split_whitespace()
+                    .next()
+                    .and_then(|w| u64::from_str_radix(w, 16).ok())
+                    .unwrap_or(0);
+                let stick = bits >> 3 & 1 == 1 || bits >> 4 & 1 == 1;
+                let hat = bits >> 16 & 1 == 1 || bits >> 17 & 1 == 1;
+                stick || hat
+            });
+        // the surest signal: the node carries gamepad button codes (BTN_JOYSTICK 0x120 to
+        // BTN_THUMBR 0x13f) - a receiver often names its gamepad interface "... Keyboard"
+        let pad_keys = block
+            .lines()
+            .find_map(|l| l.strip_prefix("B: KEY="))
+            .is_some_and(|keys| {
+                keys.split_whitespace().enumerate().any(|(wi, w)| {
+                    u64::from_str_radix(w, 16).is_ok_and(|bits| {
+                        (288..=319).any(|code| code / 64 == wi && bits >> (code % 64) & 1 == 1)
+                    })
+                })
+            });
+        // a pad has joystick axes or a gamepad's name; a keyboard that happens to declare
+        // gamepad-like key codes has neither
+        if !(looks_like_pad || has_joy_axis) || (!has_joy_axis && !pad_keys) {
             continue;
         }
         let Some(handlers) = block.lines().find_map(|l| l.strip_prefix("H: Handlers=")) else {
