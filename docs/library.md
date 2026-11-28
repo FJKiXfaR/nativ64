@@ -76,7 +76,12 @@ Q / E = left / right shoulder (0x400 / 0x800). There are no triggers or sticks i
 so those have no keys. A real controller can drive it too: when the loader is started with
 `NATIV64_GAMEPAD` set (`1` or empty for `/dev/input/js0`, else a device path), a background
 thread reads the Linux joystick's `js_event`s (an Xbox 360 pad: buttons, D-pad hat, sticks and
-triggers) into the gamepad the readings report. Reading callbacks are stored and never fire.
+triggers) into the gamepad the readings report. Pads that report **keyboard codes instead of
+gamepad events** (no `BTN_*` codes in their evdev capabilities) carry no buttons in their js node;
+`NATIV64_GAMEPAD_EVDEV=/dev/input/eventNN` reads that node and maps its keys (Enter/Space = A,
+Escape = B, X/Y, arrows, Tab/M, Q/E) into the pad's buttons. `NATIV64_GAMEPAD_LOG=1` prints every
+joystick event and key a pad sends. Both readers retry while their device is missing, so a
+controller switched on after the title starts still works. Reading callbacks are stored and never fire.
 
 ## Windowing (`src/windowing.rs`)
 
