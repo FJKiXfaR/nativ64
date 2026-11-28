@@ -26,6 +26,9 @@ pub(super) struct Stage<'a> {
     attrs: HashMap<u32, u32>,
     outputs: HashMap<(u32, Class), u32>,
     position: Option<u32>,
+    /// The mesh stage's per-vertex position array and per-primitive index array.
+    mesh_pos: Option<u32>,
+    mesh_prim: Option<u32>,
     clip: Option<u32>,
     depth: Option<u32>,
     stencil: Option<u32>,
@@ -44,6 +47,8 @@ impl<'a> Stage<'a> {
             attrs: HashMap::new(),
             outputs: HashMap::new(),
             position: None,
+            mesh_pos: None,
+            mesh_prim: None,
             clip: None,
             depth: None,
             stencil: None,
@@ -492,6 +497,9 @@ impl<'a> Tr<'a> {
         let name = i.name();
         if name == "s_barrier" {
             return self.barrier().map(|()| Some(Vec::new()));
+        }
+        if name.starts_with("s_sendmsg") {
+            return self.sendmsg(c);
         }
         if name == "v_movrels_b32" {
             return self.movrels(c);
@@ -976,6 +984,95 @@ impl<'a> Tr<'a> {
                 })
             }
             (8, StageIo::Pixel(_)) => self.export_z(c, &chans),
+            // the mesh stage: `exp pos0` is this thread's vertex position and `exp prim` its
+            // primitive's three indices (10 bits each, bit 31 culls it)
+            (12, StageIo::Mesh(m)) => {
+                let var = match self.st().mesh_pos {
+                    Some(v) => v,
+                    None => {
+                        let v4 = self.vec4(Class::Float);
+                        let n = self.g.k(u32::from(m.max_vertices));
+                        let arr = self.g.m.global(Op::TypeArray, None, &[v4, n]);
+                        let v = self.global(StorageClass::Output, arr);
+                        self.g
+                            .m
+                            .decorate(v, Decoration::BuiltIn, &[BuiltIn::Position as u32]);
+                        self.st().mesh_pos = Some(v);
+                        v
+                    }
+                };
+                let tu = self.g.t_u32();
+                let tid = self.load_builtin(BuiltIn::LocalInvocationIndex, tu);
+                self.guarded(c.active, |t| {
+                    let tf = t.g.t_f32();
+                    let v4 = t.vec4(Class::Float);
+                    let p = t.g.t_ptr(StorageClass::Output, v4);
+                    let ptr = t.g.op(Op::AccessChain, p, &[var, tid]);
+                    // the exported channels, the rest of the position as the console leaves them
+                    let mut comps = [t.g.k(0); 4];
+                    if let Some(w) = comps.get_mut(3) {
+                        // w defaults to 1 (a position the rasteriser keeps)
+                        *w = t.g.k(0x3f800000);
+                    }
+                    for &(ch, bits) in &chans {
+                        if let Some(c) = comps.get_mut(ch as usize) {
+                            *c = t.g.as_f32(bits);
+                        }
+                    }
+                    let _ = tf;
+                    let v = t.g.op(Op::CompositeConstruct, v4, &comps);
+                    t.g.store(ptr, v);
+                    Ok(())
+                })
+            }
+            (20, StageIo::Mesh(m)) => {
+                let var = match self.st().mesh_prim {
+                    Some(v) => v,
+                    None => {
+                        let tu = self.g.t_u32();
+                        let v3 = self.g.m.global(Op::TypeVector, None, &[tu, 3]);
+                        let n = self.g.k(u32::from(m.max_primitives));
+                        let arr = self.g.m.global(Op::TypeArray, None, &[v3, n]);
+                        let v = self.global(StorageClass::Output, arr);
+                        self.g.m.decorate(
+                            v,
+                            Decoration::BuiltIn,
+                            &[BuiltIn::PrimitiveTriangleIndicesEXT as u32],
+                        );
+                        self.st().mesh_prim = Some(v);
+                        v
+                    }
+                };
+                let tu = self.g.t_u32();
+                let tid = self.load_builtin(BuiltIn::LocalInvocationIndex, tu);
+                let Some(&(_, bits)) = chans.first() else {
+                    return bad("a primitive export without indices");
+                };
+                self.guarded(c.active, |t| {
+                    let tu = t.g.t_u32();
+                    let tb = t.g.t_bool();
+                    let v3 = t.g.m.global(Op::TypeVector, None, &[tu, 3]);
+                    let p = t.g.t_ptr(StorageClass::Output, v3);
+                    let ptr = t.g.op(Op::AccessChain, p, &[var, tid]);
+                    // bit 31 means "no primitive": zero indices are a primitive with no area
+                    let k31 = t.g.k(31);
+                    let z = t.g.k(0);
+                    let b31 = t.g.op(Op::ShiftRightLogical, tu, &[bits, k31]);
+                    let culled = t.g.op(Op::INotEqual, tb, &[b31, z]);
+                    let mut idx = [z; 3];
+                    for (k, slot) in idx.iter_mut().enumerate() {
+                        let sh = t.g.k(10 * k as u32);
+                        let i = t.g.op(Op::ShiftRightLogical, tu, &[bits, sh]);
+                        let mask = t.g.k(0x3ff);
+                        let i = t.g.op(Op::BitwiseAnd, tu, &[i, mask]);
+                        *slot = t.g.select(culled, z, i);
+                    }
+                    let v = t.g.op(Op::CompositeConstruct, v3, &idx);
+                    t.g.store(ptr, v);
+                    Ok(())
+                })
+            }
+            (32..=63, StageIo::Mesh(_)) => unsupported("a mesh vertex attribute export"),
             _ => unsupported(&format!("exp target {}", e.target)),
         }
     }

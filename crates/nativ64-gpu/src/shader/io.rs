@@ -229,11 +229,13 @@ impl StageIo {
 
 /// The user SGPRs the layout marks as tables (type 3) or heaps (types 5 and 6): each holds the
 /// low 32 bits of an address the root block carries in full.
-fn table_sgprs(rec: &Record) -> BTreeSet<u16> {
+fn table_sgprs(rec: &Record, base: u16) -> BTreeSet<u16> {
+    // `first_user_dword` is an index in the stage's user data: the SGPR is the base plus it (0
+    // for vertex, pixel and compute, 8 for the mesh stage's user SGPRs)
     rec.layout
         .iter()
         .filter(|l| matches!(l.root_type, 3 | 5 | 6) && l.user_sgprs > 0)
-        .map(|l| u16::from(l.first_user_dword))
+        .map(|l| base + u16::from(l.first_user_dword))
         .collect()
 }
 
@@ -319,7 +321,7 @@ fn vs_io(p: &ParsedShader, rec: &Record, link: Option<&Link>) -> Option<VsIo> {
     Some(VsIo {
         used: used_rows(rec),
         user: ir::user_range(rec),
-        tables: table_sgprs(rec),
+        tables: table_sgprs(rec, 0),
         lds_bytes: rec.lds_bytes,
         attrs,
         params,
@@ -384,7 +386,7 @@ fn ps_io(rec: &Record, targets: &[u32], link: Option<&Link>) -> Option<PsIo> {
         lds_bytes: rec.lds_bytes,
         used: used_rows(rec),
         user: ir::user_range(rec),
-        tables: table_sgprs(rec),
+        tables: table_sgprs(rec, 0),
         vgprs,
         attrs,
         targets: targets.iter().map(|&f| dxgi_class(f)).collect(),
@@ -416,7 +418,7 @@ fn cs_io(rec: &Record) -> Option<CsIo> {
         .collect();
     Some(CsIo {
         user: 0..d.user_sgprs(),
-        tables: table_sgprs(rec),
+        tables: table_sgprs(rec, 0),
         group: d.group,
         group_ids,
         thread_ids: d.thread_id_vgprs(),
@@ -433,7 +435,7 @@ fn mesh_io(rec: &Record) -> Option<MeshIo> {
     let user = 8..8 + u16::from(d.user_sgprs).max(1);
     Some(MeshIo {
         user,
-        tables: table_sgprs(rec),
+        tables: table_sgprs(rec, 8),
         outputs: d.outputs.clone(),
         group_lanes: d.group_lanes,
         max_vertices: d.max_vertices,

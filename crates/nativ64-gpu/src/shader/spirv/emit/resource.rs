@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use spirv::{Capability, Decoration, GlslStd450Op as GL, Op, StorageClass};
 
 use super::{bad, Gen, Opd, SpirvError, Tr, R};
-use crate::shader::gfx10::Enc;
+use crate::shader::gfx10::{Enc, Operand, Slot};
 use crate::shader::io::{Class, StageIo};
 use crate::shader::ir::{Func, Inst, Reg, Src, Term, Val, ValDef};
 use crate::shader::resource::SamplerDesc;
@@ -3509,6 +3509,39 @@ impl<'a> Tr<'a> {
         Ok(Some(vec![Opd::V(self.g.select(cond, value, old))]))
     }
 
+    /// `s_sendmsg`: the one message a Vulkan translation needs is the mesh stage's allocation
+    /// request (`MSG_GS_ALLOC_REQ`, M0 = `primitives << 12 | vertices`), which becomes
+    /// `OpSetMeshOutputsEXT`. Every other message (interrupts, waitcodes) has no host meaning
+    /// and is dropped.
+    pub(super) fn sendmsg(&mut self, c: &Ctx<Gen>) -> R<Option<Vec<Opd<Gen>>>> {
+        let i = &c.inst.instr;
+        let Some(k) = i.info.slots.iter().position(|s| matches!(s, Slot::Sendmsg)) else {
+            return Ok(Some(Vec::new()));
+        };
+        let Some(Operand::Imm(raw)) = i.operands.get(k).copied() else {
+            return Ok(Some(Vec::new()));
+        };
+        // the message id is the immediate's low nibble; 9 is MSG_GS_ALLOC_REQ
+        if raw & 0xf != 9 || !matches!(self.io(), StageIo::Mesh(_)) {
+            return Ok(Some(Vec::new()));
+        }
+        let Some((_, m0)) = c.imps.iter().find(|(r, _)| *r == Reg::M0).copied() else {
+            return bad("a mesh allocation request without its M0");
+        };
+        let Opd::V(m0) = m0 else {
+            return bad("a mesh allocation request whose M0 is not a dword");
+        };
+        let tu = self.g.t_u32();
+        let k12 = self.g.k(12);
+        let (mask_v, mask_p) = (self.g.k(0x3ff), self.g.k(0x7ff));
+        let v = self.g.op(Op::BitwiseAnd, tu, &[m0, mask_v]);
+        let p = self.g.op(Op::ShiftRightLogical, tu, &[m0, k12]);
+        let p = self.g.op(Op::BitwiseAnd, tu, &[p, mask_p]);
+        self.g.m.capability(Capability::MeshShadingEXT);
+        self.g.op0(Op::SetMeshOutputsEXT, &[v, p]);
+        Ok(Some(Vec::new()))
+    }
+
     /// `v_movrels_b32 vDst, v[index]`: the VGPR the per-lane index chooses. Every VGPR is a
     /// source (an undefined one was read as zero); a select tree picks the lane's.
     pub(super) fn movrels(&mut self, c: &Ctx<Gen>) -> R<Option<Vec<Opd<Gen>>>> {
@@ -3539,8 +3572,8 @@ impl<'a> Tr<'a> {
     /// `s_barrier`: every invocation of the group meets here, so the group's memory is
     /// consistent. Refused outside a compute program and under a per-lane branch.
     pub(super) fn barrier(&mut self) -> R<()> {
-        if !matches!(self.io(), StageIo::Compute(_)) {
-            return refuse("s_barrier outside a compute program");
+        if !matches!(self.io(), StageIo::Compute(_) | StageIo::Mesh(_)) {
+            return refuse("s_barrier outside a compute or mesh program");
         }
         if self.lane_ifs > 0 {
             // a per-lane branch cannot hold a group barrier; the merge of the branch is where
