@@ -203,6 +203,112 @@ pub fn set_keyboard_buttons(mask: u32) {
     KEYBOARD_BUTTONS.store(mask, Ordering::Relaxed);
 }
 
+/// The buttons a gamepad in keyboard mode holds (`NATIV64_GAMEPAD_EVDEV` reads its evdev node):
+/// pads that send key codes instead of `BTN_*`/ABS gamepad events show up only this way.
+static EVDEV_BUTTONS: AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// A Linux evdev key code (the physical position of a QWERTY key) as a gamepad button bit.
+pub fn key_button(code: u32) -> u32 {
+    match code {
+        28 | 57 => A, // Enter, Space
+        1 | 14 => B,  // Escape, Backspace
+        45 => X,
+        21 => Y,
+        103 => UP,
+        108 => DOWN,
+        105 => LEFT,
+        106 => RIGHT,
+        15 => VIEW,           // Tab
+        50 => MENU,           // M
+        16 => LEFT_SHOULDER,  // Q
+        18 => RIGHT_SHOULDER, // E
+        _ => 0,
+    }
+}
+
+/// Starts the evdev reader of a gamepad that reports keyboard codes (`NATIV64_GAMEPAD_EVDEV`,
+/// e.g. `/dev/input/event24`). Its key presses press the virtual gamepad's buttons, OR-ed with
+/// the joystick, script and keyboard sources.
+pub fn start_evdev(path: &str) {
+    static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let path = path.to_string();
+    std::thread::Builder::new()
+        .name("nativ64-evdev".into())
+        .spawn(move || {
+            let Ok(name) = std::ffi::CString::new(path.clone()) else {
+                return;
+            };
+            let mut attempts = 0;
+            // the device can appear after the title starts (a controller switched on late)
+            let fd = loop {
+                // SAFETY: `name` is a valid C string; a failure is handled below.
+                let fd = unsafe { libc::open(name.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
+                if fd >= 0 {
+                    break fd;
+                }
+                attempts += 1;
+                if attempts > 120 {
+                    eprintln!(
+                        "nativ64: gamepad {path} cannot be opened (errno {})",
+                        std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+                    );
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(2));
+            };
+            eprintln!("nativ64: reading gamepad keys {path}");
+            let mut buf = [0u8; 24];
+            loop {
+                let mut got = 0usize;
+                while got < buf.len() {
+                    // SAFETY: the rest of `buf` is writable and the fd is open.
+                    let n = unsafe {
+                        libc::read(fd, buf.as_mut_ptr().add(got).cast(), buf.len() - got)
+                    };
+                    if n <= 0 {
+                        EVDEV_BUTTONS.store(0, Ordering::Relaxed);
+                        return;
+                    }
+                    got += n as usize;
+                }
+                // struct input_event: timeval (16 bytes), type (u16), code (u16), value (i32)
+                let kind = u16::from_le_bytes([buf[16], buf[17]]);
+                let code = u32::from(u16::from_le_bytes([buf[18], buf[19]]));
+                let value = i32::from_le_bytes([buf[20], buf[21], buf[22], buf[23]]);
+                if kind != 1 {
+                    continue;
+                }
+                let bit = key_button(code);
+                if bit == 0 {
+                    if gamepad_log() {
+                        eprintln!("nativ64: gamepad key {code} (value {value}) has no button");
+                    }
+                    continue;
+                }
+                if gamepad_log() {
+                    eprintln!("nativ64: gamepad key {code} (value {value}) -> button {bit:#x}");
+                }
+                match value {
+                    1 => EVDEV_BUTTONS.fetch_or(bit, Ordering::Relaxed),
+                    0 => EVDEV_BUTTONS.fetch_and(!bit, Ordering::Relaxed),
+                    _ => 0,
+                };
+            }
+        })
+        .ok();
+}
+
+/// Whether `NATIV64_GAMEPAD_LOG` is set (prints the keys and joystick events a pad sends).
+fn gamepad_log() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        std::env::var("NATIV64_GAMEPAD_LOG").is_ok_and(|v| v != "0" && !v.is_empty())
+    })
+}
+
 /// Frames the title has presented (the GPU backend reports each present).
 static PRESENTED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -445,6 +551,7 @@ impl State {
     fn buttons_at(&self, seconds: f64) -> u32 {
         self.script.buttons_at(seconds)
             | KEYBOARD_BUTTONS.load(Ordering::Relaxed)
+            | EVDEV_BUTTONS.load(Ordering::Relaxed)
             | physical().buttons
     }
 
@@ -1420,15 +1527,24 @@ pub fn start_joystick(path: Option<&str>) {
             let Ok(name) = std::ffi::CString::new(path.clone()) else {
                 return;
             };
-            // SAFETY: `name` is a valid C string; a failure is handled below.
-            let fd = unsafe { libc::open(name.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
-            if fd < 0 {
-                eprintln!(
-                    "nativ64: gamepad {path} cannot be opened (errno {})",
-                    std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
-                );
-                return;
-            }
+            // a controller can be switched on after the title has started: keep trying
+            let mut attempts = 0;
+            let fd = loop {
+                // SAFETY: `name` is a valid C string; a failure is handled below.
+                let fd = unsafe { libc::open(name.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
+                if fd >= 0 {
+                    break fd;
+                }
+                attempts += 1;
+                if attempts > 120 {
+                    eprintln!(
+                        "nativ64: gamepad {path} cannot be opened (errno {})",
+                        std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+                    );
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(2));
+            };
             eprintln!("nativ64: reading gamepad {path}");
             let mut buf = [0u8; 8];
             loop {
@@ -1445,6 +1561,9 @@ pub fn start_joystick(path: Option<&str>) {
                     got += n as usize;
                 }
                 let (kind, number, value) = js_event(&buf);
+                if gamepad_log() && value != 0 {
+                    eprintln!("nativ64: gamepad js kind {kind} number {number} value {value}");
+                }
                 apply_js_event(kind, number, value);
             }
         })

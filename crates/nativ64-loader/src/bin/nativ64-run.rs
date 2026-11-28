@@ -27,6 +27,13 @@ fn install_gamepad() {
         Some(v.as_str())
     };
     nativ64::gameinput::start_joystick(path);
+    // a pad that reports keyboard codes instead of gamepad events (`NATIV64_GAMEPAD_EVDEV`,
+    // e.g. /dev/input/event24) needs its evdev node read directly
+    if let Ok(ev) = std::env::var("NATIV64_GAMEPAD_EVDEV") {
+        if !ev.is_empty() {
+            nativ64::gameinput::start_evdev(&ev);
+        }
+    }
 }
 
 fn main() -> ExitCode {
