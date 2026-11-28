@@ -16,7 +16,7 @@ const ALT_STACK: usize = 64 * 1024;
 static NO_SEH: AtomicBool = AtomicBool::new(false);
 
 struct Buf {
-    b: [u8; 512],
+    b: [u8; 1024],
     n: usize,
 }
 
@@ -31,7 +31,7 @@ impl std::fmt::Write for Buf {
 
 fn say(args: std::fmt::Arguments) {
     use std::fmt::Write;
-    let mut b = Buf { b: [0; 512], n: 0 };
+    let mut b = Buf { b: [0; 1024], n: 0 };
     let _ = b.write_fmt(args);
     unsafe { libc::write(2, b.b.as_ptr().cast(), b.n) };
 }
@@ -234,6 +234,7 @@ pub fn install(base: u64, size: usize) {
         Ordering::Relaxed,
     );
     nativ64::seh::set_fatal_hook(report_unhandled);
+    start_sampler();
     for sig in [
         libc::SIGSEGV,
         libc::SIGILL,
@@ -266,8 +267,101 @@ pub fn register_dll(name: &str, base: u64, size: usize) {
     DLL_COUNT.store(i + 1, Ordering::Release);
 }
 
+const MAX_THREADS: usize = 256;
+static THREAD_TIDS: [AtomicU64; MAX_THREADS] = [const { AtomicU64::new(0) }; MAX_THREADS];
+static THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+/// `SIGUSR2` handler of `NATIV64_SAMPLE_THREADS`: one line with the thread's tid, its rip
+/// (`image+0xOFF` / `dll+0xOFF` when in guest code, else a host address) and up to 8 return
+/// addresses into guest code found in the first 4 pages of its stack.
+extern "C" fn on_sample(_: i32, _: *mut libc::siginfo_t, uc: *mut libc::c_void) {
+    let uc = uc as *mut libc::ucontext_t;
+    let (rip, rsp) = unsafe {
+        (
+            (*uc).uc_mcontext.gregs[libc::REG_RIP as usize] as u64,
+            (*uc).uc_mcontext.gregs[libc::REG_RSP as usize] as u64,
+        )
+    };
+    let tid = unsafe { libc::syscall(libc::SYS_gettid) };
+    say(format_args!(
+        "nativ64: sample tid {tid} rip {rip:#x}{}",
+        if in_guest_code(rip) { "" } else { " (host)" }
+    ));
+    say_location(rip);
+    let mut addr = rsp & !7;
+    let mut found = 0;
+    let mut buf = [0u64; 512];
+    // Four pages at most, each read with `process_vm_readv` so an unreadable page (a guard) just
+    // ends the scan.
+    'pages: for _ in 0..4 {
+        let len = 4096 - (addr & 0xfff) as usize;
+        let local = libc::iovec {
+            iov_base: buf.as_mut_ptr().cast(),
+            iov_len: len,
+        };
+        let remote = libc::iovec {
+            iov_base: addr as *mut libc::c_void,
+            iov_len: len,
+        };
+        let n = unsafe { libc::process_vm_readv(libc::getpid(), &local, 1, &remote, 1, 0) };
+        if n != len as isize {
+            break;
+        }
+        for v in &buf[..len / 8] {
+            if in_guest_code(*v) {
+                say(format_args!(" <- {v:#x}"));
+                say_location(*v);
+                found += 1;
+                if found == 8 {
+                    break 'pages;
+                }
+            }
+        }
+        addr += len as u64;
+    }
+    say(format_args!("\n"));
+}
+
+/// `NATIV64_SAMPLE_THREADS=<secs>`: a host thread signals every registered guest thread each
+/// `secs` seconds and each prints where it is (see [`on_sample`]). Off when unset.
+fn start_sampler() {
+    let Some(secs) = std::env::var("NATIV64_SAMPLE_THREADS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|&s| s > 0)
+    else {
+        return;
+    };
+    unsafe {
+        handle(
+            libc::SIGUSR2,
+            on_sample as extern "C" fn(i32, *mut libc::siginfo_t, *mut libc::c_void) as usize,
+            libc::SA_SIGINFO | libc::SA_ONSTACK | libc::SA_RESTART,
+        )
+    };
+    let _ = std::thread::Builder::new()
+        .name("nativ64-sample".into())
+        .spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_secs(secs));
+            say(format_args!("nativ64: samples\n"));
+            let pid = unsafe { libc::getpid() };
+            for slot in &THREAD_TIDS[..THREAD_COUNT.load(Ordering::Acquire).min(MAX_THREADS)] {
+                let tid = slot.load(Ordering::Relaxed);
+                unsafe { libc::syscall(libc::SYS_tgkill, pid, tid as i64, libc::SIGUSR2) };
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        });
+}
+
 /// Gives the calling thread an alternate signal stack (leaked: it lives as long as the thread).
 pub fn setup_thread() {
+    let i = THREAD_COUNT.fetch_add(1, Ordering::AcqRel);
+    if i < MAX_THREADS {
+        THREAD_TIDS[i].store(
+            unsafe { libc::syscall(libc::SYS_gettid) } as u64,
+            Ordering::Relaxed,
+        );
+    }
     let mem = unsafe {
         libc::mmap(
             std::ptr::null_mut(),

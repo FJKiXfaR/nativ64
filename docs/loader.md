@@ -71,6 +71,12 @@ trap stub aborts (SIGABRT). `nativ64-run --check <exe>` only maps and binds, pri
 entry point, section count and import statistics, the first 20 unresolved imports, the loaded
 package DLLs (base, path, import and unresolved counts) and the unresolved imports per module
 for the exe and each DLL.
+`NATIV64_SAMPLE_THREADS=<secs>` (`fault.rs`): a host thread sends `SIGUSR2` to every guest thread
+each `secs` seconds; each prints `nativ64: sample tid T rip R` (`image+0xOFF` or `dll+0xOFF` in guest
+code, `(host)` in our code) followed by up to 8 guest return addresses found in the first 4 pages of its
+stack. With it set, each `CreateThread` also prints `nativ64: thread TID start S param P [w0, w1]` (the
+first two words of the parameter, which carry the real entry when the title uses a generic start
+wrapper). Finds where a stuck thread sits; nothing runs when unset.
 `--trace-imports` (`LoadOptions::trace_imports`) routes every resolved import through a
 trampoline that logs `nativ64: call module!name(rcx, rdx, r8, r9)` on entry, followed by the
 string at rcx when it reads as ASCII or UTF-16 (argument registers, xmm0-3 and stack arguments are
