@@ -657,6 +657,189 @@ pub fn set_fatal_hook(hook: FatalHook) {
     FATAL_HOOK.store(hook as usize, std::sync::atomic::Ordering::Release);
 }
 
+/// `NATIV64_TRACE_FAULTS`: when set (by the loader), the epoch that trace lines count from.
+static FAULT_TRACE: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+/// How many times each `(code, rip, outcome, place)` was seen, for rate-limiting.
+static FAULT_SEEN: Mutex<Vec<(FaultKey, u64)>> = Mutex::new(Vec::new());
+
+/// Distinct keys kept; past it, new keys always print (the table stays bounded).
+const FAULT_KEYS_MAX: usize = 4096;
+
+type FaultKey = (u32, usize, u8, usize);
+
+/// Outcome of a traced fault: who took it and where it went.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FaultOutcome {
+    /// A vectored handler (address) returned `EXCEPTION_CONTINUE_EXECUTION`.
+    Vectored(usize),
+    /// A frame handler (address, frame pc) returned `ExceptionContinueExecution`.
+    Continued(usize, usize),
+    /// A frame handler (address, frame pc) took it by unwinding to `target`.
+    Unwound {
+        handler: usize,
+        frame: usize,
+        target: usize,
+    },
+    /// Nobody took it.
+    Unhandled,
+}
+
+/// One fault being dispatched on this thread: record, time, and the last frame handler called.
+#[derive(Clone, Copy)]
+struct Traced {
+    rec: usize,
+    code: u32,
+    rip: usize,
+    addr: usize,
+    secs: f32,
+    handler: usize,
+    frame: usize,
+}
+
+thread_local! {
+    /// Faults being dispatched on this thread (innermost last), with `NATIV64_TRACE_FAULTS`.
+    static TRACED: std::cell::RefCell<Vec<Traced>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Turns on `NATIV64_TRACE_FAULTS`: from now on, every hardware fault dispatched to the title's
+/// handlers prints `nativ64: fault [TID] Ts code C rip LOC addr A -> OUTCOME` (identical lines
+/// rate-limited). Time counts from this call.
+pub fn set_fault_trace() {
+    let _ = FAULT_TRACE.set(std::time::Instant::now());
+}
+
+fn fault_trace_on() -> bool {
+    FAULT_TRACE.get().is_some()
+}
+
+/// `image+0xOFF` (or the bare address outside every image).
+fn loc(a: usize) -> String {
+    match crate::process::image_base_of(a) {
+        Some(b) => format!("image+{:#x}", a - b),
+        None => format!("{a:#x}"),
+    }
+}
+
+/// Whether the `n`-th identical line (from 1) prints: the first 3, then each power of two.
+pub fn fault_line_due(n: u64) -> bool {
+    n <= 3 || n.is_power_of_two()
+}
+
+/// The trace line of one fault (`n` = how many identical ones so far).
+#[allow(clippy::too_many_arguments)]
+pub fn fault_line(
+    tid: u32,
+    secs: f32,
+    code: u32,
+    rip: &str,
+    addr: usize,
+    outcome: &str,
+    n: u64,
+) -> String {
+    let mut l = format!(
+        "nativ64: fault [{tid}] {secs:.3}s code {code:#x} rip {rip} addr {addr:#x} -> {outcome}"
+    );
+    if n > 1 {
+        l.push_str(&format!(" (x{n})"));
+    }
+    l
+}
+
+fn outcome_text(o: FaultOutcome) -> String {
+    match o {
+        FaultOutcome::Vectored(h) => format!("continue (vectored {})", loc(h)),
+        FaultOutcome::Continued(h, f) => {
+            format!("continue (handler {} frame {})", loc(h), loc(f))
+        }
+        FaultOutcome::Unwound {
+            handler,
+            frame,
+            target,
+        } => format!(
+            "caught: unwind to {} (handler {} frame {})",
+            loc(target),
+            loc(handler),
+            loc(frame)
+        ),
+        FaultOutcome::Unhandled => "unhandled".to_string(),
+    }
+}
+
+/// Prints the line of `t` ending in `o`, unless rate-limited.
+fn trace_fault(t: &Traced, o: FaultOutcome) {
+    let (kind, place) = match o {
+        FaultOutcome::Vectored(h) => (0, h),
+        FaultOutcome::Continued(h, f) => (1, h ^ f.rotate_left(32)),
+        FaultOutcome::Unwound { target, .. } => (2, target),
+        FaultOutcome::Unhandled => (3, 0),
+    };
+    let key = (t.code, t.rip, kind, place);
+    let n = {
+        let mut seen = FAULT_SEEN.lock().unwrap_or_else(|e| e.into_inner());
+        match seen.iter_mut().find(|e| e.0 == key) {
+            Some(e) => {
+                e.1 += 1;
+                e.1
+            }
+            None => {
+                if seen.len() < FAULT_KEYS_MAX {
+                    seen.push((key, 1));
+                }
+                1
+            }
+        }
+    };
+    if fault_line_due(n) {
+        let tid = unsafe { libc::syscall(libc::SYS_gettid) as u32 };
+        eprintln!(
+            "{}",
+            fault_line(
+                tid,
+                t.secs,
+                t.code,
+                &loc(t.rip),
+                t.addr,
+                &outcome_text(o),
+                n
+            )
+        );
+    }
+}
+
+/// Records the frame handler about to see the traced fault `rec`.
+fn trace_handler(rec: *mut ExceptionRecord, handler: usize, frame: usize) {
+    TRACED.with(|t| {
+        if let Some(e) = t.borrow_mut().last_mut() {
+            if e.rec == rec as usize {
+                e.handler = handler;
+                e.frame = frame;
+            }
+        }
+    });
+}
+
+/// An unwind to `target` (stack pointer `sp`) while a traced fault is being dispatched: the
+/// innermost one was caught; the dispatches below `sp` are abandoned.
+fn trace_unwind(target: usize, sp: usize) {
+    let top = TRACED.with(|t| {
+        let mut t = t.borrow_mut();
+        let top = t.last().copied();
+        t.retain(|e| e.rec >= sp);
+        top
+    });
+    if let Some(e) = top {
+        trace_fault(
+            &e,
+            FaultOutcome::Unwound {
+                handler: e.handler,
+                frame: e.frame,
+                target,
+            },
+        );
+    }
+}
+
 /// Entry for a hardware fault turned into an exception: the loader's signal handler copies the
 /// `CONTEXT` and `EXCEPTION_RECORD` onto the faulting thread's stack, then resumes the thread
 /// here (as if called, so `rsp` is 8 mod 16). Dispatches like `RaiseException`; resumes the
@@ -666,7 +849,32 @@ pub fn set_fatal_hook(hook: FatalHook) {
 /// `rec` and `ctx` must be a valid record and a 16-aligned `CONTEXT` that stay readable and
 /// writable for the whole dispatch (they live on the guest stack below the fault).
 pub unsafe extern "win64" fn dispatch_fault(rec: *mut ExceptionRecord, ctx: *mut u8) -> ! {
-    if !search(rec, ctx) {
+    let traced = FAULT_TRACE.get().map(|t0| Traced {
+        rec: rec as usize,
+        code: (*rec).code,
+        rip: (*rec).address,
+        addr: (*rec).info[1],
+        secs: t0.elapsed().as_secs_f32(),
+        handler: 0,
+        frame: 0,
+    });
+    if let Some(t) = traced {
+        TRACED.with(|v| v.borrow_mut().push(t));
+    }
+    let handled = search(rec, ctx);
+    if traced.is_some() {
+        if let Some(e) = TRACED.with(|v| v.borrow_mut().pop()) {
+            let o = if !handled {
+                FaultOutcome::Unhandled
+            } else if e.frame == 0 {
+                FaultOutcome::Vectored(e.handler)
+            } else {
+                FaultOutcome::Continued(e.handler, e.frame)
+            };
+            trace_fault(&e, o);
+        }
+    }
+    if !handled {
         unhandled(rec, ctx);
     }
     nativ64_rtl_restore_context(ctx, std::ptr::null())
@@ -764,6 +972,9 @@ unsafe fn search_frames(rec: *mut ExceptionRecord, ctx: *mut u8) -> bool {
     };
     for h in crate::api_ms_win_core_errorhandling::vectored_handlers() {
         let f: unsafe extern "win64" fn(*mut ExceptionPointers) -> i32 = std::mem::transmute(h);
+        if fault_trace_on() {
+            trace_handler(rec, h, 0);
+        }
         if f(&mut ptrs) == -1 {
             return resume(rec, ctx);
         }
@@ -778,6 +989,9 @@ unsafe fn search_frames(rec: *mut ExceptionRecord, ctx: *mut u8) -> bool {
             // The first frame gets the exception context itself, so a handler can change it.
             let fc = if i == 0 { ctx } else { frame_ctx.ptr() };
             let mut d = dispatcher(&f, 0, fc);
+            if fault_trace_on() {
+                trace_handler(rec, f.u.handler, f.pc);
+            }
             let h: FrameHandler = std::mem::transmute(f.u.handler);
             match h(rec, f.u.establisher, fc, &mut d) {
                 0 => return resume(rec, ctx),
@@ -987,6 +1201,9 @@ pub unsafe fn unwind_ex(
             // The dispatches this unwind abandons are those whose context is below the target.
             let sp = fc.rsp() as usize;
             ACTIVE.with(|a| a.borrow_mut().retain(|&p| p >= sp));
+            if fault_trace_on() {
+                trace_unwind(fc.get(CONTEXT_RIP_OFF) as usize, sp);
+            }
             nativ64_rtl_restore_context(frame.ptr(), std::ptr::null());
         }
     }
@@ -996,6 +1213,9 @@ pub unsafe fn unwind_ex(
         fc.set_gp(0, retval as u64);
         fc.set(CONTEXT_RIP_OFF, target_ip as u64);
         ACTIVE.with(|a| a.borrow_mut().clear());
+        if fault_trace_on() {
+            trace_unwind(target_ip, usize::MAX);
+        }
         nativ64_rtl_restore_context(c.ptr(), std::ptr::null());
     }
     stop(STATUS_INVALID_UNWIND_TARGET, (*rec).address);
@@ -1165,6 +1385,17 @@ unsafe extern "win64" {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fault_lines_are_rate_limited_and_shaped() {
+        let due: Vec<u64> = (1..=20).filter(|&n| fault_line_due(n)).collect();
+        assert_eq!(due, [1, 2, 3, 4, 8, 16]);
+        assert_eq!(
+            fault_line(7, 1.5, 0xc000_0005, "image+0x10", 0x20, "unhandled", 1),
+            "nativ64: fault [7] 1.500s code 0xc0000005 rip image+0x10 addr 0x20 -> unhandled"
+        );
+        assert!(fault_line(7, 1.5, 5, "x", 0, "y", 8).ends_with(" (x8)"));
+    }
     use crate::api_ms_win_core_rtlsupport::{
         RtlAddFunctionTable, RtlDeleteFunctionTable, RtlLookupFunctionEntry, RtlVirtualUnwind,
     };

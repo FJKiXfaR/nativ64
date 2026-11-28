@@ -234,6 +234,9 @@ pub fn install(base: u64, size: usize) {
         Ordering::Relaxed,
     );
     nativ64::seh::set_fatal_hook(report_unhandled);
+    if std::env::var_os("NATIV64_TRACE_FAULTS").is_some_and(|v| v != "0" && !v.is_empty()) {
+        nativ64::seh::set_fault_trace();
+    }
     start_sampler();
     start_peek();
     start_trace_trigger();
