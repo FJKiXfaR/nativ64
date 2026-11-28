@@ -3142,14 +3142,20 @@ pub(crate) mod stage {
     }
 
     #[test]
-    fn a_barrier_outside_compute_or_under_a_lane_branch_is_refused() {
+    fn a_barrier_outside_compute_is_refused_and_one_under_a_lane_branch_moves_to_the_merge() {
         let vs = vs_with(&["s_barrier"], |_| {});
         let (_, op) = refused_cs(&vs);
         assert!(op.contains("outside a compute"), "{op}");
+        // under a per-lane branch the barrier is emitted once the branch merges, where the whole
+        // group is together again
         let c = CsSpec::new(4 << 1, [64, 1, 1]);
         let lines = ["v_cmp_eq_u32 vcc, 0, v0", "s_cbranch_vccz 1", "s_barrier"];
-        let (_, op) = refused_cs(&cs_blob(&lines, &c));
-        assert!(op.contains("per-lane branch"), "{op}");
+        let t = translate_full(&cs_blob(&lines, &c), None);
+        let barriers: usize = insts(&t.words)
+            .iter()
+            .filter(|(op, _)| *op == OP_CONTROL_BARRIER)
+            .count();
+        assert_eq!(barriers, 1);
     }
 
     // ---- On a device (`NATIV64_SPIRV_RUN=1`) ----
