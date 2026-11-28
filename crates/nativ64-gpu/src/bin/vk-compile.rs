@@ -44,9 +44,7 @@ fn main() {
     });
     let phys = *phys.first().expect("a device");
     let props = unsafe { instance.get_physical_device_properties(phys) };
-    let name = props
-        .device_name_as_c_str()
-        .unwrap_or(CStr::from_bytes_with_nul(b"?\0").unwrap());
+    let name = props.device_name_as_c_str().unwrap_or(c"?");
     eprintln!("device: {}", name.to_string_lossy());
     let queue = unsafe { instance.get_physical_device_queue_family_properties(phys) }
         .iter()
