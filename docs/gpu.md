@@ -304,13 +304,17 @@ finds which indices some slot still holds.
   a slot that no longer holds the tag.
 - **Sweep** (`descriptor::sweep`, called at the start of each submission under the backend's
   lock, before it replays, queue idle, whatever the backend: the null one of headless runs too;
-  due when the entries added since the last sweep reach `max(65_536, live / 2)`):
+  due when the entries added since the last sweep reach `max(65_536, held / 2)`, `held` = the
+  indices the last sweep found in a slot or touched, quarantined ones not counted: counting
+  them made each interval grow by the last one and the registry grow without bound):
   1. under the lock: `sweeping = true`, clear a `touched` bitset sized to the registry;
      `len0 = len`.
   2. without the lock: read every root slot (`read_unaligned`, racy reads are fine), set
      `marked[index]` for each tagged index below `len0`.
-  3. under the lock: for each index below `len0` that is in use, live =
-     `marked || touched`. Dead and in quarantine: freed (removed from its hash chain, the view
+  3. under the lock, taken again for each batch of 8192 indices (record waits at most one
+     batch; `sweeping` stays set until the last): for each index below `len0` that is in use
+     (an `in_use` bitset, not a walk of the views), live = `marked || touched`. Each entry
+     keeps its hash (`Vec<u64>`) so freeing does not hash the view again. Dead and in quarantine: freed (removed from its hash chain, the view
      dropped, index pushed on the free list, logged as changed). Dead and not in quarantine:
      quarantined (it stays findable and reusable by dedup). Live and quarantined:
      un-quarantined. `sweeping = false`.

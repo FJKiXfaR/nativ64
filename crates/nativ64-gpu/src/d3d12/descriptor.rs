@@ -288,6 +288,10 @@ struct Views {
 struct Registry {
     /// None: a free index.
     views: Vec<Option<View>>,
+    /// The hash of each index's view (freeing does not hash it again).
+    hashes: Vec<u64>,
+    /// Bitset: the indices that hold a view (the sweep walks it, not the views).
+    in_use: Vec<u64>,
     next: Vec<u32>,
     heads: std::collections::HashMap<u64, u32, std::hash::BuildHasherDefault<Unhashed>>,
     /// The free indices, the lowest first out (the live range stays compact).
@@ -299,6 +303,8 @@ struct Registry {
     touched: Vec<u64>,
     /// Indices given a view (new or reused) since the last sweep.
     added: usize,
+    /// The indices the last sweep found in a slot or touched (quarantined ones not counted).
+    held: usize,
     /// Indices that got a view or lost theirs, in order; `log_base` numbers `log[0]`.
     log: std::collections::VecDeque<u32>,
     log_base: u64,
@@ -345,10 +351,6 @@ impl std::hash::Hasher for Mixed {
     }
 }
 
-fn bit(set: &[u64], i: usize) -> bool {
-    set.get(i / 64).is_some_and(|w| w >> (i % 64) & 1 != 0)
-}
-
 fn set_bit(set: &mut [u64], i: usize) {
     if let Some(w) = set.get_mut(i / 64) {
         *w |= 1 << (i % 64);
@@ -387,6 +389,8 @@ impl Registry {
     const fn new() -> Self {
         Registry {
             views: Vec::new(),
+            hashes: Vec::new(),
+            in_use: Vec::new(),
             next: Vec::new(),
             heads: std::collections::HashMap::with_hasher(std::hash::BuildHasherDefault::new()),
             free: std::collections::BinaryHeap::new(),
@@ -394,6 +398,7 @@ impl Registry {
             quarantine: Vec::new(),
             touched: Vec::new(),
             added: 0,
+            held: 0,
             log: std::collections::VecDeque::new(),
             log_base: 0,
             cursors: Vec::new(),
@@ -418,11 +423,17 @@ impl Registry {
                 let i = self.views.len();
                 assert!(i < NONE as usize, "view registry full");
                 self.views.push(None);
+                self.hashes.push(0);
                 self.next.push(NONE);
+                if i.is_multiple_of(64) {
+                    self.in_use.push(0);
+                }
                 i
             }
         };
         self.views[index] = Some(view);
+        self.hashes[index] = key;
+        set_bit(&mut self.in_use, index);
         self.next[index] = head;
         self.heads.insert(key, index as u32);
         self.live += 1;
@@ -433,10 +444,11 @@ impl Registry {
 
     /// Frees `index`: out of its hash chain, its view dropped, on the free list.
     fn free(&mut self, index: usize) {
-        let Some(view) = self.views[index].take() else {
+        if self.views[index].take().is_none() {
             return;
-        };
-        let key = key(&view);
+        }
+        let key = self.hashes[index];
+        clear_bit(&mut self.in_use, index);
         let after = self.next[index];
         match self.heads.get(&key).copied() {
             Some(h) if h as usize == index => {
@@ -556,6 +568,9 @@ impl Registry {
 #[derive(Debug, Default)]
 struct Swept {
     live: usize,
+    held: usize,
+    /// Registry length at the end.
+    len: usize,
     free: usize,
     quarantined: usize,
     freed: usize,
@@ -565,6 +580,8 @@ struct Swept {
     dropped: usize,
     mark: std::time::Duration,
     settle: std::time::Duration,
+    /// The longest hold of the registry lock by one batch of step 3.
+    settle_max: std::time::Duration,
 }
 
 /// Between the first and the last step of a sweep.
@@ -682,7 +699,7 @@ impl Views {
     /// Step 1 (`force`: even if not due).
     fn begin(&self, force: bool) -> Option<Sweep> {
         let mut reg = self.reg();
-        if !force && reg.added < 65_536.max(reg.live / 2) {
+        if !force && reg.added < 65_536.max(reg.held / 2) {
             return None;
         }
         let len = reg.views.len();
@@ -776,34 +793,64 @@ impl Views {
     }
 
     /// Step 3: frees the indices absent from this sweep and the last, quarantines the ones
-    /// absent from this one only.
+    /// absent from this one only. The lock is taken again for each batch of `SETTLE_BATCH`
+    /// indices (a record waits at most one batch); `sweeping` stays set until the last.
     fn settle(&self, s: Sweep) -> Swept {
+        const SETTLE_BATCH: usize = 8192;
         let t = std::time::Instant::now();
         let mut swept = s.swept;
-        let mut reg = self.reg();
-        let words = reg.views.len().div_ceil(64);
-        reg.quarantine.resize(words, 0);
-        for i in 0..s.len {
-            if reg.views[i].is_none() {
-                continue;
+        let words = s.len.div_ceil(64);
+        let mut held = 0;
+        let mut w0 = 0;
+        loop {
+            let b = std::time::Instant::now();
+            let mut reg = self.reg();
+            let w1 = (w0 + SETTLE_BATCH / 64).min(words);
+            let need = reg.views.len().div_ceil(64);
+            if reg.quarantine.len() < need {
+                reg.quarantine.resize(need, 0);
             }
-            let live = bit(&s.marked, i) || bit(&reg.touched, i);
-            match (live, bit(&reg.quarantine, i)) {
-                (false, true) => {
+            for w in w0..w1 {
+                // Indices at or past `s.len` (the last word's tail) were not marked: skipped.
+                let tail = if (w + 1) * 64 > s.len {
+                    (1u64 << (s.len % 64)) - 1
+                } else {
+                    u64::MAX
+                };
+                let mut bits = reg.in_use[w] & tail;
+                let live = (s.marked[w] | reg.touched.get(w).copied().unwrap_or(0)) & bits;
+                held += live.count_ones() as usize;
+                let q = reg.quarantine[w];
+                // live and quarantined: out of quarantine; dead and not: in.
+                reg.quarantine[w] = (q & !live) | (bits & !live & !q);
+                bits &= !live & q;
+                while bits != 0 {
+                    let i = w * 64 + bits.trailing_zeros() as usize;
+                    bits &= bits - 1;
+                    // `free` clears the quarantine bit.
                     reg.free(i);
                     swept.freed += 1;
                 }
-                (false, false) => set_bit(&mut reg.quarantine, i),
-                (true, true) => clear_bit(&mut reg.quarantine, i),
-                (true, false) => {}
             }
+            let last = w1 == words;
+            if last {
+                self.sweeping
+                    .store(false, std::sync::atomic::Ordering::SeqCst);
+                reg.touched.clear();
+                reg.held = held;
+                swept.held = held;
+                swept.live = reg.live;
+                swept.free = reg.free.len();
+                swept.len = reg.views.len();
+                swept.quarantined = reg.quarantine.iter().map(|w| w.count_ones() as usize).sum();
+            }
+            drop(reg);
+            swept.settle_max = swept.settle_max.max(b.elapsed());
+            if last {
+                break;
+            }
+            w0 = w1;
         }
-        self.sweeping
-            .store(false, std::sync::atomic::Ordering::SeqCst);
-        reg.touched.clear();
-        swept.live = reg.live;
-        swept.free = reg.free.len();
-        swept.quarantined = reg.quarantine.iter().map(|w| w.count_ones() as usize).sum();
         swept.settle = t.elapsed();
         swept
     }
@@ -828,10 +875,13 @@ pub fn sweep() {
     if stats::on() {
         let ms = |d: std::time::Duration| d.as_secs_f64() * 1e3;
         eprintln!(
-            "nativ64: view stats sweep {:.0}s: live {}, free {}, quarantined {}, freed {}, \
-             roots {} heap bytes + {} outside slots ({} dropped), mark {:.1} ms, settle {:.1} ms",
+            "nativ64: view stats sweep {:.0}s: registry {}, live {}, held {}, free {}, \
+             quarantined {}, freed {}, roots {} heap bytes + {} outside slots ({} dropped), \
+             mark {:.1} ms, settle {:.1} ms (batch max {:.1} ms)",
             stats::secs(),
+            s.len,
             s.live,
+            s.held,
             s.free,
             s.quarantined,
             s.freed,
@@ -840,6 +890,7 @@ pub fn sweep() {
             s.dropped,
             ms(s.mark),
             ms(s.settle),
+            ms(s.settle_max),
         );
     }
 }
@@ -1378,6 +1429,7 @@ mod tests {
             };
             (k(&a), k(&b))
         };
+        r.hashes.extend([ka, kb]);
         r.heads.insert(ka, 1);
         r.heads.insert(kb, 1);
         assert_eq!(r.index(b), (1, false));
@@ -1558,6 +1610,27 @@ mod tests {
         V.record(s + 64, constant(1));
         assert_eq!(index_in(s + 64), a);
         assert_eq!(V.sweep(false).map(|s| s.freed), None, "not due");
+        table::release(s as usize).unwrap();
+    }
+
+    #[test]
+    fn a_large_quarantine_does_not_delay_the_next_sweep() {
+        static V: Views = Views::new();
+        let s = title_slots(4096);
+        // 200k entries, only the last held by the slot.
+        for n in 0..200_000 {
+            V.record(s, constant(n));
+        }
+        let sw = V.sweep(false).unwrap();
+        assert_eq!((sw.held, sw.quarantined), (1, 199_999));
+        // Due again after 65_536 new entries, the quarantine not counted as held.
+        for n in 200_000..200_000 + 65_535 {
+            V.record(s, constant(n));
+        }
+        assert!(V.sweep(false).is_none(), "not due yet");
+        V.record(s, constant(1 << 20));
+        let sw = V.sweep(false).unwrap();
+        assert_eq!((sw.freed, sw.held), (199_999, 1));
         table::release(s as usize).unwrap();
     }
 
