@@ -7,10 +7,12 @@
 # The start-up screens come up at an unpredictable frame (the legal notices between frame 6000
 # and 9000 in this session's runs), so the script's clock is anchored to a presented frame
 # (`NATIV64_INPUT_WAIT_FRAME`, default 6800) and then runs once:
-#  - A at 2 and 6 seconds advance the legal notices (its list and Next);
-#  - at 14 to 43 seconds the terms sequence up, up, A (privacy), down, A (terms), down, A
+#  - each legal page opens its document when A lands on the row: A, then the right stick scrolls
+#    the document down (two 12-second holds), then A accepts it, then down, down focuses Next and
+#    A turns the page - once for Copyright (at 2 s) and once for Photosensitivity (at 44 s);
+#  - at 86 to 115 seconds the terms sequence up, up, A (privacy), down, A (terms), down, A
 #    (Confirm) with the 4/7/7 second spacing that ticked both rows and enabled Confirm;
-#  - A at 66, 90 and 120 seconds carry the onboarding and finish-setup screens.
+#  - A at 140, 165 and 190 seconds carry the onboarding and finish-setup screens.
 # The frames land every 1500 presents in <out-dir> (or /tmp/nativ64-startup); the run ends by
 # timeout, which is the expected end.
 set -eu
@@ -38,9 +40,11 @@ if [ ! -f "$exe" ]; then
     exit 1
 fi
 
-script="0x4@2+2,0x4@6+2"
-for at in "14:0x40:1" "18:0x40:1" "22:0x4:2" "29:0x80:1" "33:0x4:2" \
-    "39:0x80:1" "43:0x4:2" "66:0x4:2" "90:0x4:2" "120:0x4:2"; do
+script=""
+for at in "2:0x4:2" "6:ry=-1:12" "22:0x4:2" "28:0x80:1" "31:0x80:1" "34:0x4:2" \
+    "44:0x4:2" "48:ry=-1:12" "64:0x4:2" "70:0x80:1" "73:0x80:1" "76:0x4:2" \
+    "86:0x40:1" "90:0x40:1" "94:0x4:2" "101:0x80:1" "105:0x4:2" "111:0x80:1" \
+    "115:0x4:2" "140:0x4:2" "165:0x4:2" "190:0x4:2"; do
     when=${at%%:*}
     rest=${at#*:}
     mask=${rest%%:*}
