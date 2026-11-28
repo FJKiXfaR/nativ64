@@ -1072,7 +1072,41 @@ impl<'a> Tr<'a> {
                     Ok(())
                 })
             }
-            (32..=63, StageIo::Mesh(_)) => unsupported("a mesh vertex attribute export"),
+            (32..=63, StageIo::Mesh(m)) => {
+                let Some(&loc) = m.params.get(&(e.target - 32)) else {
+                    return Ok(()); // nothing reads this parameter
+                };
+                let var = match self.st().outputs.get(&(loc, Class::Float)) {
+                    Some(&v) => v,
+                    None => {
+                        let v4 = self.vec4(Class::Float);
+                        let n = self.g.k(u32::from(m.max_vertices));
+                        let arr = self.g.m.global(Op::TypeArray, None, &[v4, n]);
+                        let v = self.global(StorageClass::Output, arr);
+                        self.g.m.decorate(v, Decoration::Location, &[loc]);
+                        self.st().outputs.insert((loc, Class::Float), v);
+                        v
+                    }
+                };
+                let tu = self.g.t_u32();
+                let tid = self.load_builtin(BuiltIn::LocalInvocationIndex, tu);
+                self.guarded(c.active, |t| {
+                    let tf = t.g.t_f32();
+                    let v4 = t.vec4(Class::Float);
+                    let p = t.g.t_ptr(StorageClass::Output, v4);
+                    let ptr = t.g.op(Op::AccessChain, p, &[var, tid]);
+                    let mut comps = [t.g.k(0); 4];
+                    for &(ch, bits) in &chans {
+                        if let Some(c) = comps.get_mut(ch as usize) {
+                            *c = t.g.as_f32(bits);
+                        }
+                    }
+                    let _ = tf;
+                    let v = t.g.op(Op::CompositeConstruct, v4, &comps);
+                    t.g.store(ptr, v);
+                    Ok(())
+                })
+            }
             _ => unsupported(&format!("exp target {}", e.target)),
         }
     }

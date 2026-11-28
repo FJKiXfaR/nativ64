@@ -174,6 +174,8 @@ pub struct CsIo {
 pub struct MeshIo {
     pub user: Range<u16>,
     pub tables: BTreeSet<u16>,
+    /// The parameter exports (`exp param n`) and the location each writes.
+    pub params: BTreeMap<u8, u32>,
     /// The vertex attributes the program exports (a `VsOutput` each, their locations in `OSG1`
     /// order).
     pub outputs: Vec<VsOutput>,
@@ -436,6 +438,12 @@ fn mesh_io(rec: &Record) -> Option<MeshIo> {
     Some(MeshIo {
         user,
         tables: table_sgprs(rec, 8),
+        params: d
+            .outputs
+            .iter()
+            .filter(|o| o.usage == 6)
+            .map(|o| (o.param, u32::from(o.param)))
+            .collect(),
         outputs: d.outputs.clone(),
         group_lanes: d.group_lanes,
         max_vertices: d.max_vertices,
