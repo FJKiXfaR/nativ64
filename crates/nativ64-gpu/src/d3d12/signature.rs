@@ -9,6 +9,17 @@ use crate::d3d12::device::E_INVALIDARG;
 use crate::d3d12::object::{guid, hand_out, with_child_methods, PAGEABLE_IIDS};
 use crate::xobj::{Guid, Iface, SlotTable, HRESULT};
 
+/// The command signature at `ptr`, if it is one (the layout of its indirect arguments).
+///
+/// # Safety
+/// `ptr` was recorded from a live object of ours.
+pub unsafe fn signature_data<'a>(ptr: usize) -> Option<&'a CommandSignatureData> {
+    let obj = ptr as *mut c_void;
+    (crate::xobj::XObject::<CommandSignatureData>::prefix(obj).iface()
+        == crate::xobj::Iface::CommandSignature)
+        .then(|| crate::xobj::XObject::<CommandSignatureData>::data(obj))
+}
+
 pub static COMMAND_SIGNATURE_IIDS: [Guid; 4] = [
     guid(
         0xc36a797c,

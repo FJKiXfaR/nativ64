@@ -18,7 +18,7 @@ use super::textures::TexState;
 use super::{log_once, vk_try, Gpu, Result, VkError};
 use crate::d3d12::command::{Command, CopyLocation, Rect};
 use crate::d3d12::descriptor::{depth_stencil_view, render_target_view};
-use crate::d3d12::resource::{info_of, ResourceDesc};
+use crate::d3d12::resource::{info_of, info_of_checked, ResourceDesc};
 use crate::texture::Layout;
 use ash::{vk, Device};
 use std::collections::{HashMap, HashSet};
@@ -1013,6 +1013,133 @@ impl<'g> VkBackend<'g> {
         stage_bytes(self.gpu, data, staging)
     }
 
+    /// `ExecuteIndirect`: the arguments a command signature lays out in a buffer, replayed as the
+    /// draws and dispatches they describe. Only signatures made of one draw or dispatch argument
+    /// are handled; the argument buffer is read from title memory (the GPU wrote it in an earlier
+    /// submission, and the host sees the same memory).
+    #[allow(clippy::too_many_arguments)]
+    fn execute_indirect(
+        &mut self,
+        d: &Device,
+        cb: vk::CommandBuffer,
+        signature: usize,
+        max: u32,
+        arguments: usize,
+        offset: u64,
+        count: usize,
+        count_offset: u64,
+    ) -> bool {
+        // SAFETY: the pointer was recorded from a live object of ours.
+        let Some(sig) = (unsafe { crate::d3d12::signature::signature_data(signature) }) else {
+            return false;
+        };
+        let stride = sig.stride;
+        let Some(desc) = sig.arguments.first() else {
+            return false;
+        };
+        // the first word of the argument description is its type (0 draw, 1 draw indexed, 2
+        // dispatch); a signature that also sets state has a layout this replay does not split
+        if sig.arguments.len() != 1 || desc[0] > 2 || stride == 0 {
+            log_once(format!(
+                "indirect execution with signature {:?} is not replayed",
+                sig.arguments
+            ));
+            return false;
+        }
+        // the argument buffer's guest memory
+        // SAFETY: the pointer was recorded from a live resource of ours.
+        let Some((rd, address)) = info_of_checked(arguments as *mut _) else {
+            return false;
+        };
+        if offset + u64::from(stride) > rd.width {
+            return false;
+        }
+        let mut count = if count == 0 {
+            max
+        } else {
+            // SAFETY: the count buffer was recorded from a live resource of ours.
+            let Some((cd, caddr)) = info_of_checked(count as *mut _) else {
+                return false;
+            };
+            if count_offset + 4 > cd.width {
+                return false;
+            }
+            match crate::hostmem::peek(caddr + count_offset, 4) {
+                Some(b) => u32::from_le_bytes([b[0], b[1], b[2], b[3]]),
+                None => return false,
+            }
+        };
+        count = count.min(max);
+        if count == 0 {
+            return true;
+        }
+        let len = count as usize * stride as usize;
+        let Some(bytes) = crate::hostmem::peek(address + offset, len) else {
+            return false;
+        };
+        let mut replayed = 0;
+        for i in 0..count as usize {
+            let at = i * stride as usize;
+            let words: Vec<u32> = bytes[at..at + stride as usize]
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|w| u32::from_le_bytes(*w))
+                .collect();
+            match desc[0] {
+                0 => {
+                    // D3D12_DRAW_ARGUMENTS: vertices, instances, first vertex, first instance
+                    if words.len() < 4 || words[0] == 0 || words[1] == 0 {
+                        continue;
+                    }
+                    let c = Command::Draw {
+                        vertices: words[0],
+                        instances: words[1],
+                        first_vertex: words[2],
+                        first_instance: words[3],
+                    };
+                    self.draw_command(d, cb, &c);
+                    replayed += 1;
+                }
+                1 => {
+                    // D3D12_DRAW_INDEXED_ARGUMENTS
+                    if words.len() < 5 || words[0] == 0 || words[1] == 0 {
+                        continue;
+                    }
+                    let c = Command::DrawIndexed {
+                        indices: words[0],
+                        instances: words[1],
+                        first_index: words[2],
+                        base_vertex: words[3] as i32,
+                        first_instance: words[4],
+                    };
+                    self.draw_command(d, cb, &c);
+                    replayed += 1;
+                }
+                _ => {
+                    // D3D12_DISPATCH_ARGUMENTS
+                    if words.len() < 3 || words.iter().take(3).any(|&w| w == 0) {
+                        continue;
+                    }
+                    let c = Command::Dispatch {
+                        x: words[0],
+                        y: words[1],
+                        z: words[2],
+                        flags: 0,
+                    };
+                    self.dispatch_command(d, cb, &c);
+                    replayed += 1;
+                }
+            }
+        }
+        if replayed > 0 {
+            log_once(format!(
+                "indirect execution replayed ({replayed} arguments)"
+            ));
+        }
+        replayed > 0
+    }
+
     /// `committed`, with a cache: the host memory table is one global mutex that the title's
     /// allocator threads hold during their `map`/`mprotect` calls, so asking it for the same
     /// fence address every frame is a large share of a frame's replay time.
@@ -1086,9 +1213,27 @@ impl<'g> VkBackend<'g> {
                 self.dispatch_command(d, cb, c);
             }
             C::DispatchMesh { .. } | C::DispatchMeshX { .. } => self.stats.dispatches += 1,
-            C::ExecuteIndirect { .. } => {
+            C::ExecuteIndirect {
+                signature,
+                max,
+                arguments,
+                offset,
+                count,
+                count_offset,
+            } => {
                 self.stats.draws += 1;
-                self.stats.draw_skips.state += 1;
+                if !self.execute_indirect(
+                    d,
+                    cb,
+                    *signature,
+                    *max,
+                    *arguments,
+                    *offset,
+                    *count,
+                    *count_offset,
+                ) {
+                    self.stats.draw_skips.state += 1;
+                }
             }
             C::Barriers(_) | C::BarrierGroups(_) | C::Sync { .. } => global_barrier(d, cb),
             C::ClearRenderTarget {
