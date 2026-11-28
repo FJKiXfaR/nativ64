@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use spirv::{Capability, Decoration, GlslStd450Op as GL, Op, StorageClass};
 
-use super::{bad, Gen, Opd, SpirvError, Tr, R};
+use super::{bad, FCmp, Gen, Opd, SpirvError, Tr, R};
 use crate::shader::gfx10::{Enc, Operand, Slot};
 use crate::shader::io::{Class, StageIo};
 use crate::shader::ir::{Func, Inst, Reg, Src, Term, Val, ValDef};
@@ -784,6 +784,14 @@ impl<'a> Tr<'a> {
         self.g.op(Op::Load, tu, &[ptr, 2, 4])
     }
 
+    /// A `u32` at a 64-bit device address.
+    fn bda_load64(&mut self, addr: u32) -> u32 {
+        let tu = self.g.t_u32();
+        let p = self.g.t_ptr(StorageClass::PhysicalStorageBuffer, tu);
+        let ptr = self.g.op(Op::ConvertUToPtr, p, &[addr]);
+        self.g.op(Op::Load, tu, &[ptr, 2, 4])
+    }
+
     fn bda_store_u32(&mut self, addr: u32, v: u32) {
         let tu = self.g.t_u32();
         let p = self.g.t_ptr(StorageClass::PhysicalStorageBuffer, tu);
@@ -1013,6 +1021,7 @@ impl<'a> Tr<'a> {
         match c.inst.instr.enc {
             Enc::Smem => self.smem(c, b, k),
             Enc::Mubuf | Enc::Mtbuf => self.mubuf(c),
+            Enc::Mimg if c.inst.instr.name().starts_with("image_bvh") => self.bvh(c),
             Enc::Mimg if c.inst.instr.name().starts_with("image_load") => self.image_load(c),
             Enc::Mimg if c.inst.instr.name().starts_with("image_store") => self.image_store(c),
             Enc::Mimg => self.image_sample(c),
@@ -2797,6 +2806,368 @@ impl<'a> Tr<'a> {
         for k in 0..trailer {
             let zero = self.g.k(0);
             out.push(self.lane_result(c, words + k, zero));
+        }
+        Ok(Some(out))
+    }
+
+    fn f3op(&mut self, op: Op, a: [u32; 3], b: [u32; 3]) -> [u32; 3] {
+        let t = self.g.t_f32();
+        [
+            self.g.op(op, t, &[a[0], b[0]]),
+            self.g.op(op, t, &[a[1], b[1]]),
+            self.g.op(op, t, &[a[2], b[2]]),
+        ]
+    }
+
+    fn cross3(&mut self, a: [u32; 3], b: [u32; 3]) -> [u32; 3] {
+        let t = self.g.t_f32();
+        let mut out = [0u32; 3];
+        for c in 0..3 {
+            let (i, j) = ((c + 1) % 3, (c + 2) % 3);
+            let x0 = self.g.op(Op::FMul, t, &[a[i], b[j]]);
+            let x1 = self.g.op(Op::FMul, t, &[a[j], b[i]]);
+            let second = self.g.op(Op::FSub, t, &[x0, x1]);
+            out[c] = second;
+        }
+        out
+    }
+
+    fn dot3(&mut self, a: [u32; 3], b: [u32; 3]) -> u32 {
+        let t = self.g.t_f32();
+        let p0 = self.g.op(Op::FMul, t, &[a[0], b[0]]);
+        let p1 = self.g.op(Op::FMul, t, &[a[1], b[1]]);
+        let p2 = self.g.op(Op::FMul, t, &[a[2], b[2]]);
+        let s0 = self.g.op(Op::FAdd, t, &[p0, p1]);
+        self.g.op(Op::FAdd, t, &[s0, p2])
+    }
+
+    fn fmax(&mut self, a: u32, b: u32) -> u32 {
+        let t = self.g.t_f32();
+        self.g.ext(t, GL::FMax, &[a, b])
+    }
+
+    fn fmin(&mut self, a: u32, b: u32) -> u32 {
+        let t = self.g.t_f32();
+        self.g.ext(t, GL::FMin, &[a, b])
+    }
+
+    fn land(&mut self, a: u32, b: u32) -> u32 {
+        let t = self.g.t_bool();
+        self.g.op(Op::LogicalAnd, t, &[a, b])
+    }
+
+    fn fcmpv(&mut self, op: FCmp, a: u32, b: u32) -> u32 {
+        self.g.fcmp(op, a, b)
+    }
+
+    fn pick(&mut self, c: u32, a: u32, b: u32) -> u32 {
+        self.g.select(c, a, b)
+    }
+
+    /// The four child ids and near distances of one box node (`box32` = type 5, else type 4),
+    /// with the children beyond `tmax` or empty dropped.
+    fn bvh_box(
+        &mut self,
+        at: u32,
+        box32: bool,
+        tmax: u32,
+        o: [u32; 3],
+        inv: [u32; 3],
+        sort: u32,
+    ) -> ([u32; 4], [u32; 4]) {
+        let tu = self.g.t_u32();
+        let chunks = if box32 { 7usize } else { 4usize };
+        let mut words = Vec::with_capacity(chunks * 4);
+        for j in 0..chunks {
+            let a = self.add_k64(at, 16 * j as u64);
+            for k in 0..4 {
+                let addr = self.add_k64(a, 4 * k as u64);
+                let w = self.bda_load64(addr);
+                words.push(w);
+            }
+        }
+        let pinf = self.g.fconst(f32::INFINITY);
+        let ninf = self.g.fconst(f32::NEG_INFINITY);
+        let ones = self.g.k(u32::MAX);
+        let zero = self.g.k(0);
+        let (mut tn, mut id) = ([pinf; 4], [ones; 4]);
+        for k in 0..4usize {
+            let (mn, mx) = if box32 {
+                let b = 4 + 6 * k;
+                (
+                    [words[b], words[b + 1], words[b + 2]],
+                    [words[b + 3], words[b + 4], words[b + 5]],
+                )
+            } else {
+                let b = 4 + 3 * k;
+                let bit = (32 * b) as u32;
+                let mn = [
+                    self.unpack_half(&words, bit),
+                    self.unpack_half(&words, bit + 16),
+                    self.unpack_half(&words, bit + 32),
+                ];
+                let mx = [
+                    self.unpack_half(&words, bit + 48),
+                    self.unpack_half(&words, bit + 64),
+                    self.unpack_half(&words, bit + 80),
+                ];
+                (mn, mx)
+            };
+            let t = self.g.t_f32();
+            let d1 = [
+                self.g.op(Op::FSub, t, &[mn[0], o[0]]),
+                self.g.op(Op::FSub, t, &[mn[1], o[1]]),
+                self.g.op(Op::FSub, t, &[mn[2], o[2]]),
+            ];
+            let t1 = [
+                self.g.op(Op::FMul, t, &[d1[0], inv[0]]),
+                self.g.op(Op::FMul, t, &[d1[1], inv[1]]),
+                self.g.op(Op::FMul, t, &[d1[2], inv[2]]),
+            ];
+            let d2 = [
+                self.g.op(Op::FSub, t, &[mx[0], o[0]]),
+                self.g.op(Op::FSub, t, &[mx[1], o[1]]),
+                self.g.op(Op::FSub, t, &[mx[2], o[2]]),
+            ];
+            let t2 = [
+                self.g.op(Op::FMul, t, &[d2[0], inv[0]]),
+                self.g.op(Op::FMul, t, &[d2[1], inv[1]]),
+                self.g.op(Op::FMul, t, &[d2[2], inv[2]]),
+            ];
+            let mut lo = [pinf; 3];
+            let mut hi = [pinf; 3];
+            for c in 0..3 {
+                let ge = self.fcmpv(FCmp::OGe, o[c], mn[c]);
+                let le = self.fcmpv(FCmp::OLe, o[c], mx[c]);
+                let slab = self.land(ge, le);
+                // an infinite inverse direction: the origin decides
+                let m = self.g.k(0x7fffffff);
+                let ab = self.g.op(Op::BitwiseAnd, tu, &[inv[c], m]);
+                let p = self.g.k(0x7f800000);
+                let tb = self.g.t_bool();
+                let inf = self.g.op(Op::IEqual, tb, &[ab, p]);
+                let l0 = self.pick(slab, ninf, pinf);
+                let h0 = self.pick(slab, pinf, ninf);
+                let mn_t = self.fmin(t1[c], t2[c]);
+                let mx_t = self.fmax(t1[c], t2[c]);
+                lo[c] = self.pick(inf, l0, mn_t);
+                hi[c] = self.pick(inf, h0, mx_t);
+            }
+            let a01 = self.fmax(lo[0], lo[1]);
+            let a = self.fmax(a01, lo[2]);
+            let b01 = self.fmin(hi[0], hi[1]);
+            let b = self.fmin(b01, hi[2]);
+            let tb = self.g.t_bool();
+            let cv = self.g.op(Op::INotEqual, tb, &[words[k], ones]);
+            let mut all = cv;
+            for c in 0..3 {
+                let le = self.fcmpv(FCmp::OLe, mn[c], mx[c]);
+                all = self.land(all, le);
+            }
+            let inside = self.fcmpv(FCmp::OLe, a, b);
+            let b0 = self.fcmpv(FCmp::OGe, b, zero);
+            let bt = self.fcmpv(FCmp::OLe, a, tmax);
+            let left = self.land(all, inside);
+            let right = self.land(b0, bt);
+            let hit = self.land(left, right);
+            tn[k] = self.pick(hit, a, pinf);
+            id[k] = self.pick(hit, words[k], ones);
+        }
+        // the child order: nearer first when the descriptor asks for sorting
+        for (i, j) in [(0usize, 1usize), (2, 3), (0, 2), (1, 3), (1, 2)] {
+            let lt = self.fcmpv(FCmp::OLt, tn[j], tn[i]);
+            let sw = self.land(sort, lt);
+            let (ti, tj) = (self.pick(sw, tn[j], tn[i]), self.pick(sw, tn[i], tn[j]));
+            let (ii, ij) = (self.pick(sw, id[j], id[i]), self.pick(sw, id[i], id[j]));
+            tn[i] = ti;
+            tn[j] = tj;
+            id[i] = ii;
+            id[j] = ij;
+        }
+        (id, tn)
+    }
+
+    /// One acceleration-structure node of the console's RDNA2 BVH format against the ray:
+    /// `image_bvh_intersect_ray` / `image_bvh64_intersect_ray`. The result is four dwords -
+    /// a box node's four child node ids, a leaf hit's `(t, det, i, j)`, or the miss pattern;
+    /// the shader drives the traversal itself.
+    fn bvh(&mut self, c: &Ctx<Gen>) -> R<Option<Vec<Opd<Gen>>>> {
+        let i = &c.inst.instr;
+        let wide = i.name().starts_with("image_bvh64");
+        let nv = if wide { 2 } else { 1 };
+        if c.srcs.len() < 2 || c.srcs[0].len() < nv + 11 - 1 || c.srcs[1].len() < 2 {
+            return bad("a bvh intersection with too few operands");
+        }
+        let mut vgprs = Vec::with_capacity(c.srcs[0].len());
+        for s in &c.srcs[0] {
+            vgprs.push(self.bits_of(*s));
+        }
+        let d0 = self.bits_of(c.srcs[1][0]);
+        let d1 = self.bits_of(c.srcs[1][1]);
+        let (tu, tb, t64) = (self.g.t_u32(), self.g.t_bool(), self.t64());
+        let (seven, k32) = (self.g.k(7), self.g.k(32));
+        let node = vgprs[0];
+        let ty = self.g.op(Op::BitwiseAnd, tu, &[node, seven]);
+        // the descriptor: address = ((w1 & 0xff) << 32 | w0) << 8; the node id counts 8 bytes
+        let lo = self.zext(d0);
+        let w1lo = {
+            let m = self.g.k(0xff);
+            self.g.op(Op::BitwiseAnd, tu, &[d1, m])
+        };
+        let hi = self.zext(w1lo);
+        let hi = self.g.op(Op::ShiftLeftLogical, t64, &[hi, k32]);
+        let base = self.g.op(Op::BitwiseOr, t64, &[lo, hi]);
+        let k8 = self.g.k(8);
+        let base = self.g.op(Op::ShiftLeftLogical, t64, &[base, k8]);
+        let nmask = self.g.k(!7u32);
+        let nlo = self.g.op(Op::BitwiseAnd, tu, &[node, nmask]);
+        let nlo64 = self.zext(nlo);
+        let off = if wide {
+            let nhi = self.zext(vgprs[1]);
+            let nhi = self.g.op(Op::ShiftLeftLogical, t64, &[nhi, k32]);
+            self.g.op(Op::BitwiseOr, t64, &[nhi, nlo64])
+        } else {
+            nlo64
+        };
+        let k3 = self.g.k(3);
+        let off = self.g.op(Op::ShiftLeftLogical, t64, &[off, k3]);
+        let at = self.add64(base, off);
+        let at = {
+            let m = self.k64(!3u64);
+            self.g.op(Op::BitwiseAnd, t64, &[at, m])
+        };
+        let sort = {
+            let s = self.g.k(31);
+            let s = self.g.op(Op::ShiftRightLogical, tu, &[d1, s]);
+            let z = self.g.k(0);
+            self.g.op(Op::INotEqual, tb, &[s, z])
+        };
+        let k = nv;
+        let tmax = vgprs[k];
+        let o = [vgprs[k + 1], vgprs[k + 2], vgprs[k + 3]];
+        let dir = [vgprs[k + 4], vgprs[k + 5], vgprs[k + 6]];
+        let inv = [vgprs[k + 7], vgprs[k + 8], vgprs[k + 9]];
+        let pinf = self.g.fconst(f32::INFINITY);
+        let zero_f = self.g.fconst(0.0);
+        let zero = self.g.k(0);
+        let ones = self.g.k(u32::MAX);
+        // box32 (type 5) and box16 (type 4)
+        let (id5, _tn5) = self.bvh_box(at, true, tmax, o, inv, sort);
+        let (id4, _tn4) = self.bvh_box(at, false, tmax, o, inv, sort);
+        // a leaf: two triangles per node, the type names the pair and the rotation
+        let mut tri = [zero; 4];
+        {
+            let (k1, k2, k3) = (self.g.k(1), self.g.k(2), self.g.k(3));
+            let t0 = self.g.op(Op::IEqual, tb, &[ty, zero]);
+            let t1 = self.g.op(Op::IEqual, tb, &[ty, k1]);
+            let t2 = self.g.op(Op::IEqual, tb, &[ty, k2]);
+            let t3 = self.g.op(Op::IEqual, tb, &[ty, k3]);
+            let ty2 = self.g.op(Op::BitwiseAnd, tu, &[ty, k2]);
+            let le1 = self.g.op(Op::IEqual, tb, &[ty2, zero]);
+            let (k0, k12, k24, k36, k48) = (
+                self.g.k(0),
+                self.g.k(12),
+                self.g.k(24),
+                self.g.k(36),
+                self.g.k(48),
+            );
+            let t1_k12 = self.pick(t1, k12, k24);
+            let a0 = self.pick(t0, k0, t1_k12);
+            let t3_k48 = self.pick(t3, k48, k36);
+            let a1 = self.pick(t0, k12, t3_k48);
+            let t2_k48 = self.pick(t2, k48, k0);
+            let a2 = self.pick(le1, k24, t2_k48);
+            // vertices at at + a0, a1, a2 (16-byte aligned reads)
+            let mut verts = [[zero; 3]; 3];
+            for (n, a) in [a0, a1, a2].iter().enumerate() {
+                let mut words = [zero; 3];
+                for (j, w) in words.iter_mut().enumerate() {
+                    let off = self.g.k(4 * j as u32);
+                    let sum = self.g.op(Op::IAdd, tu, &[*a, off]);
+                    let off64 = self.zext(sum);
+                    let addr = self.add64(at, off64);
+                    *w = self.bda_load64(addr);
+                }
+                verts[n] = words;
+            }
+            let (v0, v1, v2) = (verts[0], verts[1], verts[2]);
+            let at60 = self.add_k64(at, 60);
+            let tw = self.bda_load64(at60);
+            let t = self.g.t_f32();
+            let e1 = [
+                self.g.op(Op::FSub, t, &[v1[0], v0[0]]),
+                self.g.op(Op::FSub, t, &[v1[1], v0[1]]),
+                self.g.op(Op::FSub, t, &[v1[2], v0[2]]),
+            ];
+            let e2 = [
+                self.g.op(Op::FSub, t, &[v2[0], v0[0]]),
+                self.g.op(Op::FSub, t, &[v2[1], v0[1]]),
+                self.g.op(Op::FSub, t, &[v2[2], v0[2]]),
+            ];
+            let p = self.cross3(dir, e2);
+            let det = self.dot3(e1, p);
+            let sv = [
+                self.g.op(Op::FSub, t, &[o[0], v0[0]]),
+                self.g.op(Op::FSub, t, &[o[1], v0[1]]),
+                self.g.op(Op::FSub, t, &[o[2], v0[2]]),
+            ];
+            let q = self.cross3(sv, e1);
+            let bi = self.dot3(sv, p);
+            let bj = self.dot3(dir, q);
+            let dist = self.dot3(e2, q);
+            let ij = self.g.op(Op::FAdd, t, &[bi, bj]);
+            let dpos = self.fcmpv(FCmp::OGt, det, zero_f);
+            let c1 = self.fcmpv(FCmp::OGe, bi, zero_f);
+            let c2 = self.fcmpv(FCmp::OGe, bj, zero_f);
+            let c3 = self.fcmpv(FCmp::OLe, ij, det);
+            let c12 = self.land(c1, c2);
+            let hp = self.land(c12, c3);
+            let dneg = self.fcmpv(FCmp::OLt, det, zero_f);
+            let n1 = self.fcmpv(FCmp::OLe, bi, zero_f);
+            let n2 = self.fcmpv(FCmp::OLe, bj, zero_f);
+            let n3 = self.fcmpv(FCmp::OGe, ij, det);
+            let dn = self.land(dneg, n1);
+            let n23 = self.land(n2, n3);
+            let hn = self.land(dn, n23);
+            let hit = self.pick(dpos, hp, hn);
+            let di = self.g.op(Op::FSub, t, &[det, bi]);
+            let b0 = self.g.op(Op::FSub, t, &[di, bj]);
+            let bc = [b0, bi, bj, zero_f];
+            let k3w = self.g.k(3);
+            let k2w = self.g.k(2);
+            let sh = self.g.op(Op::ShiftLeftLogical, tu, &[ty, k3w]);
+            let tid = self.g.op(Op::ShiftRightLogical, tu, &[tw, sh]);
+            let s0 = self.g.op(Op::BitwiseAnd, tu, &[tid, k3w]);
+            let tid2 = self.g.op(Op::ShiftRightLogical, tu, &[tid, k2w]);
+            let s1 = self.g.op(Op::BitwiseAnd, tu, &[tid2, k3w]);
+            let mut bci = bc[3];
+            for (c, v) in bc.iter().enumerate().take(3) {
+                let kc = self.g.k(c as u32);
+                let is = self.g.op(Op::IEqual, tb, &[s0, kc]);
+                bci = self.pick(is, *v, bci);
+            }
+            let mut bcj = bc[3];
+            for (c, v) in bc.iter().enumerate().take(3) {
+                let kc = self.g.k(c as u32);
+                let is = self.g.op(Op::IEqual, tb, &[s1, kc]);
+                bcj = self.pick(is, *v, bcj);
+            }
+            let miss = [pinf, self.g.fconst(1.0), zero, zero];
+            let res = [dist, det, bci, bcj];
+            for d in 0..4 {
+                tri[d] = self.pick(hit, res[d], miss[d]);
+            }
+        }
+        let (k4, k5) = (self.g.k(4), self.g.k(5));
+        let is5 = self.g.op(Op::IEqual, tb, &[ty, k5]);
+        let is4 = self.g.op(Op::IEqual, tb, &[ty, k4]);
+        let is_leaf = self.g.op(Op::ULessThanEqual, tb, &[ty, k3]);
+        let mut out = Vec::with_capacity(4);
+        for d in 0..4 {
+            let rest = self.pick(is4, id4[d], ones);
+            let boxes = self.pick(is5, id5[d], rest);
+            let v = self.pick(is_leaf, tri[d], boxes);
+            out.push(self.lane_result(c, d, v));
         }
         Ok(Some(out))
     }
