@@ -13,10 +13,10 @@
 #  - nothing from 76 to 190 seconds: the terms screen comes up on its own with both rows empty,
 #    and stray presses before it does toggle whichever row the focus is on;
 #  - at 190 seconds, once the terms screen has been up for a while, the whole form in one go with
-#    the spacing that ticked both rows in the confirm run: up, up, A (Privacy), down, A (Terms),
-#    down, A (Confirm). The two up presses are what the fresh screen needs - its focus starts
-#    below the first row, and a bare down from the Privacy row scrolls that row's document
-#    instead of moving on. A second attempt at 320 seconds is there for a slow start.
+#    the spacing that ticked both rows in the confirm run: up, up, A (Privacy), left (the focus
+#    returns to the row column; a down while the document pane has it scrolls the document
+#    instead), down, A (Terms), down, A (Confirm). A second attempt at 320 seconds is there for a
+#    slow start.
 # The frames land every 1500 presents in <out-dir> (or /tmp/nativ64-startup); the run ends by
 # timeout, which is the expected end.
 set -eu
@@ -54,7 +54,7 @@ for at in "2:0x4:2" "6:ry=-1:12" "22:0x4:2" "28:0x80:1" "31:0x80:1" "34:0x4:2" \
     script="$script,$mask@$when+$hold"
 done
 for t in 190 320; do
-    script="$script,0x40@${t}+1,0x40@$((t + 4))+1,0x4@$((t + 8))+2,0x80@$((t + 15))+1,0x4@$((t + 19))+2,0x80@$((t + 26))+1,0x4@$((t + 30))+2"
+    script="$script,0x40@${t}+1,0x40@$((t + 4))+1,0x4@$((t + 8))+2,0x100@$((t + 12))+1,0x80@$((t + 17))+1,0x4@$((t + 21))+2,0x80@$((t + 28))+1,0x4@$((t + 32))+2"
 done
 
 mkdir -p "$out"
