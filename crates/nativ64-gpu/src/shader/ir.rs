@@ -1878,16 +1878,18 @@ impl Builder<'_> {
                 st.insert(reg, Src::Val(dst));
             }
             for (instr, l) in &raw[b].insts {
-                self.rename(instr, l, &mut st, &mut blocks[b], b)
-                    .map_err(|e| {
-                        if std::env::var_os("NATIV64_UNDEF_DEBUG").is_some() {
-                            eprintln!("undef debug: block +{:#x}:", raw[b].at);
-                            for (i2, l2) in &raw[b].insts {
-                                eprintln!("  {} dsts {:?} srcs {:?}", i2.name(), l2.dsts, l2.srcs);
-                            }
+                if std::env::var_os("NATIV64_UNDEF_DEBUG").is_some() {
+                    let r = self.rename(instr, l, &mut st, &mut blocks[b], b);
+                    if let Err(e) = r {
+                        eprintln!("undef debug: block +{:#x}:", raw[b].at);
+                        for (i2, l2) in &raw[b].insts {
+                            eprintln!("  {} dsts {:?} srcs {:?}", i2.name(), l2.dsts, l2.srcs);
                         }
-                        e
-                    })?;
+                        return Err(e);
+                    }
+                } else {
+                    self.rename(instr, l, &mut st, &mut blocks[b], b)?;
+                }
             }
             blocks[b].term = match &raw[b].term {
                 RawTerm::Jump(t) => Term::Jump(*t),
