@@ -10,11 +10,11 @@
 #  - each legal page opens its document when A lands on the row: A, then the right stick scrolls
 #    the document down (two 12-second holds), then A accepts it, then down, down focuses Next and
 #    A turns the page - once for Copyright (at 2 s) and once for Photosensitivity (at 44 s);
-#  - from 90 seconds to the end, every 30 seconds: down, A (the terms row), down, A (Confirm) -
-#    no up presses, so the privacy row the legal A presses left ticked stays ticked, and the
-#    pair of presses is exactly the confirm sequence: the first ticks the Terms row, the second
-#    accepts. The 30-second spacing leaves the state alone between cycles (a 12-second cycle
-#    toggled the Terms row off before the Confirm press could land).
+#  - nothing from 76 to 190 seconds: the terms screen comes up on its own with both rows empty,
+#    and stray presses before it does toggle whichever row the focus is on;
+#  - at 190 seconds, once the terms screen has been up for a while, the whole form in one go:
+#    A (tick Privacy), down, A (tick Terms), down, A (Confirm). A second attempt at 300 seconds
+#    is there for a slow start.
 # The frames land every 1500 presents in <out-dir> (or /tmp/nativ64-startup); the run ends by
 # timeout, which is the expected end.
 set -eu
@@ -51,10 +51,8 @@ for at in "2:0x4:2" "6:ry=-1:12" "22:0x4:2" "28:0x80:1" "31:0x80:1" "34:0x4:2" \
     hold=${rest##*:}
     script="$script,$mask@$when+$hold"
 done
-t=90
-while [ "$t" -le "$seconds" ]; do
-    script="$script,0x80@${t}+1,0x4@$((t + 3))+2,0x80@$((t + 9))+1,0x4@$((t + 12))+2"
-    t=$((t + 30))
+for t in 190 300; do
+    script="$script,0x4@${t}+2,0x80@$((t + 5))+1,0x4@$((t + 8))+2,0x80@$((t + 14))+1,0x4@$((t + 17))+2"
 done
 
 mkdir -p "$out"
