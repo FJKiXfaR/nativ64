@@ -2810,24 +2810,14 @@ impl<'a> Tr<'a> {
         Ok(Some(out))
     }
 
-    fn f3op(&mut self, op: Op, a: [u32; 3], b: [u32; 3]) -> [u32; 3] {
-        let t = self.g.t_f32();
-        [
-            self.g.op(op, t, &[a[0], b[0]]),
-            self.g.op(op, t, &[a[1], b[1]]),
-            self.g.op(op, t, &[a[2], b[2]]),
-        ]
-    }
-
     fn cross3(&mut self, a: [u32; 3], b: [u32; 3]) -> [u32; 3] {
         let t = self.g.t_f32();
         let mut out = [0u32; 3];
-        for c in 0..3 {
+        for (c, slot) in out.iter_mut().enumerate() {
             let (i, j) = ((c + 1) % 3, (c + 2) % 3);
             let x0 = self.g.op(Op::FMul, t, &[a[i], b[j]]);
             let x1 = self.g.op(Op::FMul, t, &[a[j], b[i]]);
-            let second = self.g.op(Op::FSub, t, &[x0, x1]);
-            out[c] = second;
+            *slot = self.g.op(Op::FSub, t, &[x0, x1]);
         }
         out
     }
