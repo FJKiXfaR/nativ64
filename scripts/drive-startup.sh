@@ -10,9 +10,9 @@
 #  - each legal page opens its document when A lands on the row: A, then the right stick scrolls
 #    the document down (two 12-second holds), then A accepts it, then down, down focuses Next and
 #    A turns the page - once for Copyright (at 2 s) and once for Photosensitivity (at 44 s);
-#  - at 86 to 115 seconds the terms sequence up, up, A (privacy), down, A (terms), down, A
-#    (Confirm) with the 4/7/7 second spacing that ticked both rows and enabled Confirm;
-#  - A at 140, 165 and 190 seconds carry the onboarding and finish-setup screens.
+#  - from 90 seconds to the end, every 12 seconds: down, A (the terms row), down, A (Confirm),
+#    A (onboarding/finish setup) - no up presses, so the privacy row the legal A presses left
+#    ticked stays ticked and the cycle cannot un-tick it.
 # The frames land every 1500 presents in <out-dir> (or /tmp/nativ64-startup); the run ends by
 # timeout, which is the expected end.
 set -eu
@@ -42,14 +42,17 @@ fi
 
 script=""
 for at in "2:0x4:2" "6:ry=-1:12" "22:0x4:2" "28:0x80:1" "31:0x80:1" "34:0x4:2" \
-    "44:0x4:2" "48:ry=-1:12" "64:0x4:2" "70:0x80:1" "73:0x80:1" "76:0x4:2" \
-    "86:0x40:1" "90:0x40:1" "94:0x4:2" "101:0x80:1" "105:0x4:2" "111:0x80:1" \
-    "115:0x4:2" "140:0x4:2" "165:0x4:2" "190:0x4:2"; do
+    "44:0x4:2" "48:ry=-1:12" "64:0x4:2" "70:0x80:1" "73:0x80:1" "76:0x4:2"; do
     when=${at%%:*}
     rest=${at#*:}
     mask=${rest%%:*}
     hold=${rest##*:}
     script="$script,$mask@$when+$hold"
+done
+t=90
+while [ "$t" -le "$seconds" ]; do
+    script="$script,0x80@${t}+1,0x4@$((t + 3))+2,0x80@$((t + 6))+1,0x4@$((t + 9))+2,0x4@$((t + 11))+2"
+    t=$((t + 12))
 done
 
 mkdir -p "$out"
