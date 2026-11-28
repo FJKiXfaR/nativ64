@@ -4,6 +4,10 @@
 //! after the present, every image the replay holds as `<dir>/frame_NNNNN_res<id>_<w>x<h>.png`
 //! (render targets and textures alike; formats the PNG dump does not convert are named in the
 //! log instead). A debugging aid: it reads back every image, so it is slow.
+//!
+//! `NATIV64_DUMP_DRAWS=<frame>` (with `NATIV64_DUMP_TARGETS`): that one presented frame also
+//! gets its draw `inspect:` lines, and the colour target bound by each draw (and dispatch) is
+//! copied after it and written as `<dir>/frame_NNNNN_draw_DDD_p<pipeline>_i<count>.png`.
 
 use super::log_once;
 use super::present::{rgba8, write_png};
@@ -12,8 +16,55 @@ use crate::d3d12::command::Command;
 use crate::d3d12::descriptor::{TargetRecord, View};
 use crate::d3d12::pipeline::PipelineData;
 use crate::d3d12::pipeline_state::fixed_state;
+use ash::{vk, Device};
 use std::path::PathBuf;
 use std::sync::OnceLock;
+
+/// `NATIV64_DUMP_DRAWS` parsed: the presented frame whose draws are dumped one by one.
+fn parse_draws_frame(v: Option<&str>) -> Option<u64> {
+    v?.trim().parse().ok().filter(|&f| f > 0)
+}
+
+/// The frame of `NATIV64_DUMP_DRAWS`, when set (needs `NATIV64_DUMP_TARGETS`).
+pub fn draws_frame() -> Option<u64> {
+    static F: OnceLock<Option<u64>> = OnceLock::new();
+    *F.get_or_init(|| {
+        dir()?;
+        parse_draws_frame(std::env::var("NATIV64_DUMP_DRAWS").ok().as_deref())
+    })
+}
+
+/// Most snapshots and bytes one frame's draw dump keeps before writing them out.
+const SNAP_MAX: usize = 96;
+const SNAP_BYTES: u64 = 2 << 30;
+
+/// Whether one more snapshot of `size` bytes fits after `n` snapshots holding `held` bytes.
+fn snap_fits(n: usize, held: u64, size: u64) -> bool {
+    n < SNAP_MAX && held + size <= SNAP_BYTES
+}
+
+/// One colour target copied after a draw, waiting for the submission to finish.
+struct Snap {
+    name: String,
+    width: u32,
+    height: u32,
+    format: vk::Format,
+    buffer: vk::Buffer,
+    memory: vk::DeviceMemory,
+    size: u64,
+}
+
+/// The per-draw dump of one frame (`NATIV64_DUMP_DRAWS`); empty, and nothing allocated, otherwise.
+#[derive(Default)]
+pub(super) struct DrawDump {
+    /// Draws seen in the frame being recorded.
+    count: u32,
+    /// Set by a recorded draw: (pipeline serial, index or vertex count, target resource).
+    fresh: Option<(u64, u32, usize)>,
+    last_target: Option<usize>,
+    snaps: Vec<Snap>,
+    held: u64,
+}
 
 /// The directory of `NATIV64_DUMP_TARGETS`, when set and not empty.
 pub fn dir() -> Option<&'static PathBuf> {
@@ -42,7 +93,192 @@ pub unsafe fn hex(address: u64, n: usize) -> String {
 impl VkBackend<'_> {
     /// Whether the draws of the frame being recorded are described.
     pub(super) fn inspecting(&self) -> bool {
-        dir().is_some() && super::present::dump_wanted(self.frames + 1)
+        dir().is_some()
+            && (super::present::dump_wanted(self.frames + 1)
+                || draws_frame() == Some(self.frames + 1))
+    }
+
+    /// Whether the draws of the frame being recorded are dumped one by one.
+    pub(super) fn dumping_draws(&self) -> bool {
+        draws_frame() == Some(self.frames + 1)
+    }
+
+    /// A draw of the frame was recorded on `target` (called by the draw path).
+    pub(super) fn note_draw(&mut self, c: &Command, serial: u64, target: Option<usize>) {
+        if !self.dumping_draws() {
+            return;
+        }
+        let n = match c {
+            Command::Draw { vertices, .. } => *vertices,
+            Command::DrawIndexed { indices, .. } => *indices,
+            _ => 0,
+        };
+        if let Some(t) = target {
+            self.dd.fresh = Some((serial, n, t));
+            self.dd.last_target = Some(t);
+        }
+    }
+
+    /// After a command of the frame is recorded: for a draw or dispatch, copy its colour target
+    /// into a host buffer (read after the submission by `finish_draw_dump`).
+    pub(super) fn snap_after(&mut self, d: &Device, cb: vk::CommandBuffer, c: &Command) {
+        if !self.dumping_draws() {
+            return;
+        }
+        let fresh = self.dd.fresh.take();
+        let (pipe, count, res) = match c {
+            Command::Draw { .. } | Command::DrawIndexed { .. } => {
+                let Some(f) = fresh else {
+                    eprintln!("inspect: draw {} not drawn (skipped)", self.dd.count);
+                    self.dd.count += 1;
+                    return;
+                };
+                f
+            }
+            Command::Dispatch { .. } => {
+                let Some(t) = self.dd.last_target else { return };
+                (0, 0, t)
+            }
+            _ => return,
+        };
+        let idx = self.dd.count;
+        self.dd.count += 1;
+        let Some((image, w, h)) = self.colour_image(res) else {
+            return;
+        };
+        let Some(info) = self
+            .images
+            .get(&res)
+            .and_then(Option::as_ref)
+            .map(|t| t.info)
+        else {
+            return;
+        };
+        let size = u64::from(w) * u64::from(h) * u64::from(info.bytes);
+        if !snap_fits(self.dd.snaps.len(), self.dd.held, size) {
+            eprintln!("inspect: draw {idx} not kept (snapshot cap)");
+            return;
+        }
+        let kind = if matches!(c, Command::Dispatch { .. }) {
+            "disp"
+        } else {
+            "draw"
+        };
+        let name = format!(
+            "frame_{:05}_draw_{idx:03}_{kind}_p{pipe}_i{count}.png",
+            self.frames + 1
+        );
+        eprintln!("inspect: snapshot {name} res {res} {w}x{h}");
+        self.end_rendering(d, cb);
+        let g = self.gpu;
+        // SAFETY: the buffer is created and bound before the copy is recorded; both are freed
+        // by `finish_draw_dump` after the submission completed.
+        unsafe {
+            let Ok(buffer) = d.create_buffer(
+                &vk::BufferCreateInfo::default()
+                    .size(size)
+                    .usage(vk::BufferUsageFlags::TRANSFER_DST),
+                None,
+            ) else {
+                return;
+            };
+            let req = d.get_buffer_memory_requirements(buffer);
+            let flags =
+                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
+            let memory = g.memory_type(req.memory_type_bits, flags).and_then(|ty| {
+                d.allocate_memory(
+                    &vk::MemoryAllocateInfo::default()
+                        .allocation_size(req.size)
+                        .memory_type_index(ty),
+                    None,
+                )
+                .ok()
+            });
+            let Some(memory) = memory else {
+                d.destroy_buffer(buffer, None);
+                return;
+            };
+            if d.bind_buffer_memory(buffer, memory, 0).is_err() {
+                d.destroy_buffer(buffer, None);
+                d.free_memory(memory, None);
+                return;
+            }
+            let region = [vk::BufferImageCopy {
+                image_subresource: vk::ImageSubresourceLayers {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    mip_level: 0,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                },
+                image_extent: vk::Extent3D {
+                    width: w,
+                    height: h,
+                    depth: 1,
+                },
+                ..Default::default()
+            }];
+            super::replay::global_barrier(d, cb);
+            d.cmd_copy_image_to_buffer(cb, image, vk::ImageLayout::GENERAL, buffer, &region);
+            super::replay::global_barrier(d, cb);
+            self.dd.held += size;
+            self.dd.snaps.push(Snap {
+                name,
+                width: w,
+                height: h,
+                format: info.format,
+                buffer,
+                memory,
+                size,
+            });
+        }
+    }
+
+    /// After the submission: writes the snapshots as PNGs and frees them all.
+    pub(super) fn finish_draw_dump(&mut self) {
+        let snaps = std::mem::take(&mut self.dd.snaps);
+        self.dd.held = 0;
+        self.dd.count = 0;
+        self.dd.fresh = None;
+        if snaps.is_empty() {
+            return;
+        }
+        let d = &self.gpu.device;
+        let dir = dir();
+        if let Some(dir) = dir {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        for s in snaps {
+            // SAFETY: the submission completed; the memory is host visible and `size` long.
+            unsafe {
+                if let (Some(dir), Ok(p)) = (
+                    dir,
+                    d.map_memory(s.memory, 0, s.size, vk::MemoryMapFlags::empty()),
+                ) {
+                    let bytes =
+                        std::slice::from_raw_parts(p.cast::<u8>(), s.size as usize).to_vec();
+                    d.unmap_memory(s.memory);
+                    let rb = super::replay::Readback {
+                        width: s.width,
+                        height: s.height,
+                        format: s.format,
+                        bytes,
+                    };
+                    match rgba8(&rb) {
+                        Some(rgba) => {
+                            if let Err(e) = write_png(&dir.join(&s.name), s.width, s.height, &rgba)
+                            {
+                                log_once(format!("cannot write {}: {e}", s.name));
+                            }
+                        }
+                        None => {
+                            eprintln!("inspect: {} format {:?} not converted", s.name, s.format)
+                        }
+                    }
+                }
+                d.destroy_buffer(s.buffer, None);
+                d.free_memory(s.memory, None);
+            }
+        }
     }
 
     pub(super) fn inspecting_at_present(&self) -> bool {
@@ -331,5 +567,28 @@ impl VkBackend<'_> {
                 log_once(format!("cannot write {}: {e}", path.display()));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn draws_frame_parsing() {
+        assert_eq!(parse_draws_frame(None), None);
+        assert_eq!(parse_draws_frame(Some("4800")), Some(4800));
+        assert_eq!(parse_draws_frame(Some(" 12 ")), Some(12));
+        assert_eq!(parse_draws_frame(Some("0")), None);
+        assert_eq!(parse_draws_frame(Some("x")), None);
+        assert_eq!(parse_draws_frame(Some("")), None);
+    }
+
+    #[test]
+    fn snapshot_cap() {
+        assert!(snap_fits(0, 0, 33 << 20));
+        assert!(!snap_fits(SNAP_MAX, 0, 1));
+        assert!(!snap_fits(1, SNAP_BYTES - 10, 11));
+        assert!(snap_fits(1, SNAP_BYTES - 10, 10));
     }
 }

@@ -245,6 +245,8 @@ pub struct VkBackend<'g> {
     pub(super) device_lost: bool,
     /// The `GpuMemory` import generation the import table was last filled from.
     imports_gen: u64,
+    /// `NATIV64_DUMP_DRAWS`: the snapshots of the frame being recorded.
+    pub(super) dd: super::inspect::DrawDump,
     /// Tests: the most device memory the images may hold (a failing allocation beyond it).
     #[cfg(test)]
     pub(super) budget: Option<u64>,
@@ -443,6 +445,7 @@ impl<'g> VkBackend<'g> {
             frames: 0,
             device_lost: false,
             imports_gen: 0,
+            dd: Default::default(),
             #[cfg(test)]
             budget: None,
             #[cfg(test)]
@@ -536,6 +539,7 @@ impl<'g> VkBackend<'g> {
                     let tc = super::profile::start();
                     self.record(d, cb, c, &mut staging);
                     super::profile::stop(super::profile::Phase::Cmds, tc);
+                    self.snap_after(d, cb, c);
                     if matches!(c, Command::Dispatch { .. }) {
                         super::profile::stop(super::profile::Phase::Disp, tc);
                     }
@@ -628,6 +632,7 @@ impl<'g> VkBackend<'g> {
                 }
             }
         }
+        self.finish_draw_dump();
         self.draw.end();
         free_staging(gpu, staging);
         let elapsed = started.elapsed();
@@ -911,19 +916,35 @@ impl<'g> VkBackend<'g> {
                 return None;
             }
         }
-        let ty = self
+        let Some(ty) = self
             .gpu
-            .memory_type(req.memory_type_bits, vk::MemoryPropertyFlags::DEVICE_LOCAL)?;
+            .memory_type(req.memory_type_bits, vk::MemoryPropertyFlags::DEVICE_LOCAL)
+        else {
+            log_once(format!(
+                "no device-local memory type in {:#x} for an image of {} bytes",
+                req.memory_type_bits, req.size
+            ));
+            return None;
+        };
         // SAFETY: a plain allocation; the caller binds or frees it.
-        unsafe {
+        let r = unsafe {
             d.allocate_memory(
                 &vk::MemoryAllocateInfo::default()
                     .allocation_size(req.size)
                     .memory_type_index(ty),
                 None,
             )
+        };
+        match r {
+            Ok(m) => Some(m),
+            Err(e) => {
+                log_once(format!(
+                    "vkAllocateMemory of {} bytes failed: {e}",
+                    req.size
+                ));
+                None
+            }
         }
-        .ok()
     }
 
     /// The counters of the images alive, from the maps.

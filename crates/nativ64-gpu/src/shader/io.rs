@@ -36,6 +36,12 @@ pub fn dxgi_class(format: u32) -> Class {
     }
 }
 
+/// Whether a render target format is A8_UNORM, which the replay stores as an R8 image: its
+/// exports keep only channel 3 (alpha), written to red.
+pub fn a8_target(format: u32) -> bool {
+    format == 65
+}
+
 fn sig_class(e: Option<&SigElement>) -> Class {
     match e.map(|e| e.component_type) {
         Some(1) => Class::Uint,
@@ -132,6 +138,8 @@ pub struct PsIo {
     pub attrs: BTreeMap<u8, PsAttr>,
     /// Class of each render target (`Float` past the end).
     pub targets: Vec<Class>,
+    /// Targets of format A8_UNORM (stored as R8: the exported alpha lands in red, see `a8_target`).
+    pub a8: Vec<bool>,
 }
 
 /// A used-resource row of a program: a descriptor at a byte offset of the table the user SGPR
@@ -380,6 +388,7 @@ fn ps_io(rec: &Record, targets: &[u32], link: Option<&Link>) -> Option<PsIo> {
         vgprs,
         attrs,
         targets: targets.iter().map(|&f| dxgi_class(f)).collect(),
+        a8: targets.iter().map(|&f| a8_target(f)).collect(),
     })
 }
 
@@ -719,6 +728,7 @@ mod tests {
             vgprs: BTreeMap::new(),
             attrs: BTreeMap::new(),
             targets: vec![],
+            a8: vec![],
         });
         assert_eq!(io.descriptor_kind(9, 32), Some(0));
     }

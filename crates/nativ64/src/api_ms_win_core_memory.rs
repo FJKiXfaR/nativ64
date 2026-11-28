@@ -488,6 +488,28 @@ pub fn is_committed(addr: usize, size: usize) -> bool {
             .all(|&p| p != 0 && p & 0xff != PAGE_NOACCESS as u16)
 }
 
+/// Whether `addr..addr + size` lies in an allocation of the table but has a page that is
+/// reserved or `PAGE_NOACCESS` (reading it would fault). False for memory the table does not
+/// know (the host's own) and for ranges past the allocation.
+pub fn has_uncommitted_page(addr: usize, size: usize) -> bool {
+    let Some(end) = addr.checked_add(size) else {
+        return false;
+    };
+    let t = table();
+    let Some(b) = find(&t, addr & !(PAGE - 1)) else {
+        return false;
+    };
+    let r = &t.regions[&b];
+    let (first, last) = (
+        (addr - b) / PAGE,
+        (end - b).div_ceil(PAGE).min(r.pages.len()),
+    );
+    first < last
+        && r.pages[first..last]
+            .iter()
+            .any(|&p| p == 0 || p & 0xff == PAGE_NOACCESS as u16)
+}
+
 /// One host mapping from `/proc/self/maps`: start, end, readable, writable, executable.
 fn host_mapping(addr: usize) -> Option<(usize, usize, bool, bool, bool)> {
     let maps = std::fs::read_to_string("/proc/self/maps").ok()?;
@@ -866,6 +888,9 @@ mod tests {
         assert!(is_committed(a + 0x1800, 0x2000));
         assert!(!is_committed(a + 0x1800, 0x2900));
         assert!(!is_committed(a, 0x1000));
+        assert!(has_uncommitted_page(a, 0x2000));
+        assert!(!has_uncommitted_page(a + 0x1800, 0x2000));
+        assert!(!has_uncommitted_page(1, 8));
         free(a + 0x2000, 0x1000, MEM_DECOMMIT).unwrap();
         assert_eq!(committed_run(a + 0x1000), Some((a + 0x1000, a + 0x2000)));
         let ch = take_gpu_changes();

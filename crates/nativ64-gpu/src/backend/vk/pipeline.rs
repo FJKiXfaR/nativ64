@@ -290,6 +290,17 @@ fn blend_op(o: u32) -> Result<vk::BlendOp, String> {
     })
 }
 
+/// The blend state of an A8_UNORM target (stored as R8): the alpha factors and operation act on
+/// the one stored channel, and only the alpha write bit counts (red in the image).
+fn a8_blend(b: &Blend) -> Blend {
+    let mut a = *b;
+    a.src = b.src_alpha;
+    a.dst = b.dst_alpha;
+    a.op = b.op_alpha;
+    a.write_mask = (b.write_mask >> 3) & 1;
+    a
+}
+
 fn attachment(b: &Blend) -> Result<vk::PipelineColorBlendAttachmentState, String> {
     if b.logic_enable {
         return Err("a blend logic operation".into());
@@ -584,7 +595,14 @@ fn build(
         None
     };
     let blends: Vec<_> = (0..color.len())
-        .map(|i| attachment(&fixed.targets[if fixed.independent_blend { i } else { 0 }]))
+        .map(|i| {
+            let b = &fixed.targets[if fixed.independent_blend { i } else { 0 }];
+            if g.target_formats.get(i).is_some_and(|&f| io::a8_target(f)) {
+                attachment(&a8_blend(b))
+            } else {
+                attachment(b)
+            }
+        })
         .collect::<Result<_, _>>()?;
     let mut rows = vs.record().map(|r| r.layout.clone()).unwrap_or_default();
     for r in ps
@@ -903,5 +921,31 @@ mod tests {
             "there is no 3-sample flag"
         );
         assert_eq!(sample_count_flags(8), vk::SampleCountFlags::TYPE_8);
+    }
+
+    #[test]
+    fn a8_blend_uses_the_alpha_state_for_the_one_channel() {
+        let b = Blend {
+            enable: true,
+            src: 5,
+            dst: 6,
+            op: 3,
+            src_alpha: 2,
+            dst_alpha: 7,
+            op_alpha: 1,
+            write_mask: 0x8,
+            ..Blend::default()
+        };
+        let a = a8_blend(&b);
+        assert_eq!((a.src, a.dst, a.op, a.write_mask), (2, 7, 1, 1));
+        assert_eq!(
+            a8_blend(&Blend {
+                write_mask: 0x7,
+                ..b
+            })
+            .write_mask,
+            0
+        );
+        assert!(io::a8_target(65) && !io::a8_target(28));
     }
 }

@@ -1155,6 +1155,7 @@ impl<'g> VkBackend<'g> {
             self.inspect_draw(c, pd, &resources, extent, rects);
         }
         self.log_rows_once(pd, &built, c);
+        self.note_draw(c, pd.serial, resources.first().map(|t| t.resource));
         if self.skipped_by_filter()
             || self.skipped_by_serial(pd.serial as usize)
             || self.skipped_by_ps(pd)

@@ -109,10 +109,8 @@ pub const IID_SYSTEM: Guid = Guid::new(
 pub const E_BUFFER_TOO_SMALL: i32 = 0x8007_007Au32 as i32;
 /// The sandbox the title is told it runs in.
 pub const SANDBOX_ID: &[u8] = b"RETAIL\0";
-/// The console id `XSystemGetConsoleId` answers with: four groups of eight hex digits and a
-/// two-digit suffix, 38 characters plus the terminator (`XSystemConsoleIdBytes` is 39, the
-/// buffer size titles allocate for it). Zeroes are the PC stand-in; the format and the length
-/// are what a title sizes its buffer for.
+/// What `XSystemGetConsoleId` answers on a PC and in RETAIL: the console id format (38
+/// characters, the size titles reserve) filled with zeros.
 pub const CONSOLE_ID: &[u8] = b"00000000.00000000.00000000.00000000.00\0";
 
 extern "win64" fn trap<const SLOT: usize>() -> ! {
@@ -126,7 +124,7 @@ extern "win64" fn trap<const SLOT: usize>() -> ! {
 
 type SystemObj = ComObject<SystemVtbl, ()>;
 
-/// Slots 0-2 are `IUnknown`, 3 the console id, 4 the sandbox id; the others are traps.
+/// Slots 0-2 are `IUnknown`, 3 is the console id, 4 the sandbox id; the others are traps.
 #[repr(C)]
 struct SystemVtbl {
     unknown: IUnknownVtbl<SystemVtbl, ()>,
@@ -142,26 +140,25 @@ struct SystemVtbl {
     slot12: extern "win64" fn() -> !,
 }
 
-/// Writes `value` (terminator included): `used` gets its length, a too-small buffer fails
-/// without writing, and a NULL buffer with a non-zero `size` is `E_POINTER`.
+/// Copies the NUL-terminated `text` into the caller's buffer, reporting the size it needs.
 ///
 /// # Safety
 /// `buffer` is NULL or valid for `size` bytes; `used` is NULL or valid.
-unsafe fn write_cstr(size: usize, buffer: *mut u8, used: *mut usize, value: &[u8]) -> i32 {
+unsafe fn write_cstr(text: &[u8], size: usize, buffer: *mut u8, used: *mut usize) -> i32 {
     if buffer.is_null() && size != 0 {
         return E_POINTER;
     }
     if !used.is_null() {
-        *used = value.len();
+        *used = text.len();
     }
-    if size < value.len() {
+    if size < text.len() {
         return E_BUFFER_TOO_SMALL;
     }
-    std::ptr::copy_nonoverlapping(value.as_ptr(), buffer, value.len());
+    std::ptr::copy_nonoverlapping(text.as_ptr(), buffer, text.len());
     S_OK
 }
 
-/// `XSystemGetConsoleId(size, buffer, used)`: the console id with its terminator.
+/// `GetConsoleId(size, buffer, used)`: the console id with its terminator.
 ///
 /// # Safety
 /// `buffer` is NULL or valid for `size` bytes; `used` is NULL or valid.
@@ -171,10 +168,10 @@ unsafe extern "win64" fn console_id(
     buffer: *mut u8,
     used: *mut usize,
 ) -> i32 {
-    write_cstr(size, buffer, used, CONSOLE_ID)
+    write_cstr(CONSOLE_ID, size, buffer, used)
 }
 
-/// `XSystemGetXboxLiveSandboxId(size, buffer, used)`: the id with its terminator.
+/// `GetXboxLiveSandboxId(size, buffer, used)`: the id with its terminator.
 ///
 /// # Safety
 /// `buffer` is NULL or valid for `size` bytes; `used` is NULL or valid.
@@ -184,7 +181,7 @@ unsafe extern "win64" fn sandbox_id(
     buffer: *mut u8,
     used: *mut usize,
 ) -> i32 {
-    write_cstr(size, buffer, used, SANDBOX_ID)
+    write_cstr(SANDBOX_ID, size, buffer, used)
 }
 
 static SYSTEM_VTBL: SystemVtbl = SystemVtbl {
@@ -385,6 +382,15 @@ mod tests {
             assert_eq!(used, 7);
             assert_eq!(small, [0xff; 4]);
             assert_eq!(sandbox_id(o, 4, std::ptr::null_mut(), &mut used), E_POINTER);
+            let mut id = [0xffu8; 64];
+            assert_eq!(console_id(o, 64, id.as_mut_ptr(), &mut used), S_OK);
+            assert_eq!(used, 39);
+            assert_eq!(&id[..39], CONSOLE_ID);
+            assert_eq!(
+                console_id(o, 8, id.as_mut_ptr(), &mut used),
+                E_BUFFER_TOO_SMALL
+            );
+            assert_eq!(used, 39);
             assert_eq!(release(o), 0);
             // The interface GUID must match too.
             assert_eq!(
