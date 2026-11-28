@@ -118,6 +118,16 @@ fn activate_msg(hwnd: usize, was: bool, now: bool) -> Option<Msg> {
     (was != now).then(|| Msg::new(hwnd, WM_ACTIVATE, if now { WA_ACTIVE } else { 0 }, 0))
 }
 
+/// `NATIV64_WINDOW_ACTIVE=1` keeps the window reported as the active one: a compositor without a
+/// seat (a headless session, say) never marks the toplevel active, and titles pause their intro
+/// videos while they believe they are in the background.
+fn forced_active() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        std::env::var("NATIV64_WINDOW_ACTIVE").is_ok_and(|v| v != "0" && !v.is_empty())
+    })
+}
+
 /// The gamepad bit of a Linux evdev key code (0 when the key does nothing).
 fn key_button(code: u32) -> u32 {
     match code {
@@ -607,7 +617,8 @@ impl Dispatch<XdgSurface, usize> for State {
             let Some(win) = st.wins.get_mut(&hwnd) else {
                 return;
             };
-            if let Some((hint, active, maximized)) = win.pending.take() {
+            if let Some((hint, mut active, maximized)) = win.pending.take() {
+                active = active || forced_active();
                 if let Some((m, new)) = size_msg(hwnd, win.size, hint, maximized) {
                     win.size = new;
                     st.out.push(m);
