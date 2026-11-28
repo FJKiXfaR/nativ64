@@ -1776,8 +1776,10 @@ mod tests {
     /// The frame gate holds only the script: a player's keyboard still presses the pad.
     #[test]
     fn the_frame_gate_does_not_hold_the_players_input() {
-        let mut st = State::default();
-        st.script = Script::parse("0x4@1+2");
+        let st = State {
+            script: Script::parse("0x4@1+2"),
+            ..State::default()
+        };
         WAIT_FRAME_FORCE.store(1_000_000, Ordering::Relaxed);
         note_presented_frame(10);
         set_keyboard_buttons(A);
