@@ -317,6 +317,10 @@ The executable imports from `d3d12_xs` only `D3D12XboxCreateDevice` and
 - `NATIV64_IMPORT_CAP_MB=<n>` overrides the host-pointer import cap (default 2048).
 - `NATIV64_PROFILE=1` prints, every 60 presented frames, the seconds spent in each phase of a
   submission (texture sync, write watch, hashing, uploads, recording, dump) and their counters.
+- `NATIV64_VIEW_STATS=1` prints, at most every 30 s (on the next view the title creates), the size
+  of the view registry (`descriptor.rs`), the records and new entries per second, and the time
+  spent recording views (lock wait and whole call, total and max over the period), then the
+  new entries by kind (constant, shader, unordered, sampler, placed shader, placed unordered).
 
 ## Milestones and chunks
 

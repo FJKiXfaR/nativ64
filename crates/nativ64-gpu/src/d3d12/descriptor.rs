@@ -187,7 +187,7 @@ unsafe extern "win64" fn get_start(this: *mut c_void) -> u64 {
 
 /// What the title described at a descriptor (descriptions kept as the words it passed, for the
 /// backend to build its own views from at replay).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum View {
     /// Constant buffer: GPU address and size.
     Constant(u64, u32),
@@ -213,29 +213,179 @@ const VIEW_TAG: u32 = u32::from_le_bytes(*b"nVEW");
 const RTV_TAG: u32 = u32::from_le_bytes(*b"nRTV");
 const DSV_TAG: u32 = u32::from_le_bytes(*b"nDSV");
 
+/// The recorded views. An index, once handed out, names the same view for the whole run: it is
+/// written into the title's descriptor memory, which the title copies as bytes, and the backend
+/// keeps per-index tables of its own (`views_from`, `view_at`).
 // shortcut: entries are never freed; a view of a resource that is released stays in the table.
-static VIEWS: std::sync::Mutex<Vec<View>> = std::sync::Mutex::new(Vec::new());
+// Freeing would need to know that no descriptor slot (in any heap, or any copy the title made of
+// one) still holds the index, and the backend's per-index tables to drop the entry. Measured: once
+// frames run fast, a title can make ~30k new entries a second (constant and placed views at fresh
+// addresses), ~150 bytes each here plus the backend's records.
+static VIEWS: std::sync::Mutex<Registry> = std::sync::Mutex::new(Registry::new());
+
+/// The views and a hash index to find one in O(1): `heads` maps a view's hash to the last index
+/// with that hash, `next` chains each index to the previous one with the same hash (`NONE` ends
+/// it). About 16 bytes per entry next to the view, against a second copy as a map key.
+struct Registry {
+    views: Vec<View>,
+    next: Vec<u32>,
+    heads: std::collections::HashMap<u64, u32, std::hash::BuildHasherDefault<Unhashed>>,
+}
+
+const NONE: u32 = u32::MAX;
+
+/// Hasher of the map's keys, which are hashes already.
+#[derive(Default)]
+struct Unhashed(u64);
+
+impl std::hash::Hasher for Unhashed {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = self.0.rotate_left(8) ^ u64::from(b);
+        }
+    }
+    fn write_u64(&mut self, n: u64) {
+        self.0 = n;
+    }
+}
+
+impl Registry {
+    const fn new() -> Self {
+        Registry {
+            views: Vec::new(),
+            next: Vec::new(),
+            heads: std::collections::HashMap::with_hasher(std::hash::BuildHasherDefault::new()),
+        }
+    }
+
+    /// The index of `view`, added if it is new, and whether it was.
+    fn index(&mut self, view: View) -> (usize, bool) {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::hash::DefaultHasher::new();
+        view.hash(&mut h);
+        let key = h.finish();
+        let head = self.heads.get(&key).copied().unwrap_or(NONE);
+        let mut i = head;
+        while i != NONE {
+            if self.views[i as usize] == view {
+                return (i as usize, false);
+            }
+            i = self.next[i as usize];
+        }
+        let index = self.views.len();
+        assert!(index < NONE as usize, "view registry full");
+        self.views.push(view);
+        self.next.push(head);
+        self.heads.insert(key, index as u32);
+        (index, true)
+    }
+}
 
 fn record(handle: u64, view: View) {
     if handle == 0 {
         return;
     }
-    let mut views = VIEWS.lock().unwrap_or_else(|e| e.into_inner());
-    // Rewriting a descriptor with the same view reuses its entry.
-    let index = match views.iter().rposition(|v| *v == view) {
-        Some(i) => i,
-        None => {
-            views.push(view);
-            views.len() - 1
-        }
+    let stats = stats::on().then(std::time::Instant::now);
+    let kind = match view {
+        View::Constant(..) => 0,
+        View::Shader(..) => 1,
+        View::Unordered(..) => 2,
+        View::Sampler(_) | View::ConsoleSampler(_) => 3,
+        View::Placed(false, ..) => 4,
+        View::Placed(true, ..) => 5,
     };
+    let mut views = VIEWS.lock().unwrap_or_else(|e| e.into_inner());
+    let locked = stats.map(|t| t.elapsed());
+    // Rewriting a descriptor with the same view reuses its entry.
+    let (index, new) = views.index(view);
+    let len = views.views.len();
+    drop(views);
+    if let (Some(t), Some(wait)) = (stats, locked) {
+        stats::note(wait, t.elapsed(), new.then_some(kind), len);
+    }
     // SAFETY: the handle is a descriptor slot of at least 16 bytes the title owns.
     unsafe { (handle as *mut [u32; 2]).write_unaligned([VIEW_TAG, index as u32]) };
 }
 
+/// Optional counters of the view registry (`NATIV64_VIEW_STATS=1`): every 30 s, one line with
+/// the registry size, records and new entries per second, and the time spent in `record`
+/// (lock wait and whole call: total and max over the period), then the new entries of the period
+/// by kind: constant, shader, unordered, sampler, placed shader, placed unordered.
+mod stats {
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    use std::sync::OnceLock;
+    use std::time::{Duration, Instant};
+
+    const PERIOD: Duration = Duration::from_secs(30);
+
+    static START: OnceLock<Option<Instant>> = OnceLock::new();
+    /// Milliseconds since `START` of the last line printed.
+    static LAST: AtomicU64 = AtomicU64::new(0);
+    static RECORDS: AtomicU64 = AtomicU64::new(0);
+    static NEW: AtomicU64 = AtomicU64::new(0);
+    static NEW_KIND: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
+    static WAIT_NS: AtomicU64 = AtomicU64::new(0);
+    static WAIT_MAX: AtomicU64 = AtomicU64::new(0);
+    static TOTAL_NS: AtomicU64 = AtomicU64::new(0);
+    static TOTAL_MAX: AtomicU64 = AtomicU64::new(0);
+
+    fn start() -> Option<Instant> {
+        *START.get_or_init(|| {
+            std::env::var_os("NATIV64_VIEW_STATS")
+                .is_some_and(|v| !v.is_empty() && v != "0")
+                .then(Instant::now)
+        })
+    }
+
+    pub fn on() -> bool {
+        start().is_some()
+    }
+
+    /// `new`: the kind of the view (see the module) when it made a new entry.
+    pub fn note(wait: Duration, total: Duration, new: Option<usize>, len: usize) {
+        let Some(start) = start() else { return };
+        let (w, t) = (wait.as_nanos() as u64, total.as_nanos() as u64);
+        RECORDS.fetch_add(1, Relaxed);
+        if let Some(k) = new {
+            NEW.fetch_add(1, Relaxed);
+            NEW_KIND[k].fetch_add(1, Relaxed);
+        }
+        WAIT_NS.fetch_add(w, Relaxed);
+        WAIT_MAX.fetch_max(w, Relaxed);
+        TOTAL_NS.fetch_add(t, Relaxed);
+        TOTAL_MAX.fetch_max(t, Relaxed);
+        let now = start.elapsed().as_millis() as u64;
+        let last = LAST.load(Relaxed);
+        let span = now.saturating_sub(last);
+        if span < PERIOD.as_millis() as u64
+            || LAST.compare_exchange(last, now, Relaxed, Relaxed).is_err()
+        {
+            return;
+        }
+        let secs = span as f64 / 1000.0;
+        let ms = |ns: u64| ns as f64 / 1e6;
+        eprintln!(
+            "nativ64: view stats {:.0}s: registry {len}, records {:.0}/s, new {:.0}/s, \
+             record total {:.1} ms max {:.3} ms, lock wait total {:.1} ms max {:.3} ms, \
+             new by kind {:?}",
+            now as f64 / 1000.0,
+            RECORDS.swap(0, Relaxed) as f64 / secs,
+            NEW.swap(0, Relaxed) as f64 / secs,
+            ms(TOTAL_NS.swap(0, Relaxed)),
+            ms(TOTAL_MAX.swap(0, Relaxed)),
+            ms(WAIT_NS.swap(0, Relaxed)),
+            ms(WAIT_MAX.swap(0, Relaxed)),
+            NEW_KIND.each_ref().map(|n| n.swap(0, Relaxed)),
+        );
+    }
+}
+
 /// How many views are recorded: registry indices are below it.
 pub fn view_count() -> usize {
-    VIEWS.lock().unwrap_or_else(|e| e.into_inner()).len()
+    VIEWS.lock().unwrap_or_else(|e| e.into_inner()).views.len()
 }
 
 /// The registry index the view or sampler descriptor at `handle` holds, if it holds one.
@@ -251,7 +401,10 @@ pub unsafe fn registry_index_at(handle: u64) -> Option<u32> {
 /// The recorded views from registry index `first` on.
 pub fn views_from(first: usize) -> Vec<View> {
     let v = VIEWS.lock().unwrap_or_else(|e| e.into_inner());
-    v.get(first..).map(<[View]>::to_vec).unwrap_or_default()
+    v.views
+        .get(first..)
+        .map(<[View]>::to_vec)
+        .unwrap_or_default()
 }
 
 /// The view recorded at registry index `index`.
@@ -259,6 +412,7 @@ pub fn view_at(index: usize) -> Option<View> {
     VIEWS
         .lock()
         .unwrap_or_else(|e| e.into_inner())
+        .views
         .get(index)
         .cloned()
 }
@@ -276,6 +430,7 @@ pub fn view(handle: u64) -> Option<View> {
     VIEWS
         .lock()
         .unwrap_or_else(|e| e.into_inner())
+        .views
         .get(index as usize)
         .cloned()
 }
@@ -634,6 +789,77 @@ mod tests {
             };
             assert_eq!(create(d, wrap, &mut h), E_INVALIDARG);
         }
+    }
+
+    #[test]
+    fn registry_dedups_and_keeps_indices() {
+        let mut r = Registry::new();
+        let placed = |n: u32| View::Placed(n.is_multiple_of(2), [n; 14], [n.wrapping_mul(7); 16]);
+        let first: Vec<usize> = (0..5000).map(|n| r.index(placed(n)).0).collect();
+        assert_eq!(first, (0..5000).collect::<Vec<_>>());
+        for n in (0..5000).rev() {
+            assert_eq!(r.index(placed(n)), (n as usize, false));
+        }
+        assert_eq!(r.index(View::Constant(1, 2)), (5000, true));
+        assert_eq!(r.index(View::Constant(1, 3)), (5001, true));
+        assert_eq!(r.index(View::Constant(1, 2)), (5000, false));
+        assert_eq!(r.views.len(), 5002);
+        assert_eq!(r.views[17], placed(17));
+    }
+
+    #[test]
+    fn registry_chains_equal_hashes() {
+        // Two views forced under one hash key: both found, each at its own index.
+        let mut r = Registry::new();
+        let (a, b) = (View::Constant(1, 1), View::Constant(2, 2));
+        r.views.extend([a.clone(), b.clone()]);
+        r.next.extend([NONE, 0]);
+        let (ka, kb) = {
+            use std::hash::{Hash, Hasher};
+            let k = |v: &View| {
+                let mut h = std::hash::DefaultHasher::new();
+                v.hash(&mut h);
+                h.finish()
+            };
+            (k(&a), k(&b))
+        };
+        r.heads.insert(ka, 1);
+        r.heads.insert(kb, 1);
+        assert_eq!(r.index(b), (1, false));
+        assert_eq!(r.index(a), (0, false));
+    }
+
+    #[test]
+    fn concurrent_records_agree_on_indices() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let threads: Vec<_> = (0..8u32)
+                .map(|t| {
+                    std::thread::spawn(move || {
+                        let mut slot = [0u64; 4];
+                        let mut got = Vec::new();
+                        for n in 0..20_000u32 {
+                            let v = View::Placed(true, [0x5eed_0000 | (n % 3000); 14], [t % 2; 16]);
+                            record(slot.as_mut_ptr() as u64, v.clone());
+                            let index = unsafe { registry_index_at(slot.as_ptr() as u64) };
+                            assert_eq!(view_at(index.unwrap() as usize), Some(v));
+                            got.push(index.unwrap());
+                        }
+                        got
+                    })
+                })
+                .collect();
+            let got: Vec<Vec<u32>> = threads.into_iter().map(|h| h.join().unwrap()).collect();
+            tx.send(got).unwrap();
+        });
+        let got = rx
+            .recv_timeout(std::time::Duration::from_secs(60))
+            .expect("records took over 60 s");
+        // Threads with the same parity recorded the same views: the same indices.
+        for t in 2..8 {
+            assert_eq!(got[t], got[t % 2]);
+        }
+        assert_ne!(got[0][0], got[1][0]);
     }
 
     #[test]
