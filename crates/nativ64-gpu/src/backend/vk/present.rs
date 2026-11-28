@@ -102,6 +102,8 @@ impl<'g> VkBackend<'g> {
     /// blit `rect` of it (all when None) to `window`.
     pub fn present(&mut self, resource: usize, rect: Option<Rect>, window: Option<Window>) {
         self.frames += 1;
+        // the input script may wait for a presented frame (`NATIV64_INPUT_WAIT_FRAME`)
+        nativ64::gameinput::note_presented_frame(self.frames);
         if self.frames.is_multiple_of(60) {
             super::profile::report(self.frames, 60);
         }

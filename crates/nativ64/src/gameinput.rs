@@ -203,6 +203,29 @@ pub fn set_keyboard_buttons(mask: u32) {
     KEYBOARD_BUTTONS.store(mask, Ordering::Relaxed);
 }
 
+/// Frames the title has presented (the GPU backend reports each present).
+static PRESENTED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Reports a presented frame: `NATIV64_INPUT_WAIT_FRAME=<n>` starts the input script's clock
+/// only once the title has presented `n` frames. A start-up script pressed blind from the first
+/// query misses the screens that appear at an unpredictable frame; waiting for the frame the
+/// screen first showed in makes the script's seconds count from there.
+pub fn note_presented_frame(frame: u64) {
+    PRESENTED.store(frame, Ordering::Relaxed);
+}
+
+/// Whether the input script may run yet (a `NATIV64_INPUT_WAIT_FRAME` gate).
+fn script_armed() -> bool {
+    static WAIT: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    let wait = *WAIT.get_or_init(|| {
+        std::env::var("NATIV64_INPUT_WAIT_FRAME")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0)
+    });
+    wait == 0 || PRESENTED.load(Ordering::Relaxed) >= wait
+}
+
 /// Shoulder and stick button bits (the GDK order continues the ones above).
 pub const LB: u32 = 0x400;
 pub const RB: u32 = 0x800;
@@ -427,8 +450,28 @@ impl State {
 
     /// The newest reading: polls the buttons now, making a reading if they changed.
     fn poll(&self) -> Entry {
+        if !script_armed() {
+            // the script's clock has not started: the pad is at rest (the gate is for scripts
+            // that have to wait for the title to reach a screen)
+            return self.rest_entry(now_micros());
+        }
         let start = *self.start.get_or_init(Instant::now);
         self.poll_at(start.elapsed(), now_micros())
+    }
+
+    /// The pad at rest, the reading a poll before the script's clock makes.
+    fn rest_entry(&self, timestamp: u64) -> Entry {
+        let mut history = self.history.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(last) = history.last() {
+            return *last;
+        }
+        let entry = Entry {
+            sequence: self.next_sequence.fetch_add(1, Ordering::Relaxed),
+            timestamp,
+            buttons: 0,
+        };
+        history.push(entry);
+        entry
     }
 
     fn poll_at(&self, elapsed: Duration, timestamp: u64) -> Entry {
