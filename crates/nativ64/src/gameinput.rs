@@ -414,6 +414,10 @@ static WAIT_FRAME_FORCE: std::sync::atomic::AtomicU64 = std::sync::atomic::Atomi
 
 /// Whether the input script may run yet (a `NATIV64_INPUT_WAIT_FRAME` gate).
 fn script_armed() -> bool {
+    // a script whose entries are frame-anchored waits for their frames itself
+    if FRAME_ANCHORED.load(Ordering::Relaxed) {
+        return true;
+    }
     let forced = WAIT_FRAME_FORCE.load(Ordering::Relaxed);
     if forced != u64::MAX {
         return PRESENTED.load(Ordering::Relaxed) >= forced;
@@ -460,6 +464,9 @@ impl Physical {
 }
 
 static PHYSICAL: Mutex<Physical> = Mutex::new(Physical::REST);
+/// Whether a parsed `NATIV64_INPUT_SCRIPT` had an entry timed in presented frames.
+static FRAME_ANCHORED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// The axes `NATIV64_INPUT_SCRIPT` holds right now (merged over the joystick's).
 static SCRIPT_AXES: Mutex<Physical> = Mutex::new(Physical::REST);
 
@@ -503,22 +510,36 @@ pub fn reset_physical() {
 pub struct Script {
     presses: Vec<(u32, f64, f64)>,
     axes: Vec<(u8, f32, f64, f64)>,
+    /// Frame-anchored entries: `(mask, first frame, last frame)` and `(axis, value, first, last)`;
+    /// their times are presented-frame numbers (see [`Script::parse`]).
+    presses_frames: Vec<(u32, u64, u64)>,
+    axes_frames: Vec<(u8, f32, u64, u64)>,
 }
 
 impl Script {
     /// Parses `<mask hex>@<seconds>[+<duration>]` entries separated by commas; bad entries are
-    /// logged and skipped.
+    /// logged and skipped. A time with an `f` prefix counts **presented frames** instead of
+    /// seconds (`4@f16000+2`: A held for the frames 16000 and 16001), which is how a script
+    /// follows a title whose frames get minutes apart while it loads.
     pub fn parse(text: &str) -> Script {
         let mut script = Script::default();
         for entry in text.split(',').map(str::trim).filter(|e| !e.is_empty()) {
             if entry.contains('=') {
                 match Script::axis_entry(entry) {
-                    Some(axis) => script.axes.push(axis),
+                    Some(Ok(axis)) => script.axes.push(axis),
+                    Some(Err(axis)) => {
+                        FRAME_ANCHORED.store(true, Ordering::Relaxed);
+                        script.axes_frames.push(axis);
+                    }
                     None => eprintln!("nativ64: NATIV64_INPUT_SCRIPT: bad entry {entry:?} skipped"),
                 }
             } else {
                 match Script::entry(entry) {
-                    Some(press) => script.presses.push(press),
+                    Some(Ok(press)) => script.presses.push(press),
+                    Some(Err(press)) => {
+                        FRAME_ANCHORED.store(true, Ordering::Relaxed);
+                        script.presses_frames.push(press);
+                    }
                     None => eprintln!("nativ64: NATIV64_INPUT_SCRIPT: bad entry {entry:?} skipped"),
                 }
             }
@@ -529,39 +550,54 @@ impl Script {
     /// The axis names of [`Script::axes_at`].
     pub const AXES: [&'static str; 6] = ["lx", "ly", "rx", "ry", "lt", "rt"];
 
-    /// `<axis>=<value>@<seconds>[+<duration>]`.
-    fn axis_entry(entry: &str) -> Option<(u8, f32, f64, f64)> {
+    /// `<axis>=<value>@<seconds>[+<duration>]`, or `@f<first frame>[+<frames>]`; the frame form
+    /// comes back as `Err`.
+    #[allow(clippy::type_complexity)]
+    fn axis_entry(entry: &str) -> Option<Result<(u8, f32, f64, f64), (u8, f32, u64, u64)>> {
         let (name, rest) = entry.split_once('=')?;
         let axis = Script::AXES.iter().position(|a| *a == name.trim())? as u8;
         let (value, when) = rest.split_once('@')?;
         let value: f32 = value.trim().parse().ok()?;
+        if !value.is_finite() || !(-1.0..=1.0).contains(&value) {
+            return None;
+        }
+        if let Some(frames) = when.strip_prefix('f') {
+            let (start, hold) = match frames.split_once('+') {
+                Some((start, hold)) => (start, hold.parse::<u64>().ok()?),
+                None => (frames, 1),
+            };
+            let start: u64 = start.parse().ok()?;
+            return (hold > 0).then_some(Err((axis, value, start, start + hold)));
+        }
         let (start, hold) = match when.split_once('+') {
             Some((start, hold)) => (start, hold.parse::<f64>().ok()?),
             None => (when, 0.3),
         };
         let start: f64 = start.parse().ok()?;
-        (start >= 0.0
-            && hold > 0.0
-            && start.is_finite()
-            && hold.is_finite()
-            && value.is_finite()
-            && (-1.0..=1.0).contains(&value))
-        .then_some((axis, value, start, hold))
+        (start >= 0.0 && hold > 0.0 && start.is_finite() && hold.is_finite())
+            .then_some(Ok((axis, value, start, hold)))
     }
 
-    fn entry(entry: &str) -> Option<(u32, f64, f64)> {
+    #[allow(clippy::type_complexity)]
+    fn entry(entry: &str) -> Option<Result<(u32, f64, f64), (u32, u64, u64)>> {
         let (mask, when) = entry.split_once('@')?;
         let mask = mask.trim_start_matches("0x");
+        let mask = u32::from_str_radix(mask, 16).ok()?;
+        if let Some(frames) = when.strip_prefix('f') {
+            let (start, hold) = match frames.split_once('+') {
+                Some((start, hold)) => (start, hold.parse::<u64>().ok()?),
+                None => (frames, 1),
+            };
+            let start: u64 = start.parse().ok()?;
+            return (hold > 0).then_some(Err((mask, start, start + hold)));
+        }
         let (start, hold) = match when.split_once('+') {
             Some((start, hold)) => (start, hold.parse::<f64>().ok()?),
             None => (when, 0.3),
         };
-        let (mask, start) = (
-            u32::from_str_radix(mask, 16).ok()?,
-            start.parse::<f64>().ok()?,
-        );
+        let start: f64 = start.parse().ok()?;
         (start >= 0.0 && hold > 0.0 && start.is_finite() && hold.is_finite())
-            .then_some((mask, start, hold))
+            .then_some(Ok((mask, start, hold)))
     }
 
     /// The buttons held `seconds` after the first reading query.
@@ -570,6 +606,38 @@ impl Script {
             .iter()
             .filter(|(_, start, hold)| seconds >= *start && seconds < start + hold)
             .fold(0, |all, (mask, _, _)| all | mask)
+    }
+
+    /// The buttons a frame-anchored entry holds at presented frame `frame`.
+    pub fn buttons_at_frame(&self, frame: u64) -> u32 {
+        self.presses_frames
+            .iter()
+            .filter(|(_, start, end)| frame >= *start && frame < *end)
+            .fold(0, |all, (mask, _, _)| all | mask)
+    }
+
+    /// The axes a frame-anchored entry holds at presented frame `frame`.
+    pub fn axes_at_frame(&self, frame: u64) -> Physical {
+        let mut p = Physical::REST;
+        for (axis, value, start, end) in &self.axes_frames {
+            if frame < *start || frame >= *end {
+                continue;
+            }
+            match axis {
+                0 => p.left_x = *value,
+                1 => p.left_y = *value,
+                2 => p.right_x = *value,
+                3 => p.right_y = *value,
+                4 => p.left_trigger = *value,
+                _ => p.right_trigger = *value,
+            }
+        }
+        p
+    }
+
+    /// Whether any entry waits for a presented frame (such a script runs before the gate too).
+    pub fn has_frame_entries(&self) -> bool {
+        !self.presses_frames.is_empty() || !self.axes_frames.is_empty()
     }
 
     /// The axes held `seconds` after the first reading query (rest where none is scripted).
@@ -708,8 +776,19 @@ impl State {
 
     fn poll_at(&self, elapsed: Duration, timestamp: u64) -> Entry {
         let seconds = elapsed.as_secs_f64();
-        let buttons = self.buttons_at(seconds);
-        *SCRIPT_AXES.lock().unwrap_or_else(|e| e.into_inner()) = self.script.axes_at(seconds);
+        let frame = PRESENTED.load(Ordering::Relaxed);
+        let buttons = self.buttons_at(seconds) | self.script.buttons_at_frame(frame);
+        {
+            let mut axes = self.script.axes_at(seconds);
+            let f = self.script.axes_at_frame(frame);
+            axes.left_x += f.left_x;
+            axes.left_y += f.left_y;
+            axes.right_x += f.right_x;
+            axes.right_y += f.right_y;
+            axes.left_trigger = axes.left_trigger.max(f.left_trigger);
+            axes.right_trigger = axes.right_trigger.max(f.right_trigger);
+            *SCRIPT_AXES.lock().unwrap_or_else(|e| e.into_inner()) = axes;
+        }
         let fresh = {
             let mut history = self.history.lock().unwrap_or_else(|e| e.into_inner());
             match history.last() {
@@ -1773,9 +1852,18 @@ fn apply_js_event(kind: u8, number: u8, value: i16) {
 mod tests {
     use super::*;
 
+    /// The state here is process-wide (the script axes, the physical pad, the keyboard bits),
+    /// so the tests take turns.
+    static LOCK: Mutex<()> = Mutex::new(());
+
+    fn lock() -> std::sync::MutexGuard<'static, ()> {
+        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     /// The frame gate holds only the script: a player's keyboard still presses the pad.
     #[test]
     fn the_frame_gate_does_not_hold_the_players_input() {
+        let _g = lock();
         let st = State {
             script: Script::parse("0x4@1+2"),
             ..State::default()
@@ -1794,6 +1882,7 @@ mod tests {
     /// One test only: the physical state is process-wide.
     #[test]
     fn ui_navigation_maps_the_pad() {
+        let _g = lock();
         let rest = Physical::REST;
         assert_eq!(
             ui_navigation_buttons(A | B | X | Y, &rest),
@@ -1832,6 +1921,7 @@ mod tests {
 
     #[test]
     fn joystick_events_press_buttons_and_move_sticks() {
+        let _g = lock();
         reset_physical();
         // A press (button 0, value 1), the D-pad hat up (axis 7, negative), a stick and a trigger.
         apply_js_event(JS_BUTTON, 0, 1);
@@ -1878,6 +1968,7 @@ mod tests {
 
     #[test]
     fn create_null_out_and_ordinal() {
+        let _g = lock();
         assert_eq!(
             unsafe { GameInputCreate(std::ptr::null_mut()) },
             E_INVALIDARG
@@ -1890,6 +1981,7 @@ mod tests {
 
     #[test]
     fn query_and_release() {
+        let _g = lock();
         unsafe {
             let (o, v) = create();
             let mut out = std::ptr::null_mut();
@@ -1937,6 +2029,7 @@ mod tests {
 
     #[test]
     fn script_parsing_and_timing() {
+        let _g = lock();
         let s = Script::parse("4@25,0x20@30+1, 3@1.5+0.5 ,bad,4@,@3,zz@1,4@-1,4@1+0");
         assert_eq!(
             s.presses,
@@ -1955,6 +2048,7 @@ mod tests {
 
     #[test]
     fn scripted_axes_are_parsed_and_held() {
+        let _g = lock();
         let s = Script::parse("ry=-1@40+2,rx=0.5@1,lt=1@5+0.5,bad=1@1,bogus,ry=2@1");
         assert_eq!(s.axes_at(40.5).right_y, -1.0);
         assert_eq!(s.axes_at(42.0).right_y, 0.0);
@@ -1969,6 +2063,7 @@ mod tests {
 
     #[test]
     fn a_scripted_axis_shows_through_the_joystick_state() {
+        let _g = lock();
         *SCRIPT_AXES.lock().unwrap_or_else(|e| e.into_inner()) = Physical {
             right_y: -1.0,
             ..Physical::REST
@@ -1980,6 +2075,7 @@ mod tests {
 
     #[test]
     fn readings_follow_the_script_and_the_history() {
+        let _g = lock();
         unsafe {
             let (o, v) = create();
             (*o).data = State::new(Script::parse("4@1+1,20@3"));
@@ -2040,6 +2136,7 @@ mod tests {
 
     #[test]
     fn reading_objects_describe_themselves() {
+        let _g = lock();
         unsafe {
             let r = new_reading(Entry {
                 sequence: 9,
@@ -2078,6 +2175,7 @@ mod tests {
 
     #[test]
     fn the_device_is_a_connected_gamepad() {
+        let _g = lock();
         unsafe {
             let d = device();
             assert_eq!(d, device(), "one device");
@@ -2124,6 +2222,7 @@ mod tests {
 
     #[test]
     fn a_reading_callback_sees_each_change() {
+        let _g = lock();
         unsafe {
             let (o, v) = create();
             (*o).data = State::new(Script::parse("4@1+1"));
@@ -2159,6 +2258,7 @@ mod tests {
 
     #[test]
     fn keyboard_buttons_press_the_pad() {
+        let _g = lock();
         let st = State::default();
         set_keyboard_buttons(A | UP);
         let held = st.poll_at(Duration::ZERO, 1);
@@ -2184,6 +2284,7 @@ mod tests {
 
     #[test]
     fn device_callbacks_enumerate_the_pad() {
+        let _g = lock();
         unsafe {
             let (o, v) = create();
             let np = std::ptr::null_mut();
@@ -2283,6 +2384,7 @@ mod tests {
 
     #[test]
     fn the_keyboard_device_reports_the_pads_keys() {
+        let _g = lock();
         unsafe {
             let r = new_reading(Entry {
                 sequence: 1,
@@ -2313,6 +2415,7 @@ mod tests {
 
     #[test]
     fn lookups_and_dispatchers() {
+        let _g = lock();
         unsafe {
             announce_keyboard();
             let (o, v) = create();
@@ -2360,6 +2463,7 @@ mod tests {
 
     #[test]
     fn timestamp_is_monotonic() {
+        let _g = lock();
         unsafe {
             let (o, v) = create();
             let a = (v.get_current_timestamp)(o);
@@ -2372,6 +2476,7 @@ mod tests {
 
     #[test]
     fn callbacks_get_tokens() {
+        let _g = lock();
         unsafe {
             let (o, v) = create();
             let np = std::ptr::null_mut();
@@ -2406,6 +2511,7 @@ mod tests {
 
     #[test]
     fn concurrent_refcount() {
+        let _g = lock();
         unsafe {
             let (o, v) = create();
             let p = o as usize;
