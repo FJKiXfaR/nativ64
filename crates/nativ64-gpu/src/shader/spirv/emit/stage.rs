@@ -545,8 +545,8 @@ impl<'a> Tr<'a> {
         let data = self.plain(data)?;
         let two = self.g.k(2);
         let lane = self.g.op(Op::ShiftRightLogical, tu, &[addr, two]);
-        // the console wave's lanes, wraparound included
-        let mask = self.g.k(63);
+        // the console wave's lanes, wraparound included (a wave32 program stays in one subgroup)
+        let mask = self.g.k(if self.f.wave32 { 31 } else { 63 });
         let lane = self.g.op(Op::BitwiseAnd, tu, &[lane, mask]);
         Ok(vec![Opd::V(self.g.shuffle(data, lane))])
     }

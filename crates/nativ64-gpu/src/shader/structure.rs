@@ -185,7 +185,11 @@ pub fn cross_lane_by_nature(i: &Instr) -> bool {
     let n = i.name();
     // DPP is translated as a subgroup shuffle of the source lane; the others are real
     // cross-lane instructions without a translation
-    n.starts_with("v_readfirstlane") || n.starts_with("ds_permute") || n.starts_with("ds_bpermute")
+    // a wave32 program's `ds_bpermute` stays inside one subgroup (its lanes are 0-31), so the
+    // emitter's shuffle is exact; a wave64 one spans two and is refused
+    n.starts_with("v_readfirstlane")
+        || n.starts_with("ds_permute")
+        || (n.starts_with("ds_bpermute") && !i.wave32)
 }
 
 /// The typing of the wave-sized values.

@@ -1764,13 +1764,21 @@ impl Builder<'_> {
         Src::Val(v)
     }
 
-    /// The value of `reg` now. `strict`: an undefined register is an error, else `undef`.
+    /// The value of `reg` now. `strict`: an undefined register is an error, else `undef` - a
+    /// VGPR the console's own code reads before writing is `undef` even when strict (the
+    /// hardware would read whatever the wave held; zero is the conventional stand-in and the
+    /// console compilers do leave such reads on paths whose EXEC is empty).
     fn read(&mut self, st: &State, reg: Reg, at: usize, strict: bool) -> Result<Src, IrError> {
         if let Some(s) = st.get(&reg) {
             return Ok(*s);
         }
         if self.regs.has(reg) {
             return Ok(self.arg(reg));
+        }
+        if strict && matches!(reg, Reg::V(_)) {
+            if std::env::var_os("NATIV64_STRICT_VGPR").is_none() {
+                return Ok(Src::Undef);
+            }
         }
         if strict {
             if std::env::var_os("NATIV64_UNDEF_DEBUG").is_some() {
