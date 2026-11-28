@@ -249,7 +249,53 @@ pub fn start_evdev(path: &str) {
     if STARTED.swap(true, Ordering::SeqCst) {
         return;
     }
-    let path = path.to_string();
+    if path == "auto" {
+        start_evdev_auto();
+        return;
+    }
+    spawn_evdev(path.to_string());
+}
+
+/// `NATIV64_GAMEPAD_EVDEV=auto`: every input device that looks like a gamepad (a name with
+/// gamepad, joystick or controller in it, or joystick axes) gets a reader, so the pad's evdev
+/// node does not have to be named.
+fn start_evdev_auto() {
+    let Ok(text) = std::fs::read_to_string("/proc/bus/input/devices") else {
+        return;
+    };
+    let mut found = 0;
+    for block in text.split("\n\n") {
+        let name = block
+            .lines()
+            .find_map(|l| l.strip_prefix("N: Name=\""))
+            .and_then(|l| l.strip_suffix('"'))
+            .unwrap_or("");
+        let lower = name.to_lowercase();
+        let looks_like_pad = ["gamepad", "joystick", "controller", "game pad", "pad ("]
+            .iter()
+            .any(|k| lower.contains(k))
+            || (lower.contains("xbox") && !lower.contains("keyboard"));
+        let has_joy_axis = block.contains("ABS=3") || block.contains("ABS=3003f");
+        if !looks_like_pad && !has_joy_axis {
+            continue;
+        }
+        let Some(handlers) = block.lines().find_map(|l| l.strip_prefix("H: Handlers=")) else {
+            continue;
+        };
+        let Some(node) = handlers.split_whitespace().find(|h| h.starts_with("event")) else {
+            continue;
+        };
+        let path = format!("/dev/input/{node}");
+        eprintln!("nativ64: gamepad {path} ({name})");
+        spawn_evdev(path);
+        found += 1;
+    }
+    if found == 0 {
+        eprintln!("nativ64: no gamepad-like evdev node found (see /proc/bus/input/devices)");
+    }
+}
+
+fn spawn_evdev(path: String) {
     std::thread::Builder::new()
         .name("nativ64-evdev".into())
         .spawn(move || {
