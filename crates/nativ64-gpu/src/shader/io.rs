@@ -176,6 +176,8 @@ pub struct MeshIo {
     pub tables: BTreeSet<u16>,
     /// The parameter exports (`exp param n`) and the location each writes.
     pub params: BTreeMap<u8, u32>,
+    /// `pos1..` carry clip distances (`PA_CL_VS_OUT_CNTL`, an output row of usage 7).
+    pub clip: bool,
     /// The vertex attributes the program exports (a `VsOutput` each, their locations in `OSG1`
     /// order).
     pub outputs: Vec<VsOutput>,
@@ -435,9 +437,11 @@ fn mesh_io(rec: &Record) -> Option<MeshIo> {
     };
     // the mesh entry SGPRs are the user SGPRs from s8 and the system ones above them
     let user = 8..8 + u16::from(d.user_sgprs).max(1);
+    let clip = d.outputs.iter().any(|o| o.usage == 7);
     Some(MeshIo {
         user,
         tables: table_sgprs(rec, 8),
+        clip,
         params: d
             .outputs
             .iter()

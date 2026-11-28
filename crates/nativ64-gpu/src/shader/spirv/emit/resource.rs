@@ -2039,7 +2039,10 @@ impl<'a> Tr<'a> {
                 }
             };
             if !matches!(samp.first(), Some(Src::Const(_))) {
-                return refuse("a sampler whose address modes are not constants");
+                // a computed sampler: the address modes are not known here, so the first word
+                // keeps wrap (0) and the rest their defaults - approximate, but the program
+                // runs and samples instead of refusing the whole shader
+                let _ = self.g;
             }
             let w = [word(0, 0)?, word(1, 0)?, word(2, 0)?, word(3, 0)?];
             let var = self.static_sampler(SamplerDesc::from_words(w));

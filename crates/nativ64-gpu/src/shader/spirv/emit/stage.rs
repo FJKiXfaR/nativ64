@@ -938,6 +938,40 @@ impl<'a> Tr<'a> {
                 })
             }
             (13..=15, StageIo::Vertex(_)) => unsupported("exp pos1..3 other than clip distances"),
+            (13 | 14, StageIo::Mesh(m)) if m.clip => {
+                let base = 4 * (e.target as u32 - 13);
+                let tf = self.g.t_f32();
+                let n8 = self.g.k(8);
+                let nv = self.g.k(u32::from(m.max_vertices));
+                let inner = self.g.m.global(Op::TypeArray, None, &[tf, n8]);
+                let arr = self.g.m.global(Op::TypeArray, None, &[inner, nv]);
+                let var = match self.st().clip {
+                    Some(v) => v,
+                    None => {
+                        self.g.m.capability(Capability::ClipDistance);
+                        let v = self.global(StorageClass::Output, arr);
+                        self.g
+                            .m
+                            .decorate(v, Decoration::BuiltIn, &[BuiltIn::ClipDistance as u32]);
+                        self.st().clip = Some(v);
+                        v
+                    }
+                };
+                let tu = self.g.t_u32();
+                let tid = self.load_builtin(BuiltIn::LocalInvocationIndex, tu);
+                self.guarded(c.active, |t| {
+                    for &(ch, bits) in &chans {
+                        let tf = t.g.t_f32();
+                        let tp = t.g.t_ptr(StorageClass::Output, tf);
+                        let k = t.g.k(base + ch);
+                        let p = t.g.op(Op::AccessChain, tp, &[var, tid, k]);
+                        let x = t.g.as_f32(bits);
+                        t.g.store(p, x);
+                    }
+                    Ok(())
+                })
+            }
+            (13..=15, StageIo::Mesh(_)) => unsupported("exp pos1..3 without clip distances"),
             (32..=63, StageIo::Vertex(vs)) => {
                 let Some(&loc) = vs.params.get(&(e.target - 32)) else {
                     return Ok(()); // nothing reads this parameter
