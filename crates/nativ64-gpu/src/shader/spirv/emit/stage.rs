@@ -242,23 +242,18 @@ impl<'a> Tr<'a> {
                     Opd::V(self.g.op(Op::CompositeExtract, tu, &[id, u32::from(axis)]))
                 }
                 Reg::S(n) if matches!(io, StageIo::Mesh(_)) => {
-                    // the NGG primitive shader's entry state: the lane masks (s0:s1 the saved
-                    // EXEC, s2:s3 the lanes outside this wave's allocation, s4:s5 a selection)
-                    // and the allocation counts s6 (vertices) and s7 (primitives) that the
-                    // shader asks `MSG_GS_ALLOC_REQ` for
-                    let StageIo::Mesh(m) = io else { unreachable!() };
-                    let lanes = u32::from(m.group_lanes).clamp(1, 64);
-                    let mask = if lanes >= 64 {
-                        u64::MAX
-                    } else {
-                        (1u64 << lanes) - 1
-                    };
+                    // the NGG primitive shader's entry state as the working recompiler
+                    // (xcl's `mesh_init`) sets it: the wave index in the group goes to
+                    // s3[27:24], every other system SGPR is zero (the shader's allocation
+                    // counts come from its own `GS_ALLOC_REQ` path)
                     let v = match n {
-                        0 | 4 => mask as u32,
-                        1 | 5 => (mask >> 32) as u32,
-                        2 | 3 => 0,
-                        6 => u32::from(m.max_vertices),
-                        7 => u32::from(m.max_primitives),
+                        3 => {
+                            let tu = self.g.t_u32();
+                            let wave = self.mesh_wave_index();
+                            let k24 = self.g.k(24);
+                            self.g.op(Op::ShiftLeftLogical, tu, &[wave, k24])
+                        }
+                        0..=7 => 0,
                         _ => return unsupported(&format!("entry {reg}")),
                     };
                     Opd::V(self.g.k(v))
@@ -317,6 +312,15 @@ impl<'a> Tr<'a> {
         self.g.op(Op::ConvertUToPtr, pr, &[addr])
     }
 
+    /// The console wave the invocation is in, within its mesh workgroup (the thread index
+    /// divided by the 64-lane wave).
+    fn mesh_wave_index(&mut self) -> u32 {
+        let tu = self.g.t_u32();
+        let tid = self.load_builtin(BuiltIn::LocalInvocationIndex, tu);
+        let k6 = self.g.k(6);
+        self.g.op(Op::ShiftRightLogical, tu, &[tid, k6])
+    }
+
     /// `user_data[n]` of the root block.
     pub(super) fn user_dword(&mut self, root: u32, n: u32) -> u32 {
         let tu = self.g.t_u32();
@@ -342,7 +346,18 @@ impl<'a> Tr<'a> {
                 let (a, b) = (self.load_builtin(id, tu), self.load_builtin(base, tu));
                 Ok(self.g.op(Op::ISub, tu, &[a, b]))
             }
-            StageIo::Mesh(_) => unsupported(&format!("entry v{n}")),
+            StageIo::Mesh(m) => {
+                // v5 = group * threads + thread: the console's global thread id, which the
+                // program uses as its output index
+                if n != 5 {
+                    return unsupported(&format!("entry v{n}"));
+                }
+                let gid = self.load_builtin(BuiltIn::WorkgroupId, tu);
+                let tid = self.load_builtin(BuiltIn::LocalInvocationIndex, tu);
+                let kt = self.g.k(u32::from(m.group_lanes));
+                let base = self.g.op(Op::IMul, tu, &[gid, kt]);
+                Ok(self.g.op(Op::IAdd, tu, &[base, tid]))
+            }
             StageIo::Compute(c) => {
                 if n >= c.thread_ids {
                     return unsupported(&format!("entry v{n}"));
